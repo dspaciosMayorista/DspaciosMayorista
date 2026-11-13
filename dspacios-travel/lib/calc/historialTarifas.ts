@@ -48,6 +48,10 @@ export const MOTIVO_HISTORIAL: Record<string, string> = {
   edicion: "Edición",
   eliminacion: "Eliminación",
   auditoria_previa_203: "Auditoría · antes del historial",
+  // #43/#60 (299): venta por grupos de días.
+  grupos_aplicar: "Grupos de días · aplicar a la venta",
+  grupos_volver_todos: "Grupos de días · volver a todos los días",
+  grupos_borrar: "Grupos de días · borrar grupo",
 };
 
 export const OPERACION_HISTORIAL: Record<string, string> = { UPDATE: "Modificada", DELETE: "Eliminada" };

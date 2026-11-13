@@ -70,6 +70,8 @@ export type FilaTarifario = {
   descripcion?: string | null;
   recargo_individual?: number | null;
   moneda?: string | null;
+  /** #43/#60 entrega 6 (302): entrada de la estadía que justifica el «desde» de una porción con grupos. */
+  desde_entrada?: string | null;
 };
 
 const MODULOS: { key: FilaTarifario["modulo"]; label: string }[] = [

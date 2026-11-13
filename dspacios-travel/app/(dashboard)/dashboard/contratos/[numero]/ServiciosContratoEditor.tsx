@@ -7,6 +7,7 @@ import { formatCOP } from "@/lib/utils";
 import { precioServicioEstimado, avisoSinRango } from "@/lib/calc/servicioTarifa";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { actualizarServiciosContrato } from "../actions";
+import { alternarVisibles, estadoVisibles } from "@/lib/paquetes/seleccionMasiva";
 
 export type ServicioDispContrato = {
   servicioId: number;
@@ -36,6 +37,9 @@ export function ServiciosContratoEditor({
   const precioDe = (s: ServicioDispContrato) => precioServicioEstimado(s.modo, s.personaPvp, s.grupos, pax);
   const total = serviciosDisp.reduce((acc, s) => (sel.has(s.servicioId) ? acc + (precioDe(s) ?? 0) : acc), 0);
   const sinRango = serviciosDisp.filter((s) => sel.has(s.servicioId) && precioDe(s) === null);
+  // #50: la casilla maestra no marca servicios sin precio para estos pax (fila deshabilitada), pero sí los desmarca. Solo cambia la selección: guardar sigue siendo explícito.
+  const habilitados = serviciosDisp.filter((s) => precioDe(s) !== null || sel.has(s.servicioId)).map((s) => s.servicioId);
+  const estadoTodos = estadoVisibles(sel, habilitados);
 
   function toggle(id: number) {
     setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -53,6 +57,14 @@ export function ServiciosContratoEditor({
     <div className="mt-5 rounded-xl border border-gray-200 bg-white p-4">
       <p className="mb-1 text-sm font-semibold text-gray-700">Servicios adicionales (contrato pendiente)</p>
       <p className="mb-3 text-xs text-gray-400">Marca/desmarca servicios; se re-liquidan sobre {pax} pax y se actualiza el precio del contrato.</p>
+      {habilitados.length > 1 && (
+        <label className="flex items-center gap-3 border-b border-gray-100 pb-2 text-sm font-medium text-gray-700">
+          <input type="checkbox" disabled={pending} checked={estadoTodos.checked}
+            ref={(el) => { if (el) el.indeterminate = estadoTodos.indeterminate; }}
+            onChange={() => setSel((p) => alternarVisibles(p, habilitados))} />
+          {estadoTodos.etiqueta}
+        </label>
+      )}
       <ul className="divide-y divide-gray-100">
         {serviciosDisp.map((s) => (
           <li key={s.servicioId} className="flex items-center justify-between py-2.5">

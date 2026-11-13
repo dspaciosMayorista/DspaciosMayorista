@@ -58,6 +58,7 @@ const COLS_TARIFAS = [
   { key: "categoria", label: "Categoría", ejemplo: "Estándar" },
   { key: "regimen", label: "Régimen", ejemplo: "FULL" },
   { key: "temporada", label: "Temporada (debe existir con sus fechas)", ejemplo: "Baja" },
+  { key: "grupo", label: "Grupo de días (opcional: va al borrador del grupo, no a la venta)", ejemplo: "" },
   { key: "neto_sencilla", label: "Neto sencilla", ejemplo: "600000" },
   { key: "neto_doble", label: "Neto doble", ejemplo: "300000" },
   { key: "neto_triple", label: "Neto triple", ejemplo: "300000" },
@@ -119,7 +120,7 @@ export default async function HotelesPage() {
         <CargaMasivaCSV
           titulo="Carga masiva de tarifas de hotel (CSV)"
           nota="Ya deben existir: el hotel, sus Categorías y Regímenes (Producto → Configuración) y las Temporadas con fechas (cargue de arriba). La tarifa referencia la temporada por su nombre."
-          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel y la temporada (con sus fechas) deben existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1/Niño 2/Infante pueden ir en 0 (gratis); vacío = no aplica a este hotel."
+          descripcion="Cada fila = una tarifa (hotel + categoría + régimen + temporada + netos). El hotel y la temporada (con sus fechas) deben existir; usa 'destino' si hay hoteles con el mismo nombre. Niño 1/Niño 2/Infante pueden ir en 0 (gratis); vacío = no aplica a este hotel. Con 'grupo' (nombre de un grupo de días de esa temporada) la fila va al BORRADOR de ese grupo: no se vende hasta revisarla y aplicarla en «Grupos de días»; una temporada que se vende por grupos solo admite filas con grupo."
           columnas={COLS_TARIFAS}
           onSubmit={cargarTarifasMasivo}
           nombreArchivo="plantilla_tarifas_hotel"

@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { validarFechasViaje, validarFechasAlEditar } from "@/lib/reglas/duracionViaje";
 import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { candidatosNumeroContrato, normalizarReferenciaManual } from "@/lib/vuelos/contratoManual";
 import { revalidatePath } from "next/cache";
@@ -83,6 +84,8 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> { // id
   if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
   const cupos = Number(input.cuposTotal);
   if (!Number.isInteger(cupos) || cupos < 0) return { ok: false, error: "Los cupos deben ser un número entero mayor o igual a 0." };
+  const vNoches = validarFechasViaje(input.fechaIda, input.fechaRegreso); // entrega L: estadía máxima del viaje
+  if (!vNoches.ok) return vNoches;
   const sb = await createClient(); // identidad:n/a — crea un record nuevo con sillas libres; no toca contratos
   const { data, error } = await sb.rpc("crear_bloqueo", { p_datos: datosBloqueoDeInput(input), p_cupos: cupos });
   if (error) return { ok: false, error: mensajeErrorMonedaBloqueo(mensajeErrorRpc(error).error) };
@@ -143,6 +146,10 @@ export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Pr
   const monedaOk = validarMonedaBloqueoEdicion(input.moneda, input);
   if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
   const sb = await createClient(); // identidad:n/a — solo bloqueos_vuelo, no es tabla de contrato
+  // Entrega L: si cambian las fechas, respetan la estadía máxima (un record antiguo que ya tenía más se conserva hasta que el dueño decida).
+  { const { data: prev } = await sb.from("bloqueos_vuelo").select("fecha_ida, fecha_regreso").eq("id", id).maybeSingle();
+    const vNoches = validarFechasAlEditar(input.fechaIda, input.fechaRegreso, prev?.fecha_ida, prev?.fecha_regreso);
+    if (!vNoches.ok) return vNoches; }
   const { error } = await sb
     .from("bloqueos_vuelo")
     .update({
@@ -390,6 +397,9 @@ export async function cargarBloqueosMasivo( // identidad:n/a — records nuevos 
       tarifaNeta: numCsv(r.tarifa_neta), tarifaParaEmpaquetar: numCsv(r.tarifa_para_empaquetar), feeInfante: numCsv(r.fee_infante),
     });
     if (!monedaFila.ok) { errores.push(`Fila ${linea} (${record}): ${monedaFila.error}`); continue; }
+
+    const vNoches = validarFechasViaje(parseFechaCSV(r.fecha_ida), parseFechaCSV(r.fecha_regreso)); // entrega L
+    if (!vNoches.ok) { errores.push(`Fila ${linea} (${record}): ${vNoches.error}`); continue; }
 
     // Cada fila es atómica (crear_bloqueo, migración 195): el record y sus
     // sillas se crean juntos o no se crea nada. Un error de la fila se reporta

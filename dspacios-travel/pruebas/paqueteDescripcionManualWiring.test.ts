@@ -92,8 +92,10 @@ describe("ConfigForm.tsx — 4 textareas del paquete con el texto auxiliar pedid
   const src = leer(RUTA_CONFIG_FORM);
 
   test("las 4 etiquetas exactas están presentes", () => {
-    assert.match(src, /El programa incluye/);
-    assert.match(src, /El programa no incluye/);
+    // #34: un paquete (Bloqueo, Porción terrestre…) no es un «programa».
+    assert.match(src, />Incluye<\/label>/);
+    assert.match(src, />No incluye<\/label>/);
+    assert.doesNotMatch(src, /El programa (no )?incluye/);
     assert.match(src, /Tarifas especiales/);
     assert.match(src, /Condiciones comerciales/);
   });
@@ -144,5 +146,18 @@ describe("[id]/page.tsx — el paquete cargado hidrata el formulario con los 4 c
     assert.match(src, /programaNoIncluye: pq\.programa_no_incluye \?\? ""/);
     assert.match(src, /programaTarifasEspeciales: pq\.programa_tarifas_especiales \?\? ""/);
     assert.match(src, /programaCondicionesComerciales: pq\.programa_condiciones_comerciales \?\? ""/);
+  });
+});
+
+describe("#34 — los programas conservan su rótulo propio", () => {
+  test("vitrina y documento del programa siguen diciendo «El programa incluye»", () => {
+    for (const ruta of ["app/tarifario/programa/[id]/page.tsx", "app/tarifario/programa/[id]/doc/page.tsx"]) {
+      assert.match(leer(ruta), /El programa incluye/, ruta);
+    }
+  });
+  test("la tarjeta del paquete asigna su ícono a los rótulos nuevos", () => {
+    const src = leer(RUTA_COMPARTIDA);
+    assert.match(src, /titulo === "Incluye"/);
+    assert.match(src, /titulo === "No incluye"/);
   });
 });

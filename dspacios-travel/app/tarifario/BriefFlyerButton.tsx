@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Sparkles } from "lucide-react";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { briefFlyer, type BriefFlyerInput } from "@/lib/flyer/brief";
 
 // Botón que genera un BRIEF de texto del producto (precios, datos, estilo de
@@ -9,6 +10,7 @@ import { briefFlyer, type BriefFlyerInput } from "@/lib/flyer/brief";
 export function BriefFlyerButton({ datos, className = "" }: { datos: BriefFlyerInput; className?: string }) {
   const [abierto, setAbierto] = useState(false);
   const [copiado, setCopiado] = useState(false);
+  useEscapeCerrar(abierto, () => setAbierto(false)); // Escape = «Cerrar»
   const texto = abierto ? briefFlyer(datos) : "";
 
   async function copiar() {

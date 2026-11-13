@@ -104,7 +104,8 @@ describe("paquetes/actions.ts (generarTarifario) — hoteles 'unidad' se EXCLUYE
 
   test("selecciona modelo_tarifario del hotel junto con nombre/moneda", () => {
     // 226: además `adults_only` (un hotel Adults Only no publica fila de infante).
-    assert.match(cuerpo, /hoteles\(nombre, moneda, modelo_tarifario(, adults_only)?(, tarifa_bajo_solicitud)?\)/);
+    // #43/#60 entrega 4: la misma lectura trae además la ocupación del hotel (hotel_acomodaciones).
+    assert.match(cuerpo, /hoteles\(nombre, moneda, modelo_tarifario(, adults_only)?(, tarifa_bajo_solicitud)?(, hotel_acomodaciones\(acomodacion, pax_tarifa\))?\)/);
   });
 
   test("hotelIds (usado para consultar hotel_temporadas/tarifa_hotel) EXCLUYE los hoteles con modelo_tarifario === 'unidad'", () => {

@@ -39,11 +39,15 @@ describe("archivos que NO se tocan (decisión del Coordinador)", () => {
   test("menoresDeDos.ts (226) se reutiliza SIN editar: misma huella que en 3cfe731c", () => {
     assert.equal(huella("lib/reservar/menoresDeDos.ts"), "357c02fd8898ba6a");
   });
-  test("el motor de precios (lib/calc/paquetes.ts) solo cambia por el motor por noche de #43/#60 (incremento 2)", () => {
+  test("el motor de precios (lib/calc/paquetes.ts) solo cambia por el motor por noche de #43/#60 (incrementos 2 y 4)", () => {
     // Huella de #63 (3cfe731c): "b2cbe250e047660c". #43/#60 incremento 2 cambió A PROPÓSITO el resolver por
-    // noche (grupos de días, empates); legacy y precioMenorDeDos no se tocaron (lo fijan sus propias pruebas
-    // y la caracterización E3). Cualquier otro cambio debe volver a actualizar esta huella con su motivo.
-    assert.equal(huella("lib/calc/paquetes.ts"), "e4b77c9c5723107a");
+    // noche (grupos de días, empates): "e4b77c9c5723107a". La entrega 4 (promociones por grupo y reparto exacto por habitación, historial AI y AJ)
+    // lo cambió otra vez a propósito (base primero y su promoción, promoción de estadía); legacy y
+    // precioMenorDeDos no se tocaron (lo fijan sus propias pruebas y la caracterización E3).
+    // La entrega 5 (historial AK) agregó solo la combinación con EBB / Long Stay en la vigencia, la exclusión de las promociones
+    // PENDIENTES en entradasNoche y dos ayudantes puros (promosAplicadas, soloBases); ninguna fórmula cambió.
+    // Cualquier otro cambio debe volver a actualizar esta huella con su motivo.
+    assert.equal(huella("lib/calc/paquetes.ts"), "d4bd14caad1bce6d");
   });
   test("origen.ts y salidaDinamicaVigente.ts (#62) quedan intactos", () => {
     assert.equal(huella("lib/reservar/origen.ts"), "346a364394e5a31b");

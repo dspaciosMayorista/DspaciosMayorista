@@ -69,8 +69,8 @@ Para sumar un tipo nuevo: (1) nuevo `XxxParams` + `generarTarifasXxx()` puro en
 (6) en `[id]/page.tsx`: `const xxxInicial = calc?.tipo === "xxx" ? (calc.params as unknown as XxxParams) : null;`
 y pasarlo como prop a `<CalculadoraEditor>`.
 
-**El "marco" se reutiliza tal cual** (no hay que tocarlo): `guardarCalculadora` hace un
-`upsert` en `hotel_calculadora` (onConflict `hotel_id`); `generarTarifasCalculadora(hotelId,
+**El "marco" se reutiliza tal cual** (no hay que tocarlo): `guardarCalculadora` escribe
+`hotel_calculadora` condicionada a la versión leída (migración 297, §7; antes era un `upsert` ciego); `generarTarifasCalculadora(hotelId,
 modo)` lee esa fila y las vigencias del hotel, llama `generarTarifas(tipo, params, { vigencias,
 hoy })`, aparta las filas de vigencias con **compra cerrada** (`separarFilasVencidas`: son
 histórico, no se reescriben ni se recrean) y escribe con la RPC
@@ -112,6 +112,12 @@ niño y de sumar el suplemento de régimen — el suplemento **nunca** se descue
 al régimen elegido**, aunque el hotel tenga varios. `temporadaPromo` debe existir como vigencia
 REAL en `hotel_temporadas` (con su propia fecha/vigencia de compra) — la calculadora solo
 calcula los números y los escribe ahí, no crea la vigencia.
+
+**Opciones por base (vigentes en el código):** cada base puede llevar edades propias (`usarEdadesPropias` +
+`edadesPropias`, mismas reglas que la 177), suplementos propios (`usarSuplementosPropios` + `suplementosPropios`,
+reemplazan los generales; el régimen base sigue en 0) y una condición propia (`condicionesPropias` → `notas` de sus
+filas). En las promociones, el % se aplica hoy sobre la tarifa COMPLETA del régimen (base + suplemento efectivo):
+ver la cabecera de `generarTarifasDubai`; el párrafo de arriba describe la regla anterior.
 
 ## 5. Calculadora "Mixta" — por hab/pax + IVA
 
@@ -226,6 +232,48 @@ infante  = 0                                                        (siempre cor
   tarifas de cadena (a diferencia de Dubai/Mixta donde infante sí es editable).
 - **`nota_infante`**: campo libre para anotar reglas como "máx. 2 niños por habitación" (visto
   en el anexo real, pero no forzado por el motor — es solo texto informativo).
+
+## 7. Calculadoras por grupo de días (#43/#60 entrega 3b, migración 297 — aplicada en Producción el 2026-11-11)
+
+Calcula las tarifas de UN grupo de días (lunes a jueves, fin de semana…) de una vigencia de tarifa y las lleva
+a la **propuesta** del grupo (migración 295), que el motor no lee: nada se vende distinto hasta la activación (3c).
+
+- **Sin fórmulas nuevas.** `lib/hoteles/calculadoraGrupos.ts › calcularGrupo` llama a los mismos generadores con los
+  parámetros GENERALES guardados de la calculadora del hotel y las BASES del grupo. Promociones fuera (Dubai
+  `promos: []`; Mixta sin contexto de vigencias): las promociones por grupo son la entrega 4.
+- **Qué es general y qué es de cada base** (el grupo reutiliza el mismo editor de bases, con todas sus opciones):
+
+  | Calculadora | General (de la calculadora, solo lectura en modo grupo) | De cada base (propio del grupo) |
+  |---|---|---|
+  | Dubai | régimen base, modificadores (sencilla, 3er/4to pax, niño 1, niño 2, infante), suplementos generales, nota de infante | categoría, precio, edades propias, suplementos propios, condición propia |
+  | Mixta | modo hab/pax e IVA por acomodación, IVA de niño, pax por habitación, nota de infante | por régimen: categoría, sencilla, doble, triple, múltiple, niño 1, niño 2, infante |
+  | Corporativa | régimen base, persona/niño adicional, % impuesto, % descuento, suplementos por régimen, nota de infante | categoría, tarifa de habitación |
+- **Persistencia.** Bases por grupo en `hotel_calculadora_grupo_bases` (grupo + tipo, con versión); generales en
+  `hotel_calculadora`. Guardar o cambiar el tipo de calculadora no las toca (quedan bajo su tipo). FK al grupo
+  restrictiva: un grupo con bases se borra solo con `grupos_dias_borrar_con_bases`, que exige las versiones que mostró
+  la vista previa (si cambiaron, no borra nada). Vigencia con la compra cerrada (regla de «Generar»): ni se calcula
+  ni se guarda por grupo, en el formulario y en la RPC. `hotel_calculadora.version` la sube un trigger en CADA escritura (también dos en la misma transacción, y
+  aunque el escritor intente fijarla). **Todos los escritores** condicionan por ella: `guardarCalculadora` (update
+  `hotel_id + version`, o insert si no había; 0 filas o 23505 ⇒ «recarga»), la cascada de renombre de vigencia
+  (update condicionado; si no pudo, lo avisa) y la RPC nueva. Sin reintentos.
+- **Guardado atómico.** `grupos_dias_guardar_calculadora` (security definer) valida usuario y permiso de catálogo,
+  hotel/vigencia/grupo (inactivo, de esa vigencia), tipo, estructura y valores de bases y filas, y que TODAS las
+  filas sean del grupo (sin «sugerencia aceptada» y con al menos un neto); llama sin cambios a
+  `grupos_dias_guardar_propuesta` (295) en modo `actualizar` y guarda las bases comparando versión de la
+  calculadora y de las bases. Cualquier error revierte todo.
+- **Revisión** (`revisarCalculo`): anterior → nuevo celda por celda (mismo `planPropuesta` del panel de grupos) y, a
+  resolver explícitamente antes de confirmar: edades (Dubai fija la regla de edad de cada fila: si difiere de la que
+  quedaría, se aplica la del cálculo o se ajusta la base), condición (`notas` del cálculo frente a la guardada) y cada
+  acomodación que antes no se vendía (contra la propuesta guardada, si no la tarifa actual): «mantener sin venta» o
+  «habilitar». Nada preseleccionado. La nota de infante es opcional. Notas y edades no aceptadas se omiten (= se
+  conservan). Una combinación sin ninguna habitación a la venta no se envía.
+- **Parámetros por grupo (298):** cada grupo elige explícitamente usar los generales del hotel (bloqueados, visibles como
+  referencia) o valores propios (solo fórmula: modificadores, suplementos —FULL incluido—, IVA, pax, persona/niño
+  adicional, impuesto y descuento de la tarifa); se guardan con las bases en `hotel_calculadora_grupo_bases.generales`
+  (null = los del hotel) por la RPC `grupos_dias_guardar_calculadora_grupo`. Nunca promociones.
+- **Solicitudes:** elegir grupo y editar 0; revisar 1 (`grupos_dias_config`); confirmar 1 RPC; sin
+  `revalidatePath`, regeneración ni publicación. La ficha lee bases y versión dentro de lecturas existentes.
+- Detalle, pruebas y orden de despliegue: [`vigencias-por-dia-43-60.md`](./vigencias-por-dia-43-60.md) §AF.
 
 ## Enlaces cruzados
 

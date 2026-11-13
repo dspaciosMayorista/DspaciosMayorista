@@ -16,10 +16,12 @@ const CARGADORES = {
 test("los cuatro cargadores del motor piden los grupos DENTRO de su lectura de vigencias, con su cliente de siempre", () => {
   for (const [f, cliente] of Object.entries(CARGADORES)) {
     const src = leer(f);
-    const lecturas = [...src.matchAll(/(\w+)\s*\n?\s*\.from\("hotel_temporadas"\)\s*\.select\("([^"]*)"\)/g)]
+    // #43/#60 entrega 4: el select es una plantilla (`…, ${SELECT_PROMO_VIGENCIA}`): misma lectura, 0 solicitudes nuevas.
+    const lecturas = [...src.matchAll(/(\w+)\s*\n?\s*\.from\("hotel_temporadas"\)\s*\.select\(["`]([^"`]*)["`]\)/g)]
       .filter((m) => m[2].includes(SELECT_GRUPOS_VIGENCIA));
     assert.equal(lecturas.length, 1, `${f}: una lectura de vigencias con ${SELECT_GRUPOS_VIGENCIA}`);
     assert.equal(lecturas[0][1], cliente, `${f}: el cliente no cambia (nunca anon)`);
+    assert.ok(lecturas[0][2].includes("${SELECT_PROMO_VIGENCIA}"), `${f}: las promociones (300) llegan en la MISMA lectura`);
   }
 });
 
@@ -29,8 +31,9 @@ test("los cargadores arman el mapa de netos con el helper compartido", () => {
   }
 });
 
-test("fuera del incremento 2: el límite de duración de consultas sigue igual (entrega L separada)", () => {
-  assert.match(leer("lib/reservar/edadesMenores.ts"), /export const MAX_NOCHES_CONSULTA = 60;/);
+// Entrega L (2026-11-12): el límite de duración de las consultas pasó a ser la estadía máxima del viaje (30), definida en un solo lugar.
+test("entrega L: el límite de duración de consultas es la estadía máxima única (lib/reglas/duracionViaje.ts)", () => {
+  assert.match(leer("lib/reservar/edadesMenores.ts"), /export const MAX_NOCHES_CONSULTA = MAX_NOCHES_VIAJE;/);
 });
 
 test("la 293 sigue con el candado de inactividad (el incremento 2 no activa grupos)", () => {

@@ -49,7 +49,18 @@ export type ConfigGrupos = {
   origen: OrigenCfg[];
   promociones: { temporada: string; filas: number }[];
   huella: string;
+  /** Bases de calculadora de cada grupo (297, `grupos_dias_config_bases`): lo que el borrado debe confirmar. */
+  bases?: BaseGrupoResumen[];
+  /** 299: 'activo' = la vigencia se vende por grupos; `vigentes` = sus tarifas a la venta por grupo. */
+  estado?: "preparado" | "activo";
+  compra_cerrada?: boolean;
+  vigentes?: (FilaNetos & Extras & { id: number; grupo_id: string; tipo_habitacion: string; alimentacion: string })[];
 };
+export type BaseGrupoResumen = { grupo_id: string; tipo: string; version: number; categorias: number; generales_propios?: boolean };
+const NOMBRE_CALC: Record<string, string> = { dubai: "Dubai", mixta: "Mixta", corporativa: "Corporativa" };
+/** Bases del grupo tal como las vio la vista previa del borrado: es lo que su confirmación exige reencontrar. */
+export const basesRevisadasDe = (cfg: ConfigGrupos, grupoId: string) =>
+  (cfg.bases ?? []).filter((b) => b.grupo_id === grupoId).map((b) => ({ tipo: b.tipo, version: b.version }));
 export type ModoPropuesta = "actualizar" | "reemplazar_grupo" | "reemplazar_vigencia";
 /** Fila que se envía. `extras` ausente = notas y edades OMITIDAS (en «actualizar» se conservan las guardadas);
  *  presente = se fijan exactamente esos valores (null = borrado intencional). */
@@ -277,12 +288,40 @@ export function textoBorrado(cfg: ConfigGrupos, grupoId: string): string[] {
   const g = cfg.grupos.find((x) => x.id === grupoId);
   if (!g) return ["El grupo ya no existe: recarga."];
   const props = cfg.propuestas.filter((p) => p.grupo_id === grupoId);
+  const resumen = (p: FilaNetos & Partial<Extras> & { tipo_habitacion: string; alimentacion: string }) =>
+    `· ${p.tipo_habitacion} / ${p.alimentacion}: ${ACOMS.filter((a) => p[a.col] != null).map((a) => `${a.etiqueta} ${formatNeto(Number(p[a.col]))}`).join(", ")}${tieneExtras(extrasDe(p)) ? " (con notas/edades)" : ""}`;
+  if (g.activo) {
+    // 299: el grupo SE VENDE. Borrarlo saca de la venta sus tarifas desde que se confirme (quedan en el historial).
+    const vig = (cfg.vigentes ?? []).filter((v) => v.grupo_id === grupoId);
+    const otrosActivos = cfg.grupos.filter((x) => x.activo && x.id !== grupoId);
+    if (otrosActivos.length === 0) {
+      return [`«${g.nombre}» es el único grupo que se vende en ${cfg.vigencia.nombre}: no se puede borrar. Usa «Volver a todos los días», donde eliges qué tarifas se conservan.`];
+    }
+    const lineasActivo = [
+      `Se borrará el grupo «${g.nombre}» (${textoDias(g.dias)}), que HOY SE VENDE en ${cfg.vigencia.nombre}. Desde que confirmes dejan de venderse sus ${vig.length} tarifa(s):`,
+      ...vig.map(resumen),
+      `También se borra su propuesta (${props.length} fila(s)). Las tarifas borradas quedan en el historial.`,
+      `Los ${DIAS.filter((d) => g.dias.includes(d.n)).map((d) => d.nombre).join(", ")} salen de la cobertura de ${cfg.vigencia.nombre}: esas noches podría venderlas otra vigencia aplicable o quedar sin venta. No se afirma que se cierren las ventas.`,
+      "Se regeneran los tarifarios de los paquetes de este hotel.",
+    ];
+    const basesA = (cfg.bases ?? []).filter((b) => b.grupo_id === grupoId);
+    if (basesA.length) lineasActivo.push(`También se borran sus bases de calculadora: ${basesA.map((b) => `${NOMBRE_CALC[b.tipo] ?? b.tipo} (versión ${b.version})`).join(", ")}. Si alguien las cambia antes de confirmar, el borrado se rechaza.`);
+    return lineasActivo;
+  }
+  const seVende = cfg.estado === "activo";
   const lineas = [
     `Se borrará el grupo «${g.nombre}» (${textoDias(g.dias)}) de la vigencia ${cfg.vigencia.nombre} y ${props.length === 1 ? "su única propuesta de tarifa" : `sus ${props.length} propuestas de tarifa`}.`,
-    ...props.map((p) => `· ${p.tipo_habitacion} / ${p.alimentacion}: ${ACOMS.filter((a) => p[a.col] != null).map((a) => `${a.etiqueta} ${formatNeto(Number(p[a.col]))}`).join(", ")}${tieneExtras(extrasDe(p)) ? " (con notas/edades)" : ""}`),
+    ...props.map(resumen),
     "No se borran ni se modifican promociones, tarifas vigentes ni otra configuración comercial: hoy la vigencia se sigue vendiendo exactamente igual.",
-    "Al activar en el futuro, esos días quedarían fuera de la cobertura de esta vigencia: podría aplicar otra vigencia o no venderse.",
+    seVende
+      ? "Este grupo todavía no se vende (no se ha aplicado a la venta): sus días siguen como hoy."
+      : "Al aplicar a la venta, esos días quedarían fuera de la cobertura de esta vigencia: podría aplicar otra vigencia o no venderse.",
   ];
+  const bases = (cfg.bases ?? []).filter((b) => b.grupo_id === grupoId);
+  if (bases.length) {
+    lineas.push(`También se borran sus bases de calculadora (valores de entrada del grupo): ${bases.map((b) =>
+      `${NOMBRE_CALC[b.tipo] ?? b.tipo} (${b.categorias} base${b.categorias === 1 ? "" : "s"}${b.generales_propios ? " y parámetros propios" : ""}, versión ${b.version})`).join(", ")}. Si alguien las cambia antes de confirmar, el borrado se rechaza y no se borra nada.`);
+  }
   if (cfg.promociones.length) lineas.push(`Dependencias informativas para la activación: ${cfg.promociones.map((p) => `${p.temporada} (${p.filas} tarifa${p.filas === 1 ? "" : "s"})`).join(", ")}. No se tocan.`);
   return lineas;
 }

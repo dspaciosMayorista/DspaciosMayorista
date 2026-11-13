@@ -79,3 +79,62 @@ export function normalizarPestanaHotel(valor: string | string[] | null | undefin
   const v = Array.isArray(valor) ? valor[0] : valor;
   return (PESTANAS_HOTEL as readonly string[]).includes(v ?? "") ? (v as PestanaHotel) : "configuracion";
 }
+
+/** Texto del descuento como lo cargó el usuario: «10 %», «20.000 por habitación y noche», «15.000 por persona y noche». */
+export function textoDescuento(tipo: string | null, unidad: string | null | undefined, valor: number, fmt: (n: number) => string): string {
+  if (tipo === "descuento_pct") return `${Number(valor.toFixed(2)).toLocaleString("es-CO")} %`;
+  return `${fmt(valor)} ${unidad === "habitacion_noche" ? "por habitación y noche" : "por persona y noche"}`;
+}
+
+/** Cuenta de una línea de promoción dinámica, en unidades coherentes. Descuento por habitación y noche: se muestra sobre la
+ * HABITACIÓN completa y su equivalente por persona con el reparto exacto («100.000 × 2 − 20.000 = 180.000 por habitación, 90.000
+ * por persona»; en triple «… 83.334 + 83.333 + 83.333 por persona»). Porcentaje o monto por persona: «100.000 − 10 % = 90.000». */
+export function textoCuentaPromo(
+  l: { netoBase: number; valor: number; netoResultante: number | null; motivoNoAplica: string | null; habitacion?: { ocupantes: number; resultadoHabitacion: number; porPersona: number[] } },
+  tipo: string | null, unidad: string | null | undefined, fmt: (n: number) => string,
+): string {
+  if (l.habitacion) {
+    const h = l.habitacion;
+    const iguales = h.porPersona.every((x) => x === h.porPersona[0]);
+    const pp = iguales ? fmt(h.porPersona[0]) : h.porPersona.map(fmt).join(" + ");
+    return `${fmt(l.netoBase)} × ${h.ocupantes} − ${fmt(l.valor)} = ${fmt(h.resultadoHabitacion)} por habitación, ${pp} por persona`;
+  }
+  const izquierda = `${fmt(l.netoBase)} − ${tipo === "descuento_pct" ? textoDescuento(tipo, unidad, l.valor, fmt) : `${fmt(l.valor)}${unidad === "habitacion_noche" ? " por habitación" : " por persona"}`}`;
+  return `${izquierda} = ${l.netoResultante != null ? fmt(l.netoResultante) : l.motivoNoAplica ?? "no aplica"}`;
+}
+
+/** Resumen de una promoción dinámica para «Tarifas generadas», con el patrón del tarifario: por vigencia base y grupo, una tarjeta por
+ * CATEGORÍA (alimentaciones, cuántas tarifas y el «desde» por persona) y, en su detalle, las tarifas por alimentación y acomodación.
+ * Solo reorganiza las líneas ya calculadas: no calcula ni consulta nada. Orden de llegada conservado (como las filas de la ficha). */
+export type LineaAgrupable = { base: string; grupo: string; dias: string | null; categoria: string; regimen: string; acomodacion: string; netoResultante: number | null; habitacion?: { porPersona: number[] } };
+export type CategoriaPromo<L> = { categoria: string; regimenes: { regimen: string; lineas: L[] }[]; tarifas: number; desdePorPersona: number | null };
+export type BloquePromo<L> = { clave: string; base: string; grupo: string; dias: string | null; categorias: CategoriaPromo<L>[] };
+
+const ACOM_HABITACION_ETIQUETA = new Set(["Sencilla", "Doble", "Triple", "Múltiple"]);
+
+export function agruparPromoPorCategoria<L extends LineaAgrupable>(lineas: readonly L[]): BloquePromo<L>[] {
+  const bloques: BloquePromo<L>[] = [];
+  for (const l of lineas) {
+    const clave = `${l.base}|${l.grupo}|${l.dias ?? ""}`;
+    let b = bloques.find((x) => x.clave === clave);
+    if (!b) { b = { clave, base: l.base, grupo: l.grupo, dias: l.dias, categorias: [] }; bloques.push(b); }
+    let c = b.categorias.find((x) => x.categoria === l.categoria);
+    if (!c) { c = { categoria: l.categoria, regimenes: [], tarifas: 0, desdePorPersona: null }; b.categorias.push(c); }
+    let r = c.regimenes.find((x) => x.regimen === l.regimen);
+    if (!r) { r = { regimen: l.regimen, lineas: [] }; c.regimenes.push(r); }
+    r.lineas.push(l);
+    c.tarifas++;
+    // «Desde» por persona de ADULTO, como el tarifario (solo acomodaciones de habitación; niños e infantes no): el menor importe que se
+    // vende (por habitación: la menor parte del reparto exacto).
+    const pp = !ACOM_HABITACION_ETIQUETA.has(l.acomodacion) ? null : l.habitacion ? Math.min(...l.habitacion.porPersona) : l.netoResultante;
+    if (pp != null && (c.desdePorPersona == null || pp < c.desdePorPersona)) c.desdePorPersona = pp;
+  }
+  // Orden estable, independiente del orden de carga de las filas: categorías y alimentaciones alfabéticas (es); las acomodaciones
+  // conservan el orden de siempre (Sencilla → Infante), que ya traen las líneas.
+  const cmp = (a: string, b: string) => a.localeCompare(b, "es");
+  for (const b of bloques) {
+    b.categorias.sort((x, y) => cmp(x.categoria, y.categoria));
+    for (const c of b.categorias) c.regimenes.sort((x, y) => cmp(x.regimen, y.regimen));
+  }
+  return bloques;
+}

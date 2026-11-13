@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { validarFechasViaje } from "@/lib/reglas/duracionViaje";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
@@ -52,6 +53,9 @@ export async function crearCotizacionManual(
 ): Promise<{ ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string }> {
   if (!`${input.cliente?.nombres ?? ""}${input.cliente?.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
+  // Entrega L: una cotización manual NUEVA respeta la estadía máxima (las guardadas se consultan y editan como hoy).
+  const vViaje = validarFechasViaje(input.fechaIda, input.fechaRegreso);
+  if (!vViaje.ok) return vViaje;
   const vigenciaRes = resolverVigenciaCotizacion({
     hoy: hoyBogota(),
     fechaSalida: input.fechaIda || null,

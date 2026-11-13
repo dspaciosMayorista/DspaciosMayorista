@@ -7,6 +7,7 @@ import { Categoria } from "./tarjetaHotelCompartida";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/DateInput";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { TEXTO_BAJO_SOLICITUD } from "@/lib/reservar/solicitudHotel";
 import type { HotelBajoSolicitud } from "@/lib/tarifario/datosSolicitud";
 import { crearSolicitudHotel, validarOcupacionSolicitud, type OcupacionSolicitudResult, type SolicitudHotelResult } from "./solicitudHotelActions";
@@ -93,12 +94,8 @@ function FormularioSolicitud({ hotel, onClose }: { hotel: HotelBajoSolicitud; on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claveOcupacion, hotel.paqueteId, hotel.hotelId]);
 
-  // Escape cierra el formulario (accesibilidad de teclado).
-  useEffect(() => {
-    const cerrar = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", cerrar);
-    return () => document.removeEventListener("keydown", cerrar);
-  }, [onClose]);
+  // Escape cierra el formulario como la X (accesibilidad de teclado); no mientras se envía la solicitud.
+  useEscapeCerrar(true, onClose, pendiente);
 
   const campo = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
   return (

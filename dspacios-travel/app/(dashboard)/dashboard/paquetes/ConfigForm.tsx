@@ -9,6 +9,7 @@ import { crearPaquete, actualizarPaquete, listarDestinosAereosCandidatos, type P
 import { ComboDestino } from "@/components/ComboDestino";
 import { trmValida90 } from "@/lib/reservar/monedaPublicacion90";
 import { pvpInfanteFijoValido } from "@/lib/paquetes/pvpInfanteFijo";
+import { MAX_NOCHES_VIAJE } from "@/lib/reglas/duracionViaje";
 
 type Opt = { id: number; nombre: string; codigo_iata?: string | null };
 
@@ -216,7 +217,8 @@ export function ConfigForm({
         {(tipo === "porcion_terrestre" || tipo === "dinamico") && (
           <div>
             <label className={lbl}>Noches por defecto</label>
-            <Input type="number" min={1} value={noches} onChange={(e) => setNoches(e.target.value)} placeholder="3" />
+            <Input type="number" min={1} max={MAX_NOCHES_VIAJE} value={noches} onChange={(e) => setNoches(e.target.value)} placeholder="3" />
+            {Number(noches) > MAX_NOCHES_VIAJE && <p role="alert" className="mt-1 text-xs text-red-600">La estadía máxima es de {MAX_NOCHES_VIAJE} noches.</p>}
             <p className="mt-1 text-[11px] text-gray-400">
               {tipo === "dinamico" ? "Referencia; cada salida liquida el hotel por sus propias noches (ida→regreso)." : "Se liquida desde la fecha de inicio del viaje."}
             </p>
@@ -417,12 +419,12 @@ export function ConfigForm({
           )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label className={lbl}>El programa incluye</label>
+              <label className={lbl}>Incluye</label>
               <textarea value={programaIncluye} onChange={(e) => setProgramaIncluye(e.target.value)} className={sel} rows={4} />
               <p className="mt-1 text-[11px] text-gray-400">Escribe un elemento por línea.</p>
             </div>
             <div>
-              <label className={lbl}>El programa no incluye</label>
+              <label className={lbl}>No incluye</label>
               <textarea value={programaNoIncluye} onChange={(e) => setProgramaNoIncluye(e.target.value)} className={sel} rows={4} />
               <p className="mt-1 text-[11px] text-gray-400">Escribe un elemento por línea.</p>
             </div>

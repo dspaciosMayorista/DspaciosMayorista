@@ -19,6 +19,8 @@ const ACCIONES = datos(`
   const reg = (n, a) => ${G}.llamadas.push([n, a]);
   export async function crearTemporada(...a) { reg('crearTemporada', a); return { ok: true }; }
   export async function actualizarTemporada(...a) { reg('actualizarTemporada', a); return { ok: true }; }
+  export async function guardarCombinacionPromocion(...a) { reg('guardarCombinacionPromocion', a); return { ok: true }; }
+  export async function activarCambioPromocion(...a) { reg('activarCambioPromocion', a); return { ok: true }; }
   export async function eliminarTemporada(...a) { reg('eliminarTemporada', a); return { ok: true }; }
   export async function copiarTemporadasDesdeHotel(...a) { reg('copiarTemporadasDesdeHotel', a); return ${G}.copia; }
   export async function crearTarifa(...a) { reg('crearTarifa', a); return { ok: true }; }

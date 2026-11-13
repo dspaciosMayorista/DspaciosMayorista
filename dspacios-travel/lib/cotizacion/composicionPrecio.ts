@@ -3,6 +3,7 @@
 // Cada componente lleva su neto y lo que aporta al precio de venta (neto con el markup global del paquete, tal como lo calculó el motor); el vuelo entra ya como precio vendible y el redondeo es una línea aparte.
 
 import { marcar } from "../calc/paquetes.ts";
+import { repartirExacto } from "../calc/promocionesGrupo.ts";
 
 export type TipoComponente = "hotel" | "vuelo" | "servicio" | "redondeo";
 /** Por persona. `neto` = costo del proveedor (null donde el motor no lo conserva: vuelo ya vendible, redondeo). `venta` = lo que ese componente aporta al precio de venta, tal como lo calculó el motor. */
@@ -23,6 +24,10 @@ export type LineaComposicion = {
   /** null = el motor dio este precio pero sus componentes no son verificables (p. ej. PVP fijo del infante): se dice, no se inventa. */
   componentes: ComponentePersona[] | null;
   nota?: string;
+  /** #43/#60 entrega 4: descuento por habitación. Importes EXACTOS de la línea (sin pasar por la tarifa por persona):
+   * neto de una habitación en la estadía, descuento por habitación, su reparto de presentación por ocupante tarifado
+   * (suma exacta, residuo a los primeros) y el neto de hotel de la línea = habitaciones × neto por habitación. */
+  habitacion?: { habitaciones: number; ocupantes: number; netoPorHabitacion: number; descuento: number; repartoDescuento: number[]; netoHotelLinea: number };
 };
 export type AdicionalComposicion = { tipo: "servicio_opcional" | "servicio_grupo" | "mascota" | "ajuste_redondeo"; nombre: string; total: number };
 
@@ -39,8 +44,9 @@ export type Composicion = {
   total: number;
   /** Σ líneas + adicionales == total guardado. */
   cuadra: boolean;
-  /** #90: regla EBB / Long Stay que usó el cálculo (solo si se aplicó descuento). Informativo: no entra en ninguna suma. */
-  descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
+  /** #90: regla EBB / Long Stay que usó el cálculo (solo si se aplicó descuento). Informativo: no entra en ninguna suma. Entrega 5: mixta
+   *  (`porAcomodacion`, sin tipo/umbral/pct) si la precedencia decidió distinto por acomodación. */
+  descuentoHotel?: { etiqueta: string; tipo?: "ebb" | "long_stay"; umbral?: number; pct?: number; porAcomodacion?: { acom: string; etiqueta: string | null }[] } | null;
 };
 
 /** Lo que produce el motor de liquidación por fechas (se pasa tal cual, sin recalcular precios). */
@@ -64,6 +70,11 @@ export type BaseMotor = {
   servicios: { nombre: string; neto: number; netoMenor: number; /** Desglose por tramos de un incluido por día/noche (desde, hasta, unidades, neto por persona, origen). */ tramos?: { desde: string; hasta: string; unidades: number; neto: number; origen: string }[]; origen?: { monto: number; montoMenor: number; moneda: string } }[];
   /** Neto de hotel por persona y por acomodación/clase (sencilla…multiple, nino, nino2, infante). */
   netos: Record<string, number>;
+  /** #43/#60 entrega 4: neto exacto de UNA habitación (y su descuento) donde hubo descuento por habitación. */
+  netosHabitacion?: Record<string, { ocupantes: number; total: number; descuento: number }>;
+  /** #43/#60 entrega 5: promociones que aplicaron a la estadía publicada (por acomodación/clase) y el neto por persona SIN ellas, en la
+   * moneda de la oferta (null = sin tarifa base). Con él, la reserva decide la precedencia con EBB / Long Stay en la fecha real de compra. */
+  promociones?: Record<string, { nombres: string[]; netoSinPromocion: number | null }>;
 };
 
 export type LineaHab = { acom: string; habitaciones: number; pax: number; pvp: number };
@@ -112,9 +123,16 @@ export function construirComposicion(a: {
   const lineas: LineaComposicion[] = [];
   for (const l of a.lineasHab) {
     const comp = componentes(a.base, l.acom, l.pvp, false, unidad);
+    const nh = a.base.netosHabitacion?.[l.acom];
+    const dec = a.moneda === "USD" ? 2 : 0;
+    const red = (n: number) => Math.round(n * 10 ** dec) / 10 ** dec;
     lineas.push({
       clave: l.acom, etiqueta: `${l.habitaciones} hab ${ROTULO_ACOM[l.acom] ?? l.acom} (${l.pax} pax)`, pax: l.pax, pvpPorPersona: l.pvp, total: l.pax * l.pvp,
       componentes: comp, ...(comp ? {} : { nota: "El precio no se puede descomponer con lo que guardó el motor (p. ej. PVP fijo)." }),
+      ...(nh ? { habitacion: {
+        habitaciones: l.habitaciones, ocupantes: nh.ocupantes, netoPorHabitacion: red(nh.total), descuento: red(nh.descuento),
+        repartoDescuento: repartirExacto(nh.descuento, nh.ocupantes, dec), netoHotelLinea: red(red(nh.total) * l.habitaciones),
+      } } : {}),
     });
   }
   for (const m of a.lineasMenores) {
@@ -157,7 +175,13 @@ export function leerComposicion(raw: unknown): Composicion | null {
         componentes.push({ tipo: k.tipo as TipoComponente, nombre: k.nombre, neto: k.neto == null ? null : (k.neto as number), venta: k.venta, ...(o ? { origen: { monto: o.monto as number, moneda: o.moneda as string } } : {}) });
       }
     }
-    lineas.push({ clave: l.clave, etiqueta: l.etiqueta, pax: l.pax, pvpPorPersona: l.pvpPorPersona, total: l.total, componentes, ...(typeof l.nota === "string" ? { nota: l.nota } : {}) });
+    const h = l.habitacion as Record<string, unknown> | undefined;
+    const habitacion = h && typeof h === "object" && [h.habitaciones, h.ocupantes, h.netoPorHabitacion, h.descuento, h.netoHotelLinea].every(esNum)
+      && Array.isArray(h.repartoDescuento) && (h.repartoDescuento as unknown[]).every(esNum)
+      ? { habitacion: { habitaciones: h.habitaciones as number, ocupantes: h.ocupantes as number, netoPorHabitacion: h.netoPorHabitacion as number,
+          descuento: h.descuento as number, repartoDescuento: h.repartoDescuento as number[], netoHotelLinea: h.netoHotelLinea as number } }
+      : {};
+    lineas.push({ clave: l.clave, etiqueta: l.etiqueta, pax: l.pax, pvpPorPersona: l.pvpPorPersona, total: l.total, componentes, ...habitacion, ...(typeof l.nota === "string" ? { nota: l.nota } : {}) });
   }
   const adicionales: AdicionalComposicion[] = [];
   for (const x of r.adicionales) {
@@ -168,7 +192,11 @@ export function leerComposicion(raw: unknown): Composicion | null {
   const suma = lineas.reduce((t, l) => t + l.total, 0) + adicionales.reduce((t, x) => t + x.total, 0);
   // #90: etiqueta de la regla EBB / Long Stay (opcional: las cotizaciones anteriores no la traen).
   const d = r.descuentoHotel as Record<string, unknown> | null | undefined;
-  const dh = d && typeof d.etiqueta === "string" && (d.tipo === "ebb" || d.tipo === "long_stay") && esNum(d.umbral) && esNum(d.pct)
+  const pa = Array.isArray(d?.porAcomodacion) && (d!.porAcomodacion as unknown[]).every((x) => typeof (x as { acom?: unknown })?.acom === "string"
+    && (typeof (x as { etiqueta?: unknown }).etiqueta === "string" || (x as { etiqueta?: unknown }).etiqueta === null))
+    ? (d!.porAcomodacion as { acom: string; etiqueta: string | null }[]).map((x) => ({ acom: x.acom, etiqueta: x.etiqueta })) : null;
+  const dh = d && typeof d.etiqueta === "string" && pa ? { etiqueta: d.etiqueta, porAcomodacion: pa }
+    : d && typeof d.etiqueta === "string" && (d.tipo === "ebb" || d.tipo === "long_stay") && esNum(d.umbral) && esNum(d.pct)
     ? { etiqueta: d.etiqueta, tipo: d.tipo as "ebb" | "long_stay", umbral: d.umbral, pct: d.pct } : null;
   return {
     version: 1, moneda: r.moneda, trm: esNum(r.trm) ? r.trm : null, markup: { tipo: "global", pct: mk.pct },

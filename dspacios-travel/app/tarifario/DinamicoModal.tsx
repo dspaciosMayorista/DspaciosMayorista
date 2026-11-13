@@ -18,6 +18,7 @@ import {
 } from "@/lib/tarifario/dinamicoBooking";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { Categoria, EtiquetasHotel, DescripcionHotelExpandible, UbicacionHotel, SeccionesIncluye, IncluyeSalida } from "./tarjetaHotelCompartida";
 import type { FilaTarifario } from "./TarifarioPublic";
 import { claveSalidaFila, entradaSalida, useCotizacionSalidaModal, type CotizacionSalida, type CotizadaSalida } from "./cotizacionSalidaModal";
@@ -74,6 +75,7 @@ export function DinamicoModal({
   descripcionPorPaquete: Record<number, DescripcionPaqueteRaw>;
   onClose: () => void;
 }) {
+  useEscapeCerrar(true, onClose); // Escape = «Cerrar»
   const salidas = useMemo(() => agruparSalidasDinamicas(detalle?.estado === "ok" ? detalle.filas : []), [detalle]);
   const [elegida, setElegida] = useState<number | null>(salidaInicial ?? origenDesde?.salidaId ?? null);
   // Derivado en cada render (no un efecto): si la elegida ya no existe, cae a la primera.

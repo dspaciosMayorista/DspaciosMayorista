@@ -12,6 +12,7 @@ import {
   Package, Armchair, Wallet, HandCoins, Receipt, Settings, Boxes, ChevronRight,
   PlaneTakeoff, AlertTriangle, FileCheck2, ShieldCheck, Percent, type LucideIcon,
 } from "lucide-react";
+import { LECTURA_MODULO } from "@/lib/constants";
 import styles from "../DashboardShell.module.css";
 
 export const dynamic = "force-dynamic";
@@ -33,6 +34,8 @@ export default async function DashboardPage() {
   // de este conjunto no dispara ninguna de esas consultas (RLS de todas formas
   // las bloquearía, pero no vale la pena ni pedirlas).
   const contable = ["superadmin", "gerencia", "administracion"].includes(perfil?.rol ?? "");
+  // #59: el enlace al inventario de vuelos sale solo para quien puede abrir ese módulo (mismo mapa que el menú y proxy.ts).
+  const veInventario = (LECTURA_MODULO.vuelos as readonly string[]).includes(perfil?.rol ?? "");
 
   const hoyStr = new Date().toISOString().slice(0, 10);
   const mesActual = hoyStr.slice(0, 7);
@@ -228,8 +231,8 @@ export default async function DashboardPage() {
   const concPct = pctOrNull(concHechas, concTotal);
   // Cupos: colores según estados YA calculados arriba (mismo umbral que la
   // alerta "Cupos críticos", no uno nuevo) — sin cupos en todo el inventario
-  // = crítico; al menos un bloqueo con ≤3 cupos = advertencia; el resto,
-  // acento normal.
+  // = crítico; al menos un record activo con sillas disponibles que sale entre
+  // hoy y el día 14 (Bogotá) = advertencia; el resto, acento normal.
   const cuposBarColor =
     !cuposOk ? undefined
     : cuposCapacidad > 0 && cuposOcupados >= cuposCapacidad ? "var(--dash-danger)"
@@ -244,7 +247,7 @@ export default async function DashboardPage() {
   // `contable`, que reflejan exactamente la RLS real de sus tablas). El badge
   // de "pendientes de firma" en Contratos reutiliza `nPendientes`, ya
   // calculado (antes solo se mostraba como alerta aparte).
-  const metricas: { icon: LucideIcon; label: string; value: string; sub?: string; bar?: Bar }[] = [
+  const metricas: { icon: LucideIcon; label: string; value: string; sub?: string; bar?: Bar; href?: string; hrefLabel?: string }[] = [
     {
       icon: FileSignature, label: "Contratos", value: String(nVigentes),
       sub: nPendientes > 0 ? `${nPendientes} pendiente(s) de firma` : "Sin pendientes de firma",
@@ -308,6 +311,7 @@ export default async function DashboardPage() {
       value: cuposOk ? `${sillasDisponibles.toLocaleString("es-CO")} ${plural(sillasDisponibles, "silla")} ${plural(sillasDisponibles, "disponible")}` : NO_DISPONIBLE,
       sub: cuposOk ? `en ${recordsConSillas.toLocaleString("es-CO")} ${plural(recordsConSillas, "record")}` : "No se pudo consultar el inventario de vuelos",
       bar: cuposPct != null ? { num: cuposOcupados, den: cuposCapacidad, pct: cuposPct, color: cuposBarColor } : undefined,
+      ...(veInventario ? { href: "/dashboard/vuelos?vista=inventario", hrefLabel: "Ver inventario de vuelos" } : {}),
     }] : []),
     ...(!esMinorista ? [{ icon: Package, label: "Paquetes activos", value: String(nPaquetes ?? 0) }] : []),
     ...(!esMinorista ? [{ icon: PlaneTakeoff, label: "Salidas próximas (14d)",
@@ -429,9 +433,10 @@ function ModulosGrid({ modulos }: { modulos: typeof MODULOS }) {
   );
 }
 
-function MetricCard({ icon: Icon, label, value, sub, bar }: {
+function MetricCard({ icon: Icon, label, value, sub, bar, href, hrefLabel }: {
   icon: LucideIcon; label: string; value: string; sub?: string;
   bar?: { num: number; den: number; pct: number; color?: string };
+  href?: string; hrefLabel?: string;
 }) {
   return (
     <div className="min-w-0 rounded-lg border p-4" style={{ backgroundColor: "var(--dash-kpi-surface)", borderColor: "var(--dash-border)" }}>
@@ -455,6 +460,11 @@ function MetricCard({ icon: Icon, label, value, sub, bar }: {
             <div className={styles.barFill} style={{ width: `${Math.max(0, Math.min(100, bar.pct))}%`, backgroundColor: bar.color ?? "var(--dash-accent)" }} />
           </div>
         </div>
+      )}
+      {href && (
+        <Link href={href} prefetch={false} className="mt-3 inline-flex items-center gap-1 text-xs font-medium hover:underline" style={{ color: "var(--dash-primary)" }}>
+          {hrefLabel ?? "Ver detalle"} <ArrowRight size={13} aria-hidden />
+        </Link>
       )}
     </div>
   );

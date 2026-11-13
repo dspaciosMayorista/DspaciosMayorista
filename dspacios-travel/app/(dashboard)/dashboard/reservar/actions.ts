@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { identidadDe, parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { createClient } from "@/lib/supabase/server";
+import { validarNochesViaje } from "@/lib/reglas/duracionViaje";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
@@ -1059,12 +1060,9 @@ async function calcularFinancieroReserva(p: {
   if (!esServicios && Object.keys(netoPorAcom).length) {
     try {
       const admin = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
-      for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotelTotal += per * l.pax; }
-      if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotelTotal += netoPorAcom["nino"] * numNinos;
-      if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotelTotal += netoPorAcom["nino2"] * numNinos2;
-      // Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno,
-      // menor de 2 años o de 2 (clase infante del hotel) — antes no se sumaba.
-      if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotelTotal += netoPorAcom["infante"] * numInfantes;
+      // Misma fórmula que el carrito (fuente única, costosObligacionesCarrito.ts): con descuento por habitación suma
+      // habitaciones × neto exacto de la habitación. Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno.
+      costoHotelTotal = costoHotelPersona({ lineasHab, netoPorAcom, numNinos, numNinos2, netoHabitacionPorAcom: p.data.netoHabitacionPorAcom }, numInfantes);
       // #120: el costo del hotel de una solicitud es la neta TOTAL cargada, exacta. La suma por tipo (adultos × neta + niños × neta) solo puede diferir de ella por el redondeo mínimo
       // de centavos; cualquier otra diferencia es un error de cálculo y se rechaza antes de numerar.
       if (solicitud) {
@@ -4113,6 +4111,9 @@ async function reservarProgramaInterno(
     const incluidas = nochesIncluidasPrograma(prog);
     if (!incluidas.ok) return _rechazarValidacionPrograma({ ok: false, error: incluidas.error });
     const nochesIncluidas = incluidas.noches;
+    // Entrega L: el viaje completo (noches del programa + adicionales) respeta la estadía máxima.
+    const vViaje = validarNochesViaje(nochesIncluidas + est.nochesAdicionales);
+    if (!vViaje.ok) return _rechazarValidacionPrograma(vViaje);
     const catalogoCliente = clienteCatalogoHoteles(sb);
     const cat = await cargarCatalogoHoteles88(catalogoCliente, input.programaId);
     if (!cat.ok) return _errorValidacionPrograma("error_consulta_catalogo_hoteles", cat.error);

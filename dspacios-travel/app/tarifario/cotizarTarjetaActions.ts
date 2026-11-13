@@ -86,7 +86,9 @@ export async function cotizarTarjetaHotel(raw: unknown): Promise<TarjetaCotizada
     if (!comp.ok) { fallidos.push({ categoria: c.categoria, regimen: c.regimen, detalle: comp.error }); continue; }
     const precio = comp.data.pvpPorAcom["doble"];
     if (!(precio > 0)) { fallidos.push({ categoria: c.categoria, regimen: c.regimen, detalle: "sin tarifa doble" }); continue; }
-    const d = comp.data.descuentoHotel;
+    // Una habitación doble: una sola acomodación, la etiqueta nunca es mixta.
+    const d0 = comp.data.descuentoHotel;
+    const d = d0?.tipo && d0.umbral != null && d0.pct != null ? { etiqueta: d0.etiqueta, tipo: d0.tipo, umbral: d0.umbral, pct: d0.pct } : null;
     combos.push({
       categoria: c.categoria, regimen: c.regimen, precios: { ...comp.data.pvpPorAcom }, preciosMenor2: { ...comp.data.pvpMenor2PorAcom }, infanteSinFijo: { ...comp.data.pvpInfanteSinFijo },
       descuento: d?.etiqueta ? { etiqueta: d.etiqueta, tipo: d.tipo, umbral: d.umbral, pct: d.pct } : null,

@@ -47,7 +47,8 @@ describe("publicación por lotes — cableado en «Generar tarifario»", () => {
 
   test("las filas exactas llevan neto_hotel del MOTOR; «desde» (porción) y la fila de infante sintética no (no verificables)", () => {
     assert.match(cuerpo, /neto_hotel: netoHotelExacto,/);
-    assert.match(cuerpo, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel\);/);
+    // #43/#60 entrega 6: quinto argumento = entrada que justifica el «desde» (porción con grupos); neto_hotel sigue null en «desde».
+    assert.match(cuerpo, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel, desdeReal\?\.desde\?\.justificacion\.entrada \?\? null\);/);
     assert.match(cuerpo, /publicarFila\("infante", 0, procedenciaHab\);/);
   });
 
@@ -96,7 +97,9 @@ describe("publicación por lotes — cableado en «Generar tarifario»", () => {
     for (const fn of ["regenerarTarifariosDeHotel", "regenerarTarifariosDeBloqueo", "regenerarTarifariosDeServicio"]) {
       assert.match(actions, new RegExp(`export async function ${fn}\\(\\w+: number, inicioMs\\?: number\\)`), `${fn} recibe la ventana de la acción que llama`);
     }
-    assert.match(actions, /Promise\.allSettled\(ids\.map\(\(id\) => generarTarifario\(id, enSegundoPlano\(inicioMs\)\)\)\)/);
+    // #43/#60: las regeneraciones por hotel/bloqueo/servicio pasaron de «todas en paralelo» a ACOTADAS (CONCURRENCIA_REGENERACION a la vez,
+    // con resultados como allSettled: un paquete que falla no detiene a los demás).
+    assert.match(actions, /ejecutarAcotado\(ids, CONCURRENCIA_REGENERACION, \(id\) => generarTarifario\(id, enSegundoPlano\(inicioMs\)\)\)/);
     // varias regeneraciones en bucle comparten UNA sola ventana (la de la acción), no una por paquete/hotel
     assert.match(leer("app/(dashboard)/dashboard/producto/hoteles/actions.ts"), /const inicioRegen = Date\.now\(\); for \(const hid of tocados\) await regenerarTarifariosDeHotel\(hid, inicioRegen\)/);
     assert.match(leer("app/(dashboard)/dashboard/vuelos/actions.ts"), /inicioMs: inicioRegen/);

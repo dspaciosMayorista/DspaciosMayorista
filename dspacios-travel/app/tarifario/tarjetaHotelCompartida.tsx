@@ -25,6 +25,7 @@ import Image from "next/image";
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, Info, Star, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { seccionesDescripcion, type DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { descripcionParaSalida, descripcionConServicios } from "@/lib/tarifario/descripcionPaquete";
 import type { ServicioIncluidoRef } from "@/lib/tarifario/incluyePorSalida";
@@ -165,8 +166,8 @@ export function DescripcionHotelExpandible({
 // (regla de marca): check para "Incluye", tache para "No incluye", un ícono
 // informativo neutro para el resto (tarifas especiales/condiciones).
 function IconoSeccion({ titulo }: { titulo: string }) {
-  if (titulo === "El programa incluye") return <Check size={14} className="shrink-0" style={{ color: "var(--brand-success)" }} />;
-  if (titulo === "El programa no incluye") return <X size={14} className="shrink-0 text-gray-400" />;
+  if (titulo === "Incluye") return <Check size={14} className="shrink-0" style={{ color: "var(--brand-success)" }} />;
+  if (titulo === "No incluye") return <X size={14} className="shrink-0 text-gray-400" />;
   return <Info size={14} className="shrink-0 text-gray-400" />;
 }
 
@@ -445,6 +446,7 @@ export function ReceptivoModal({ receptivo, onClose, seleccion }: {
     motivoBloqueo?: string | null;
   };
 }) {
+  useEscapeCerrar(true, onClose); // Escape = «Cerrar»
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={receptivo.nombre} className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>

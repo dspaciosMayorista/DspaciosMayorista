@@ -2232,13 +2232,17 @@ export type Database = {
       hotel_temporadas: {
         // condicion_pago_* = migración 164. hotel_temporadas NO tiene columna de
         // restricción comercial: se deriva 100% implícita (ver lib/cotizacion/condicionPagoCatalogo.ts).
-        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null };
-        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null };
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null;
+          // Migración 300 (#43/#60 entrega 4, PROPUESTA — no aplicada). NULL = promoción existente sin cambios.
+          promo_base_id: number | null; descuento_unidad: string | null; noche_gratis_regla: string | null; dias_promo: number[] | null };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null;
+          promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null; dias_promo?: number[] | null };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
       hotel_calculadora: {
-        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string };
+        // version: migración 297 (PROPUESTA) — cambia en CADA escritura (trigger); los escritores condicionan por ella.
+        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string; version: number };
         Insert: { id?: number; hotel_id: number; tipo?: string; params?: Json; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["hotel_calculadora"]["Insert"]>;
         Relationships: [];
@@ -2452,6 +2456,58 @@ export type Database = {
       // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupos de días (1 = lunes … 7 = domingo)
       // de una vigencia. INACTIVOS: `activo` solo admite false (check en la base) hasta que el
       // motor los soporte; ningún código los lee todavía.
+      // Migración 300 (#43/#60 entrega 4, PROPUESTA — no aplicada). Reglas por grupo de una promoción por noche.
+      // Lectura interna (anon sin acceso); escritura por la RPC promocion_guardar_reglas (o directa, mismos roles).
+      // Migración 301: acumulación y orden de una promoción frente a EBB / Long Stay. Escritura solo por RPC.
+      hotel_promocion_cambio_pendiente: {
+        Row: { promocion_id: number; cambios: Json; base: Json; faltan: string[]; propuesto_por: string | null; propuesto_en: string };
+        Insert: { promocion_id: number; cambios: Json; base: Json; faltan?: string[]; propuesto_por?: string | null; propuesto_en?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_promocion_cambio_pendiente"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_promocion_cambio_pendiente_promocion_id_fkey";
+            columns: ["promocion_id"];
+            isOneToOne: true;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      hotel_promocion_combinacion: {
+        Row: { promocion_id: number; estado: "heredada" | "configurada" | "pendiente"; alternativas: string[]; acumulable_ebb: boolean | null; acumulable_long_stay: boolean | null; orden: string[] | null; decidido_por: string | null; actualizado_en: string };
+        Insert: { promocion_id: number; estado: "heredada" | "configurada" | "pendiente"; alternativas?: string[]; acumulable_ebb?: boolean | null; acumulable_long_stay?: boolean | null; orden?: string[] | null; decidido_por?: string | null; actualizado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_promocion_combinacion"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_promocion_combinacion_promocion_id_fkey";
+            columns: ["promocion_id"];
+            isOneToOne: true;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      hotel_promocion_reglas: {
+        Row: { id: string; promocion_id: number; grupo_id: string | null; valor: number; dias: number[] | null; creado_en: string; actualizado_en: string };
+        Insert: { id?: string; promocion_id: number; grupo_id?: string | null; valor: number; dias?: number[] | null; creado_en?: string; actualizado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_promocion_reglas"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_promocion_reglas_promocion_id_fkey";
+            columns: ["promocion_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "hotel_promocion_reglas_grupo_id_fkey";
+            columns: ["grupo_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporada_grupos";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       hotel_temporada_grupos: {
         Row: {
           id: string; temporada_id: number; nombre: string; dias: number[];
@@ -2474,6 +2530,23 @@ export type Database = {
       };
       // Migración 295 (#43/#60 incremento 3, PROPUESTA — no aplicada). PROPUESTA de tarifas por grupo
       // (inactiva): el motor no la lee. Lectura para internos; escrituras solo por las RPC grupos_dias_*.
+      // Migración 297 (PROPUESTA, número provisional). Bases de la calculadora por grupo de días (#43/#60 3b).
+      // Lectura interna; escrituras solo por la RPC grupos_dias_guardar_calculadora. El motor no la lee.
+      hotel_calculadora_grupo_bases: {
+        // generales: migración 298 (null = usa los generales del hotel).
+        Row: { id: number; grupo_id: string; tipo: string; bases: Json; generales: Json | null; version: number; updated_at: string; updated_by: string | null };
+        Insert: Record<string, never>; // solo por RPC
+        Update: Record<string, never>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_calculadora_grupo_bases_grupo_id_fkey";
+            columns: ["grupo_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporada_grupos";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       hotel_grupo_tarifa_propuesta: {
         Row: {
           id: number; grupo_id: string; tipo_habitacion: string; alimentacion: string;
@@ -2828,6 +2901,8 @@ export type Database = {
           procedencia_mixta: boolean;
           // Migración 256: tramos [{desde,hasta}] donde un servicio opcional se ofrece (null = todas las fechas del viaje del paquete).
           fechas_disponibles: Json | null;
+          // Migración 302 (#43/#60 entrega 6): entrada de la estadía que justifica el «desde» de una porción con grupos (salida = entrada + noches).
+          desde_entrada: string | null;
           // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo
           // + servicios con su precio de infante + hotel de la clase del menor).
           // En filas de servicio persona = PVP del infante. NULL = la fila se
@@ -2884,6 +2959,7 @@ export type Database = {
           procedencia_temporadas?: Json | null;
           procedencia_mixta?: boolean;
           fechas_disponibles?: Json | null;
+          desde_entrada?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
         Relationships: [];
@@ -4003,8 +4079,9 @@ export type Database = {
         Relationships: [];
       };
       hotel_reglas_descuento: {
-        Row: { id: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa: boolean; created_at: string };
-        Insert: { id?: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa?: boolean; created_at?: string };
+        // 301: autorizada=false / propuesta = cambio RETENIDO (crea combinaciones sin configurar); el motor solo lee autorizada.
+        Row: { id: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa: boolean; created_at: string; autorizada: boolean; propuesta: Json | null };
+        Insert: { id?: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa?: boolean; created_at?: string; autorizada?: boolean; propuesta?: Json | null };
         Update: Partial<Database["public"]["Tables"]["hotel_reglas_descuento"]["Insert"]>;
         Relationships: [];
       };
@@ -4174,6 +4251,8 @@ export type Database = {
           descripcion: string | null;
           recargo_individual: number | null;
           tipo_tarifa: string | null;
+          // Migración 302: entrada del «desde» DOBLE de la combinación (porción con grupos).
+          desde_entrada_doble: string | null;
         };
         Relationships: [];
       };
@@ -4459,6 +4538,41 @@ export type Database = {
         Returns: Json;
       };
       grupos_dias_borrar: { Args: { p_grupo_id: string; p_huella: string }; Returns: Json };
+      // Migración 297 (PROPUESTA): lectura de la 295 + bases por grupo; borrado que exige las versiones revisadas.
+      grupos_dias_config_bases: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_borrar_con_bases: { Args: { p_grupo_id: string; p_huella: string; p_bases: Json }; Returns: Json };
+      // Migración 299 (PROVISIONAL): venta por grupos — alcance (lectura), aplicar, descartar borrador, volver a «todos los días».
+      grupos_dias_alcance: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_activar: { Args: { p_temporada_id: number; p_huella: string; p_habilitaciones: Json }; Returns: Json };
+      // Migración 300 (PROPUESTA). p_base_id NULL + p_reglas [] = desvincular.
+      promocion_guardar_reglas: { Args: { p_promocion_id: number; p_base_id: number; p_reglas: Json; p_previas: Json }; Returns: Json };
+      // Migración 301 (PROVISIONAL): combinación con EBB / Long Stay y reglas con retención.
+      promocion_guardar_combinacion: { Args: { p_promocion_id: number; p_combinacion: Json; p_cambios?: Json | null }; Returns: Json };
+      regla_descuento_guardar: { Args: { p_hotel: number; p_id: number | null; p_tipo: string; p_umbral: number; p_pct: number; p_activa: boolean }; Returns: Json };
+      regla_descuento_aplicar: { Args: { p_id: number }; Returns: Json };
+      regla_descuento_descartar: { Args: { p_id: number }; Returns: undefined };
+      promociones_combinacion_estado: { Args: { p_hotel: number }; Returns: Json };
+      promocion_cambio_proponer: { Args: { p_promocion_id: number; p_cambios: Json }; Returns: Json };
+      promocion_cambio_activar: { Args: { p_promocion_id: number; p_combinacion?: Json | null }; Returns: Json };
+      promocion_cambio_descartar: { Args: { p_promocion_id: number }; Returns: undefined };
+      grupos_dias_descartar: { Args: { p_temporada_id: number; p_huella: string }; Returns: Json };
+      grupos_dias_volver_todos: { Args: { p_temporada_id: number; p_huella: string; p_elecciones: Json }; Returns: Json };
+      // Migración 298 (PROPUESTA): como la de la 297 + parámetros de la fórmula propios del grupo (null = los del hotel).
+      grupos_dias_guardar_calculadora_grupo: {
+        Args: {
+          p_temporada_id: number; p_huella: string; p_grupo_id: string; p_tipo: string;
+          p_calc_version: number; p_bases_version: number | null; p_bases: Json; p_generales: Json | null; p_filas: Json;
+        };
+        Returns: Json;
+      };
+      // Migración 297 (PROPUESTA): propuesta del grupo + bases de la calculadora, atómico.
+      grupos_dias_guardar_calculadora: {
+        Args: {
+          p_temporada_id: number; p_huella: string; p_grupo_id: string; p_tipo: string;
+          p_calc_version: number; p_bases_version: number | null; p_bases: Json; p_filas: Json;
+        };
+        Returns: Json;
+      };
       // Migración 203 (PROPUESTA). Historial paginado por cursor y búsqueda en
       // servidor; SECURITY INVOKER (RLS: solo roles internos).
       consultar_historial_tarifas: {

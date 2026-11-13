@@ -2349,3 +2349,561 @@ No depende de 286 ni de 288–292; no activa, regenera ni publica nada.
 | `pruebas/gruposDias295.react.ts` (pantalla): 4 rangos inválidos ⇒ mensaje concreto, sin «Confirmar propuesta», cero llamadas de guardado y sin nombres técnicos; 0–1/2–11 ⇒ revisar y un solo guardado con esas edades; rechazo de la base ⇒ mensaje traducido, sin reintento | **20 / 20** |
 
 **Sin cambios**: migraciones (293 y 295), SQL remoto, grupos (siguen inactivos), motor, generación y publicación. Contadores de solicitudes de AE.5 conservados.
+
+# AF. Entrega 3b implementada en local: calculadoras por grupo de días (2026-11-11; sin commit, sin aplicar)
+
+## AF.1 Punto de partida y numeración
+- Rama `claude/43-60-vigencias-por-dia` limpia e **idéntica en contenido** a `origin/main` (`8578c266e`, squash de #447). No se hizo reset ni force-push: la rama arrastra 5 commits ya fusionados; al publicar, decidir si se rehace desde `origin/main`.
+- Numeración comprobada en todas las ramas remotas y worktrees: 290–295 en uso (293 y 295 de este frente, aplicadas); **296 de #75** (`identidad_borrado_en_cascada`, ya aplicada). Se usa **297 como número PROVISIONAL**: confirmar con el dueño y con #75/#97 antes de aplicar. La 293 y la 295 no se tocan.
+
+## AF.2 Qué hace
+En la calculadora del hotel, el selector **«Calcular para»** permite elegir «Todos los días» (como siempre) o una vigencia de tarifa · grupo (inactivo). En modo grupo:
+- Se usa el **mismo formulario** de la calculadora guardada: los parámetros generales quedan de solo lectura (`fieldset` deshabilitado) y se editan las bases del grupo con **todas sus opciones** (Dubai: edades, suplementos y condición propios por base; Mixta: valores por régimen; Corporativa: tarifa de habitación). Promociones y «Generar» no aparecen (promociones por grupo = **entrega 4**).
+- **Mismas fórmulas**: `lib/hoteles/calculadoraGrupos.ts › calcularGrupo` llama a los generadores existentes, sin promociones; paridad probada. Qué es general y qué es de cada base: tabla en `calculadoras-hotel.md` §7.
+- **Revisión** (`revisarCalculo`): anterior → nuevo por celda (el mismo `planPropuesta` del panel de grupos) y tres cosas a resolver **explícitamente** antes de confirmar, sin nada preseleccionado:
+  1. **Edades**: Dubai fija la regla de edad de cada fila. Si difiere de la que quedaría en la propuesta, hay que aplicar la del cálculo o ajustar la base. Si la del cálculo es la general del hotel, aplicarla borra el override y se ve «(se borra)». Nunca queda un precio calculado con una regla y otra vigente. Mixta y Corporativa no fijan edades: las guardadas se conservan (no se envían).
+  2. **Condición** (`notas`): si el cálculo trae una (la condición propia de una base de Dubai, o «Tarifa no incluye impuestos.» de Corporativa sin impuesto) distinta de la guardada, se aplica explícitamente (anterior → nuevo; reemplaza la nota) o se ajusta la base. Si el cálculo no trae condición, la nota guardada se conserva. La nota de infante es opcional y se conserva si no se acepta.
+  3. **Disponibilidad**: cada acomodación que **antes no se vendía** y el cálculo pondría a la venta exige «Mantener sin venta» o «Habilitar a X» (o «… todas», como acción explícita). Se compara contra la propuesta guardada del grupo; si no hay, contra la tarifa actual de la vigencia; si tampoco existe, toda la combinación cuenta. Lo que la fórmula deriva legítimamente (triple, múltiple o niño de Dubai, etc.) se muestra igual, pero si antes no se vendía requiere esa decisión. Infante vacío = viaja gratis: ponerle precio es un cambio de precio, no una habilitación. Una combinación sin ninguna habitación a la venta no se envía.
+- Nunca se completa nada desde otros grupos ni desde la tarifa actual; una categoría sin base en el grupo no se calcula y su propuesta queda igual.
+- **Confirmar** = una RPC atómica (propuesta + bases). Editar después de revisar cierra la revisión.
+
+## AF.3 Migración 297 `calculadora_grupos_dias` (sin aplicar)
+- `hotel_calculadora.version` + trigger `tg_version_fila_43`: inserción = 1 y cada actualización = anterior + 1, también dos en la misma transacción; el escritor no puede fijarla. Probado (V2/V3).
+- `hotel_calculadora_grupo_bases` (grupo + tipo, `bases` jsonb, versión con el mismo trigger, FK al grupo `on delete restrict`, RLS de lectura interna, `authenticated` solo SELECT, auditoría 087). Cambiar el tipo de calculadora no las borra. El grupo con bases se borra solo con `grupos_dias_borrar_con_bases` (ver AF.9).
+- RPC `grupos_dias_guardar_calculadora` (security definer). Valida: usuario interno y permiso de catálogo (`_grupos_43_autorizar`); grupo existente, inactivo y de esa vigencia; tipo válido; filas **exclusivamente** del grupo (campos conocidos, netos ≥ 0 y al menos uno, edades enteras, sin «sugerencia aceptada»). Llama **sin modificar** a `grupos_dias_guardar_propuesta` (295) en modo `actualizar` (candados, huella, catálogo, unidad, restricciones). Valida estructura y valores de las bases (`_calc_grupos_43_validar_*`: categorías y regímenes del hotel, sin repetidas, precios > 0, edades propias con las reglas de la 177/295, suplementos de regímenes configurados, sin campos desconocidos). Compara las versiones de la calculadora (`FOR SHARE`) y de las bases (`FOR UPDATE`). Cualquier error ⇒ nada se guarda.
+- Preflight y postcheck (una consulta cada uno, con columna de estado) y rollback protegido (aborta si hay bases).
+
+## AF.4 Escritores de `hotel_calculadora` y concurrencia
+| Escritor | Antes | Ahora |
+|---|---|---|
+| `guardarCalculadora` (3 formularios; Mixta «Sustituir» guarda dos veces) | `upsert` ciego | update condicionado a `hotel_id + version` (o insert si no había); 0 filas o 23505 ⇒ «recarga», sin reintento; devuelve la versión nueva, que el editor encadena |
+| Cascada de renombre de vigencia | lee y reescribe sin condición | update condicionado a la versión leída; si no pudo, el aviso lo dice |
+| API directa (rol interno) | sin control | el trigger cambia la versión igual: los demás detectan el cambio |
+| RPC nueva | — | compara versión de la calculadora y de las bases bajo candado |
+| Borrado del hotel | cascada | sin cambios: los escritores condicionados encuentran 0 filas |
+
+«Generar» (RPC 203) sigue leyendo los parámetros guardados en el servidor sin comparar la versión (sin cambios; queda para la 3c).
+
+## AF.5 Archivos
+`supabase/migrations/20260601000297_calculadora_grupos_dias.sql`; scripts `preflight_/postcheck_/rollback_/fixture_/test_297_calculadora_grupos_dias.*`, `test_297_concurrencia.sh`, `test_297_postgrest.sh`; `lib/hoteles/calculadoraGrupos.ts` (nuevo, puro); `app/(dashboard)/dashboard/producto/hoteles/[id]/CalculoGrupoPanel.tsx` (nuevo); `CalculadoraEditor.tsx`, `grupos-actions.ts` (`guardarCalculoGrupo`), `page.tsx`, `hoteles/actions.ts`, `lib/hoteles/alcanceGrupos.ts` (texto de borrado), `types/database.ts`; pruebas `calculadoraGrupos297.test.ts`, `calculadoraGrupos297.react.ts`, `calculadoraGrupos297.pg.mjs`, stub del cargador, `gruposDias295.test.ts` (texto de borrado), `package.json` (`test:react`); `docs/tecnico/calculadoras-hotel.md` §4 y §7.
+
+## AF.6 Pruebas ejecutadas (local)
+| Prueba | Resultado |
+|---|---|
+| `test_297_calculadora_grupos_dias.sh` sobre la plantilla equivalente a Producción (≤287) + 293 + 295. Recorrido: preflight (8 OK) → 297 → postcheck (11 OK; huellas de calculadoras, tarifas y propuestas idénticas) → reaplicar → **54 aserciones** (versión ×6, guardado y conservación de notas/edades ×7, **22 rechazos atómicos**, Mixta ×3, permisos ×8, cascada ×2, invariantes ×5) → rollback abortado con bases → rollback → preflight → reaplicar → postcheck. Cada rechazo atómico trae una fila válida que cambiaría la propuesta y verifica que NADA cambió. | 0 fallos |
+| `test_297_concurrencia.sh`, dos sesiones reales. Rechazadas (B espera el candado y recibe CONFIG_DESACTUALIZADA): K1 escritura directa vs RPC, K2 guardar calculadora vs RPC, K3 dos guardados del mismo grupo (solo bases), K4 dos guardados de la calculadora, K5 borrar grupo vs RPC. Controles que esperan y pasan: K6 (RPC vs guardar calculadora) y K7 (otro grupo). Invariantes. | 8 / 8 |
+| `test_297_postgrest.sh` (PostgREST v16.4, JWT por rol): recorrido del editor con el **mismo cálculo** (calcularGrupo → revisarCalculo → payloadFilas → RPC → reabrir); solo el grupo pedido; el otro grupo intacto; bases reabiertas idénticas; PATCH condicionado por versión (pasa / 0 filas / no se puede fijar); 409 por versión de la calculadora y de las bases; superadmin sí; Minorista y venta 403; anon 401; venta no lee; escritura directa 403; fila de otro grupo 400; tarifas intactas | 25 / 25; 17 solicitudes HTTP |
+| `pruebas/calculadoraGrupos297.test.ts` (fórmulas y paridad de las 3 calculadoras, revisión, acción, escritores condicionados, cableado) | 28 / 28 |
+| `pruebas/calculadoraGrupos297.react.ts` (componentes reales: hotel sin grupos igual que siempre, versión encadenada, modo grupo, 0/1/1 solicitudes, nada preseleccionado, confirmar solo el grupo, editar cierra la revisión, obsoleta sin reintento, StrictMode/reposo/desmontaje) | 10 / 10 |
+| Suites existentes de calculadoras, grupos, ficha, vigencias y motor (20 archivos unitarios + 4 React) | 592 + 42 en verde |
+| `tsc`, ESLint de los archivos tocados, `next build` | 0 errores, 0 avisos, build correcto |
+
+## AF.7 Solicitudes y consumo (VALIDACION_CONSUMO_VERCEL.md)
+| Acción | Solicitudes | Recarga |
+|---|---|---|
+| Ver la ficha | 0 nuevas (bases y versión dentro de las lecturas existentes) | — |
+| Elegir grupo, editar bases, decidir | 0 | ninguna |
+| Revisar | 1 (`grupos_dias_config`, ~2 KB) | ninguna |
+| Confirmar | 1 RPC (~3 KB; devuelve la configuración) | ninguna (sin `revalidatePath`) |
+| Confirmación obsoleta | solo la escritura rechazada; «Recargar» es un clic explícito (recarga completa) | — |
+| Guardar la calculadora | 1 (igual que antes) | la de siempre |
+
+Sin efectos, sondeos, temporizadores ni reintentos en el panel (cableado probado); en StrictMode, en reposo y tras desmontar, las solicitudes cesan. Pendiente en Preview: Network/Observability del recorrido y en reposo.
+
+## AF.8 Orden de despliegue y dependencias
+1. Confirmar el número 297 con el dueño y #75/#97.
+2. Preflight 297 → **297** → postcheck 297 (huellas idénticas).
+3. Recién después, el código (lee `hotel_calculadora.version` y llama a la RPC). La 297 es compatible con el código que hoy está arriba: el `upsert` viejo sigue funcionando y el trigger sube la versión.
+4. Para revertir: primero el código, luego `rollback_297_…` (aborta si hay bases).
+
+**La 3c (activación)** necesitará: pasar la propuesta a `tarifa_hotel` y activar los grupos (retirar el candado de la 293); que «Generar» y «Reemplazar» escriban por grupo usando estas bases (clave con grupo en la RPC 203) y comparen la versión; y volver a validar Adults Only y la coherencia de edades y notas al activar. **Entrega 4**: promociones por grupo.
+
+**Límites**: los parámetros generales son compartidos por todos los grupos (un suplemento distinto por día sería una ampliación); la prueba usa la plantilla local equivalente a Producción, no Preview; la versión del editor se actualiza con la respuesta de cada guardado y, si otra persona guarda, se detecta al guardar (no en vivo).
+
+## AF.9 Correcciones de la auditoría (borrado con bases, compra cerrada, compatibilidad) — 2026-11-11
+**Numeración**: la 296 de #75 (`identidad_borrado_en_cascada`) **ya está aplicada**; la 297 sigue PROVISIONAL hasta confirmar su número (cabecera corregida). La 293 y la 295 no se tocaron.
+
+**1. Borrado y confirmación.** Antes, las bases se borraban en cascada con el grupo, pero la vista previa y la huella de la 295 no las cubren: un borrado revisado antes de que alguien guardara bases nuevas se las habría llevado sin confirmarlas. Corrección, toda en la 297:
+- FK de `hotel_calculadora_grupo_bases` al grupo **`on delete restrict`**: el borrado de la 295 (`grupos_dias_borrar`, sin cambios) ya no puede llevárselas (falla con 23503 y no borra nada).
+- `grupos_dias_config_bases` (una lectura): la configuración de la 295 + las bases de cada grupo (tipo, versión, cuántas bases). El panel de grupos la usa en lugar de `grupos_dias_config`; la vista previa del borrado nombra las bases concretas («Dubai (2 bases, versión 3)») y avisa que, si cambian, el borrado se rechaza.
+- `grupos_dias_borrar_con_bases(grupo, huella, bases revisadas)`: mismos candados que la 295 y la RPC de guardado (grupos → … → hotel, luego las bases `FOR UPDATE`), compara las bases actuales con las revisadas (tipo + versión, también «había cero» frente a «ahora hay») y solo entonces borra las bases y llama a la RPC de la 295 para el grupo y sus propuestas. Si no coinciden: PT409 con el motivo y nada se borra. Guardar grupos o propuestas no cambia las bases: el panel conserva las leídas al aplicar esas respuestas.
+
+**2. Compra cerrada.** Regla vigente, sin otra interpretación de fechas: en el formulario, `nombreVigenciaVencida` (la de «Generar»): el grupo aparece «compra cerrada: no se calcula», deshabilitado, y si se fuerza, el panel no calcula, no revisa ni confirma. En el servidor, la RPC aplica la regla de `generar_tarifas_hotel_calculadora` (todas las filas con ese nombre con `compra_fin < fecha_negocio()`), con la vigencia ya bloqueada: 23514 y nada se guarda (ni propuesta ni bases).
+
+**3. Compatibilidad de despliegue** (`test_297_compatibilidad.sh` + `pruebas/compatibilidad297.pg.mjs`, PostgREST v16.4). Calculadoras Dubai, Mixta y Corporativa sembradas ANTES de la 297 con todas sus opciones (edades/suplementos/condiciones propias, promociones, valores por régimen, impuesto y descuento):
+- A) El código anterior lee las tres (línea base).
+- B) Preflight (ve las 3) → 297 → postcheck: huella (id, hotel, tipo, params) idéntica; params byte a byte iguales; todas en versión 1.
+- C) El código anterior DESPUÉS de la 297, con las mismas peticiones que enviaba supabase-js: lee igual; `upsert` de guardar (las tres) funciona y la versión sube aunque no la conozca; la cascada de renombre escribe; crear una calculadora nueva nace en versión 1; el panel de grupos anterior (`grupos_dias_config`) funciona.
+- D) El código nuevo: lectura con versión; guardado condicionado pasa y con versión vieja da 0 filas sin cambiar los params (las tres); RPC del grupo con la versión de la calculadora; lectura con bases; el borrado anterior (295) rechazado sin borrar; el borrado nuevo con las bases revisadas borra; los params conservan todas sus opciones originales.
+
+**Pruebas repetidas tras las correcciones (locales)**
+| Prueba | Resultado |
+|---|---|
+| `test_297_calculadora_grupos_dias.sh` (plantilla equivalente a Producción ≤287 + 293 + 295): preflight 8 OK → 297 → postcheck 11 OK, huellas idénticas → reaplicar → **63 aserciones** (nuevas: L1 lectura con bases; C1–C7 borrado: la 295 rechazada por la FK, vista previa sin bases, versión distinta y huella vieja rechazadas sin borrar nada, borrado con las versiones revisadas, grupo sin bases; Q1–Q3 compra cerrada sin escrituras parciales) → rollback protegido → rollback → reaplicar | 0 fallos |
+| `test_297_concurrencia.sh`: K1–K7 como antes + **K8** (B revisa el borrado de Semana → A guarda bases nuevas → B confirma el borrado antiguo: espera el candado, PT409, siguen el grupo, sus bases nuevas y sus propuestas) + K9 control (guardar bases de otro grupo no invalida el borrado: espera y pasa) | 10 / 10 + invariantes |
+| `test_297_postgrest.sh` (+ compra cerrada 400 sin escrituras, lectura con bases, borrado con versión vieja 409 sin borrar, borrado con las revisadas) | 31 / 31; 22 solicitudes HTTP |
+| `test_297_compatibilidad.sh` (A–D arriba) | 39 / 39 |
+| `pruebas/calculadoraGrupos297.test.ts` (+ compra cerrada: mensaje del servidor sin reintento; misma regla en el formulario) | 30 / 30 |
+| `pruebas/calculadoraGrupos297.react.ts` (+ compra cerrada: opción deshabilitada; forzada, sin cálculo, sin revisar ni confirmar, 0 solicitudes) | 11 / 11 |
+| `pruebas/gruposDias295.test.ts` y `.react.ts` (lectura con bases, borrado con las bases revisadas, motivo de PT409, bases mal formadas sin llamada, vista previa con las bases concretas) | 34 / 34 y 21 / 21 |
+| Suites relacionadas (20 unitarias + 5 React) | 596 + 54 en verde |
+| `tsc`, ESLint de los archivos tocados, `next build` | 0 errores, 0 avisos, build correcto |
+
+**Solicitudes**: sin cambios en número: abrir el panel de grupos sigue siendo 1 lectura (ahora `grupos_dias_config_bases`), borrar 1 RPC, revisar el cálculo 1, confirmar 1.
+
+**Qué se probó y qué sigue pendiente**
+- Probado: todo lo anterior en Postgres local (plantilla equivalente a Producción) y PostgREST local, con dos sesiones reales para las carreras y con las peticiones exactas del código anterior.
+- Pendiente: el número 297 (confirmación del dueño y de #75/#97); Preview (Network/Observability del recorrido y en reposo) y datos reales: la plantilla no trae calculadoras de Producción, las de la prueba de compatibilidad son sembradas; la vista del código anterior desplegado de verdad en Vercel contra la base con la 297 (aquí se reprodujeron sus peticiones, no se ejecutó ese despliegue). Con el código anterior arriba, borrar un grupo que tenga bases fallaría por la FK, pero ese código no puede crear bases, así que no ocurre hasta desplegar el nuevo.
+
+## AF.10 Migración 297 aplicada en Producción (2026-11-11) — cierre de la entrega 3b
+- El dueño aplicó la **297** en Producción con el orden previsto (preflight → 297 → postcheck). **Postcheck correcto**: 189 calculadoras; huellas de calculadoras (id, hotel, tipo, params), de tarifas y de propuestas **idénticas** al preflight; grupos inactivos (candado de la 293 intacto). Desde ahora la 297 es **inmutable**: cualquier cambio va en una migración nueva.
+- El número 297 queda confirmado para este frente (la 296 de #75 ya estaba aplicada). Siguiente libre para cualquier frente: 298 (comprobar de nuevo antes de usarlo).
+- Con la 297 aplicada, el código que hoy está en Producción sigue funcionando (probado en `test_297_compatibilidad.sh`, fase C): su guardado de la calculadora (`upsert`) y la cascada de renombre escriben igual y la versión sube sola. Falta desplegar el código de esta entrega (paso 3 de AF.8).
+- Git: #447 fusionado (squash `8578c266e`) y la rama remota `claude/43-60-vigencias-por-dia` borrada al fusionar; no hay PR abierto. La entrega 3b continúa en la rama nueva **`claude/43-60-3b-calculadoras`**, creada desde `origin/main` con los cambios locales (sin reset ni force-push).
+
+**Validación pendiente en Preview** (tras desplegar este código):
+1. Hotel por persona con calculadora Dubai guardada y una vigencia de tarifa con grupos: en «Tarifa por fórmula» aparece «Calcular para»; elegir un grupo no hace solicitudes; los generales quedan de solo lectura; no aparecen promociones ni «Generar».
+2. Cargar bases del grupo (con edades o condición propias en Dubai) → «Revisar» (1 solicitud) → resolver edades, condición y cada acomodación «antes sin venta» (nada preseleccionado) → «Confirmar» (1 solicitud). Reabrir: las bases y la propuesta del grupo se ven iguales; el otro grupo no cambió.
+3. Repetir con un hotel Mixta (dos regímenes) y uno Corporativa sin impuesto (condición «Tarifa no incluye impuestos.» exigida).
+4. Una vigencia con la compra cerrada: su grupo aparece deshabilitado («compra cerrada»).
+5. Dos pestañas: en una, abrir el borrado del grupo; en la otra, guardar bases nuevas; confirmar el borrado en la primera ⇒ rechazado con el motivo y nada borrado. En dos pestañas, guardar la calculadora en una y luego en la otra ⇒ la segunda pide recargar.
+6. Hotel sin grupos y hotel por unidad: la calculadora se ve y funciona como antes (sin selector).
+7. Network/Observability durante el recorrido y en reposo: solo las solicitudes de los clics; ninguna en reposo ni al cambiar de pestaña; sin regeneración ni publicación del tarifario.
+
+## AF.11 Corrección tras Preview: parámetros de la fórmula por grupo (migración 298 PROVISIONAL) — 2026-11-11
+**Validado por el dueño en Preview (#448):** cálculo, guardado y selección explícita de acomodaciones. **Defecto:** en modo grupo no se podían editar modificadores, descuentos ni suplementos (incluido FULL): estaban bloqueados con los generales del hotel.
+
+**Corrección**
+- Cada grupo elige explícitamente **«Usar los generales del hotel»** (bloqueados, como referencia) o **«Valores propios de este grupo»** (se habilitan partiendo de una copia de los del hotel). Los generales del hotel se ven siempre como referencia y nunca cambian; otros grupos tampoco.
+- Son solo parámetros de la **fórmula**, por tipo: Dubai (régimen base, modificadores, suplementos —FULL incluido—, nota de infante); Mixta (IVA, modo/IVA por acomodación, IVA de niño, pax, nota); Corporativa (régimen base, persona/niño adicional, impuesto, **descuento de la tarifa** —parte de la fórmula, rotulado «no es promoción»—, suplementos por régimen, nota). Las **promociones** nunca entran: el cálculo del grupo las quita y la base rechaza `promos`, `bases` y `bases_por_regimen` dentro de los parámetros.
+- Se guardan con las bases y se reabren: cambiar de opción vuelve a montar el formulario sin perder las bases escritas; la revisión muestra «Parámetros de la fórmula de este grupo» con el cambio de modo y anterior → nuevo de cada parámetro (sobre los efectivos), además de la propuesta.
+- **Migración 298 `calculadora_grupos_generales`** (número provisional; 296 y 297 aplicadas; 298 comprobado libre en todas las ramas y worktrees): columna `hotel_calculadora_grupo_bases.generales` (null = generales del hotel; lo guardado con la 297 queda así, sin subir de versión); RPC `grupos_dias_guardar_calculadora_grupo` = la RPC de la 297 **sin cambios** + los generales en la misma transacción (versiones, huella, compra cerrada, candados y permisos de la 297); validación por tipo; un trigger hace que cualquier otra escritura de la fila (p. ej. la RPC de la 297 sola) deje los generales en null, así la fila nunca guarda parámetros distintos de los usados para calcular; la vista previa del borrado dice si el grupo tenía parámetros propios. Preflight y postcheck (una consulta cada uno) y rollback protegido (aborta si hay parámetros propios; restaura la función de la 297).
+- **No** se edita ninguna migración aplicada (293, 295, 297).
+
+**Pruebas (locales)**
+| Prueba | Resultado |
+|---|---|
+| `test_298_calculadora_grupos_generales.sh` (Producción equivalente + 293 + 295 + 297 y **bases guardadas con la 297 antes de la 298**): preflight → 298 → postcheck (huellas de bases, calculadoras y propuestas idénticas) → reaplicar → **34 aserciones** (compatibilidad K1; **Semana y Finde con Sencilla y FULL distintos**, aislados, reabiertos, hotel intacto G1–G7; 14 rechazos/validaciones atómicos incluidas promociones como «parámetro»; la RPC de la 297 sola deja null C1–C5; permisos P1–P4; invariantes) → rollback protegido → rollback → reaplicar | 0 fallos |
+| `pruebas/calculadoraGrupos297.test.ts` (+ generales: solo fórmula, Semana/Finde FULL 180.000 / 220.000 / hotel 200.000, paridad con el generador, revisión anterior → nuevo, clave de revisión) | 34 / 34 |
+| `pruebas/calculadoraGrupos297.react.ts` (+ Semana usa los del hotel bloqueados con referencia; propios se habilitan, conservan la base escrita, recalculan y viajan explícitos sin promociones; Finde reabre con los suyos y no recibe los de Semana; volver a los del hotel = null) | 15 / 15 |
+| Suites relacionadas (20 unitarias + 5 React) | 600 + 58 en verde |
+| `tsc`, ESLint de los archivos tocados | 0 errores, 0 avisos |
+
+## AF.12 Entorno local habitual (`local4360`)
+Base + Auth + REST + Storage + gateway reales en local, datos sintéticos y usuarios por rol; comandos de iniciar, detener y restaurar; modo desarrollo y build de producción local. Guía y límites: [`entorno-local-4360.md`](./entorno-local-4360.md). Probado al montarlo: sesión real, RLS por rol, ficha con grupos y calculadora en dev y en build local (humo 5/5 en cada uno), escritura real por la RPC de la 298 y restaurar a la foto inicial.
+
+# AG. Plan restante consolidado de #43/#60 (2026-11-11) — sin reabrir decisiones
+**Método aprobado por el dueño:** completar todo el alcance en local, por partes internas auditadas y probadas; **un único Preview final y un merge por PR (#448 abierto)**; sin pushes ni redeploys por subpartes. Si el Preview final muestra un defecto, se detiene y se explica antes de otra publicación. La 297 está aplicada; las migraciones nuevas se prueban en local y el SQL remoto lo ejecuta el dueño. Flexible/no reembolsable, fuera de alcance (D1).
+
+| Parte | Contenido (decisiones ya aprobadas) | Estado | Migración |
+|---|---|---|---|
+| 1 · 2 · 3 | Esquema inactivo (293), motor por noche (#446), propuesta y editor de grupos (295) | En Producción | aplicadas |
+| 3b | Calculadoras por grupo (297) + parámetros por grupo (298) | 297 aplicada; **298 y su código en local** | 298 provisional |
+| **3c Activación** | V.1 activar en una transacción desde la propuesta (sin copiar ni vender solo; cancelar sin cambios); volver a «todos los días» eligiendo qué se conserva; V.2 actualizar / reemplazar grupo / reemplazar hotel con alcance exacto y huella; V.3 borrar con promociones dependientes resueltas antes; W empates por rangos al activar (N4); calculadoras y CSV escriben tarifas reales por grupo (clave con grupo en la 203) comparando la versión; retirar el candado de la 293 solo dentro de esta migración | **Implementada en local (§AH), sin aplicar** | 299 provisional |
+| **4 Promociones** | X/N1 base primero y su promoción; O no crea disponibilidad, todas las noches; Y/H10 restricción por días; P noche bonificada elegida (más barata, más cara, última; heredadas = promedio); S/T monto fijo con unidad (persona·noche, habitación·noche, persona·estadía; heredadas = unidad anterior; no aplica si supera la tarifa; reparto exacto) | **Implementada en local (§AI), sin aplicar** | 300 provisional |
+| **5 Acumulación y precedencia** | Q/R pregunta solo si puede coincidir; acumulable o orden explícito sin preselección; recorrido determinista; rechazar contradicciones; Z/P3 versión autorizada sigue mientras el cambio queda pendiente de activar | Pendiente | nueva |
+| **L Límite de 30 noches** | AA.2 global, constante única, servidor y formularios, sin recortar, históricos intactos | Pendiente; **requiere** los 3 puntos de AA.4 (receptivos, cotización/contrato manuales, productos ya configurados con más de 30 noches) | no prevista |
+| **6 «Desde» real** | U estadía completa más económica vendible, con noches, precio y fecha de entrada; empate por entrada más temprana; al generar; sin EBB/Long Stay (P7); reproducible | Pendiente; depende de 4 y L | nueva |
+| 7 Paridad y cierre | Recorridos completos en el entorno local, hoja técnica, un único Preview | Al final | — |
+
+**Pendientes reales que no son decisiones nuevas**
+1. **Confirmar números** de las migraciones nuevas (298 y las de 3c, 4, 5, 6) con #75/#97 al escribirlas.
+2. **AA.4** (solo bloquea la entrega L): alcance de receptivos, cotización/contrato manuales y productos configurados con más de 30 noches (este último, con una consulta de solo lectura).
+3. **Datos de hoteles 9, 78 y 172** (solo impiden que esos hoteles adopten grupos) y corrección del hotel 53 (scripts listos, la ejecuta el dueño).
+4. Confirmar «festivo» = no en la v1 y la lectura de compra de L.2 (no bloquean).
+5. Derivados [D] de §6 de la especificación (base del descuento fijo, presentación sin estadía vendible, límites del «Desde» tras medir): se confirman con ejemplos al construir.
+
+**Orden de trabajo propuesto:** 3c → 4 → 5 → (L, en cuanto se respondan los 3 puntos de AA.4) → 6 → 7. Cada parte: implementación local + migración (preflight, postcheck, rollback protegido) + pruebas SQL, concurrencia con dos sesiones, PostgREST por rol, puras, React con contadores de solicitudes y StrictMode/reposo, compatibilidad con el código anterior y recorrido en `local4360`. Al final: un único Preview y merge de #448.
+
+## AF.13 Aislamiento del entorno local cerrado (revisión de Codex) — 2026-11-11
+Defectos señalados: variables asignadas en la terminal sin restaurar; Next podía cargar `.env` por su cuenta y no estaba demostrado el aislamiento de correo, pagos, webhooks y otras integraciones; `NODE_OPTIONS` con 8 GB en un equipo sin memoria.
+
+Corrección (`supabase/scripts/local4360/`): la app corre en un **proceso hijo con entorno armado desde cero** (mínimo del sistema + lo local; la terminal no se toca y se verifica al salir); **no arranca si hay `.env*`** en la app (solo mira nombres); **guardia de red** precargada en todos los procesos Node de la app que rechaza toda conexión no loopback antes de DNS (excepción: fuentes públicas de `next/font`), con registro de intentos; telemetría y atajo de login apagados; **solo 127.0.0.1**; memoria **3 GB dev / 4 GB build / 2 GB start** con comprobación de memoria libre y **dev y producción excluyentes** (candado + puertos).
+
+Comprobado sin llamadas reales al exterior (`local4360.ps1 aislamiento`): 17/17 (credenciales del usuario no pasan; claves y URL locales; 7 destinos externos —Supabase de producción, Resend, Brevo, Wompi, webhook, telemetría, IP pública— bloqueados antes de conectar; gateway local responde; base sin claves de correo; terminal igual) y las negativas (`.env` presente, memoria insuficiente, puerto de la otra app ocupado, candado vivo). Datos sintéticos conservados (no se restauró ni se borró nada).
+
+**Diferencias de esquema documentadas** en `entorno-local-4360.md` §4: faltan 286, 288–292 (y la 296 aplicada en Producción no está en esta rama). El entorno **no** es una validación integral: contratos, confirmación de ventas, cartera, obligaciones, comisiones B2B y DTM no se validan aquí hasta incorporar esas dependencias. La 298 sigue pendiente de auditoría.
+
+**Estado al cierre:** la app no se arrancó en esta ronda: el equipo tenía ~0,5 GB libres y el script se niega correctamente (necesita ~3,5 GB para dev). No se detuvo ningún servicio ajeno.
+
+**AF.13 · corrección (2026-11-11):** la guardia aceptaba como loopback cualquier host que empezara por «127.» (también dominios). Ahora solo `localhost` o una IP literal válida de loopback (`net.isIPv4/isIPv6` + `net.BlockList`: 127.0.0.0/8, ::1, ::ffff:127.0.0.0/104); `127.ejemplo.com` y `127.0.0.1.nip.io` se bloquean antes de DNS. Batería de aislamiento repetida: **21/21**, sin conexiones externas reales. Documentado que la guardia protege solo los procesos Node de la app (no el navegador ni los contenedores). Humo con sesión real bajo el lanzador nuevo **pendiente**: había ~0,47 GB libres y el control de memoria (sin cambios) impide arrancar dev (~3,5 GB) y build (~4,5 GB); se hará primero en desarrollo y después en producción local, nunca a la vez.
+
+
+# AH. Entrega 3c implementada en local: activación controlada y tarifas reales por grupo (2026-11-12; sin commit, sin aplicar)
+
+## AH.1 Numeración y alcance
+- **Migración 299 PROVISIONAL** `20260601000299_grupos_dias_activacion.sql`: revisados todos los worktrees y ramas (296 = #75, aplicada; 297 de este frente, aplicada; 298 de este frente, local y pendiente de auditoría); 299 libre. **No depende de la 298** (probada con y sin ella; si se aplican las dos, la 298 va primero). Siguiente libre: 300.
+- **No edita la 293, la 295 ni la 297** (aplicadas): las funciones suyas que cambian se **redefinen** en la 299, y su rollback restaura literalmente las originales (comprobado byte a byte, ver AH.5).
+
+## AH.2 Modelo
+La **propuesta** (295) es el **borrador** de cada grupo; las tarifas por grupo de `tarifa_hotel` (`grupo_id` no nulo) son lo que **se vende**. Lo vigente se sigue vendiendo mientras se edita el borrador.
+| Operación (V.1–V.3) | Cómo queda | RPC |
+|---|---|---|
+| Activar (primera vez) | «Aplicar a la venta»: en UNA transacción activa los grupos, quita las tarifas «todos los días» de la vigencia y pone a la venta exactamente la propuesta. Cancelar = no confirmar (nada cambia) | `grupos_dias_activar` |
+| Actualizar / reemplazar un grupo / reemplazar la vigencia | Los tres modos de la 295 sobre el borrador (panel, calculadora por grupo o CSV); luego «Aplicar cambios a la venta» muestra el alcance exacto (antes → después por grupo, celda y campo) y aplica. Solo se reescriben las filas que cambian (historial con motivo `grupos_aplicar`) | `grupos_dias_guardar_propuesta` + `grupos_dias_activar` |
+| Descartar el borrador | La propuesta de los grupos que se venden vuelve a ser exactamente lo vigente | `grupos_dias_descartar` |
+| Volver a «todos los días» | Por cada combinación vendida por grupos se elige de qué grupo se conserva la tarifa o «No conservar»; nada viene elegido; sin elegir todas no se ejecuta. Los grupos quedan preparados con su propuesta | `grupos_dias_volver_todos` |
+| Borrar un grupo que se vende | Sus tarifas salen de la venta (historial `grupos_borrar`), sus bases y su propuesta se borran; el texto dice que sus días salen de la cobertura (puede aplicar otra vigencia o quedar sin venta) sin afirmar que se cierran ventas | `grupos_dias_borrar_con_bases` (297) → `grupos_dias_borrar` (redefinida) |
+| Reemplazar todo el hotel (calculadora general) | Conserva, como las de compra cerrada, las vigencias que se venden por grupos y las promociones calculadas desde ellas; las informa | `generar_tarifas_hotel_calculadora` (redefinida) |
+**Lectura del alcance** (`grupos_dias_alcance`, una solicitud): configuración + todo lo que la base exige, calculado por ella: habilitaciones, empates (simulando la propuesta aplicada), reglas de edad, sugerencias obsoletas, días sin grupo y si hay cambios pendientes.
+
+## AH.3 Garantías en la base (no dependen de la aplicación)
+- **Candado de la 293 retirado**, pero activar o desactivar grupos y escribir tarifas por grupo **solo desde las RPC** (marca de transacción `app.grupos_43_rpc`, que PostgREST no deja poner). `authenticated` pierde la escritura directa de `hotel_temporada_grupos`. Fuera de las RPC solo se permite la cascada del renombre de la vigencia.
+- **Huella** (PT409 = «recarga»): la de la 295 ahora cubre también las tarifas vigentes por grupo y la regla de edad del hotel. Candados en el orden de la 293; las RPC que escriben tarifas toman sus filas `FOR UPDATE` antes del candado del hotel (sin ascender un candado compartido).
+- **Habilitaciones**: la RPC exige que las confirmadas sean **exactamente** las que calcula (ni de menos ni de más). Habitación: >0 se vende (0 = no aplica); niño: no nulo; infante: nunca es habilitación (sin tarifa viaja gratis).
+- **Regla de edad** (G.4): no se aplica si la regla efectiva (fila ?? hotel ?? 0-2/3-10) difiere entre grupos de una combinación. **Sugerencias obsoletas** (la tarifa de origen cambió tras aceptarla): no se aplica. **Compra cerrada**: ni aplicar, ni volver, ni borrar un grupo que se vende.
+- **Empates (N4, W.3)**: detector en SQL `_grupos_43_empates` con la misma regla que el motor (rangos y blackouts, compra posible ≤ la noche, régimen, día cubierto por el grupo, neto no nulo por acomodación), agrupado en rangos de noches; cada par sobre el cruce completo de sus fechas (más de 1.096 noches = «no verificable», bloquea) y 200 conflictos por respuesta con aviso de recorte (AH.10). Se comprueba **al aplicar** (simulando) y además con un **trigger de restricción diferido** en `tarifa_hotel`, `hotel_temporadas` y `hotel_temporada_grupos`: cualquier transacción que deje un empate en un hotel con grupos activos se rechaza al confirmar, venga de donde venga (edición de prioridad o fechas, tarifa nueva, CSV, calculadora). Serializada por hotel con un candado propio: dos cambios válidos por separado que juntos empatan no pasan los dos (probado con control negativo, AH.5). Hoteles sin grupos activos: sin cambios (dos vigencias sin grupos empatadas siguen como hoy).
+- **Días de un grupo que se vende**: no se cambian (cambiarían la venta sin revisión). El nombre sí.
+
+## AH.4 Aplicación
+| Archivo | Cambio |
+|---|---|
+| `lib/hoteles/activacionGrupos.ts` (nuevo, puro) | `planActivacion` (antes → después por grupo frente a lo que se vende ESOS días; bloqueos; avisos; habilitaciones con su texto; confirmación concreta V.4), `puedeAplicar`, `payloadHabilitaciones`, `planVolver`/`payloadVolver`, `textoEmpate` |
+| `grupos-actions.ts` | `leerAlcanceGrupos`, `aplicarGruposVenta`, `descartarBorradorGrupos`, `volverATodosLosDias`: una RPC cada una; las que cambian la venta (aplicar, volver, borrar un grupo que se vendía) revalidan la ficha y regeneran el tarifario **una vez**; descartar no. Prefijos técnicos fuera de los mensajes |
+| `GruposDiasPanel.tsx` | Estado (preparado / se vende), sección **Venta** (revisar → bloqueos, cambios, habilitaciones una por una sin nada marcado y «Confirmar todas» explícito, efectos; aplicar), descartar, volver con elección por combinación; días de grupos activos bloqueados; columna «Se vende hoy» |
+| `alcanceGrupos.ts` | `ConfigGrupos` con `estado`/`vigentes`; `textoBorrado` para grupos que se venden (y el último no se borra) |
+| `HotelDetalleClient.tsx`, `[id]/page.tsx` | Etiqueta «preparado» / «se vende por grupos»; las tarifas por grupo muestran su grupo y «Se edita en Grupos de días» en vez de editar/eliminar |
+| `CalculadoraEditor.tsx`, `CalculoGrupoPanel.tsx` | «Calcular para» marca los grupos que se venden; el cálculo queda en el borrador. La calculadora general avisa qué vigencias se venden por grupos, las saca de su vista previa y del resultado |
+| `promoCalculadora.ts`, `contextoGeneracionTarifas.ts`, `hoteles/actions.ts` | `separarFilasConGrupos` (servidor y vista previa); el contexto lee los grupos en la misma lectura de vigencias (0 solicitudes nuevas); sustituir una promo calculada desde una vigencia con grupos, rechazado |
+| `hoteles/actions.ts` › `cargarTarifasMasivo`, `producto/hoteles/page.tsx` | **CSV con columna `grupo`**: esas filas van al BORRADOR del grupo (1 lectura de vigencias + 1 lectura y 1 RPC «actualizar» por vigencia, atómico por vigencia); una fila sin netos o con un grupo inexistente rechaza la vigencia; una fila sin grupo para una vigencia que se vende por grupos recibe un mensaje claro |
+| `historialTarifas.ts` | Motivos `grupos_aplicar`, `grupos_volver_todos`, `grupos_borrar` |
+| `types/database.ts` | RPC nuevas |
+
+## AH.5 Pruebas ejecutadas (local; Postgres `pg4360`, plantilla `local4360_base`)
+| Prueba | Resultado |
+|---|---|
+| `test_299_grupos_dias_activacion.sh` (sin y con la 298): preflight (7 OK) → 299 → postcheck (10 OK, huellas de tarifas, propuestas y grupos idénticas) → reaplicar → **68 aserciones** (permisos por rol, guardas, alcance, rechazos atómicos de huella/edades/habilitaciones/empate/compra cerrada/sin propuesta/obsoleta, aplicar exacto con historial, borrador con venta activa, calculadora por grupo, descartar, protecciones de la calculadora general y «reemplazar todo», empates por edición directa, borrar, volver, hotel sin grupos) → rollback abortado con grupos activos → volver → rollback → **las 6 funciones restauradas idénticas a las originales** → reaplicar | 0 fallos (las dos variantes) |
+| `test_299_concurrencia.sh`, dos sesiones reales: cambio de tarifa de origen, de propuesta, doble aplicación simultánea (se aplica una vez), calculadora frente a descartar, aplicar frente a borrar ⇒ B espera el candado y recibe PT409; **escritura sesgada de empates**: exactamente uno confirma; control (otra vigencia) pasa; invariantes (sin mezcla, sin tarifa con grupo inactivo, sin empates) | 7 carreras + 3 invariantes, 0 fallos |
+| Control negativo de la serialización de empates (base desechable): con la comprobación ralentizada 1 s, **sin** el candado los dos cambios confirman y queda un empate guardado; **con** el candado uno se rechaza | demostrado |
+| `test_299_postgrest.sh` (PostgREST v16.4, JWT por rol) con el mismo cálculo del panel: permisos (anon 401, venta 403, Minorista lee y no aplica), una solicitud por operación, aplicar exacto, repetir = 409, PATCH de tarifa por grupo 403, POST de grupo 403, **empate por PATCH directo = HTTP 400 al confirmar y nada cambia**, volver, historial | 28 OK, 16 solicitudes |
+| `pruebas/gruposDias299.test.ts` (puras, acciones con cliente simulado, CSV) | 18 / 18 |
+| `pruebas/gruposDias299.react.ts` (panel real; contadores; nada marcado; bloqueos; obsoleta sin reintento; activo; volver; último grupo; StrictMode y reposo) | 7 / 7 |
+| Pruebas del frente (`gruposDias295`, `calculadoraGrupos297`, `motorGrupos43*`; React 295/297/ficha) | 101 + 47, 0 fallos (cableado actualizado: revalidar/regenerar solo al cambiar la venta) |
+| Suite unitaria completa | 9.344 / 9.374: 30 fallos **no clasificados** hasta compararlos con una base equivalente (AH.11); ninguna de esas pruebas lee un archivo tocado aquí, pero eso no prueba que sean previos |
+| `tsc`, ESLint de lo tocado | 0 errores, 0 avisos |
+| **`next build` y humo con la app** | **NO ejecutados**: 1,5 GB libres con los servicios encendidos (dev exige 1,9 GB y build 1,8 GB; el umbral no se bajó). El build local existente quedó DESACTUALIZADO (15 archivos) y `start` se niega a servirlo. Se ejecutó en su lugar el recorrido por el gateway con sesiones reales de GoTrue sobre los datos sintéticos (5/5) |
+
+## AH.6 Solicitudes (`VALIDACION_CONSUMO_VERCEL.md`)
+| Acción | Solicitudes | Recarga |
+|---|---|---|
+| Ver la ficha | 0 nuevas (grupos incrustados, como antes) | — |
+| Revisar la aplicación a la venta | **1** (`grupos_dias_alcance`, ~3 KB) | ninguna |
+| Marcar habilitaciones, elegir en «volver» | 0 | — |
+| Aplicar / volver / borrar un grupo que se vende | **1 RPC** + 1 `revalidatePath` + la regeneración del tarifario de siempre | 1 |
+| Descartar el borrador | 1 RPC | ninguna |
+| Calculadora general | 0 nuevas (grupos en la misma lectura de vigencias) | igual que antes |
+| CSV con grupo | 1 lectura de vigencias + (1 lectura + 1 RPC) por vigencia con filas de grupo | igual que antes |
+Sin sondeos, sin reintentos automáticos, sin efectos que se retroalimenten (probado con StrictMode y reposo). En la base: cada transacción que toca tarifas, vigencias o grupos suma una comprobación diferida por hotel (un candado y un `EXISTS`; el detector completo solo si el hotel tiene grupos activos).
+
+## AH.7 Derivados que el dueño debe confirmar (no reabren decisiones aprobadas)
+1. **Borrador + aplicar**: con la vigencia a la venta, los cambios por grupo se preparan en el borrador y «Aplicar cambios» aplica **todos** los pendientes de la vigencia a la vez, con su alcance detallado (V.2 se cumple en el borrador: actualizar / reemplazar grupo / reemplazar vigencia).
+2. **«Desde» de porción**: al aplicar grupos por primera vez en un hotel, su «Desde» publicado de porción terrestre **deja de mostrarse** (el motor ya falla cerrado con precios por día hasta la entrega 6). La revisión lo avisa. Es un efecto comercial visible.
+3. **Promociones calculadas desde una vigencia con grupos** (Dubai/Mixta, por `temporada_base`): conservan sus precios; la calculadora general deja de regenerarlas hasta las promociones por grupo (entrega 4).
+4. **Días de un grupo que se vende**: no se cambian; se vuelve a «todos los días» o se borra el grupo y se crea otro.
+5. **El último grupo que se vende** no se borra: se usa «Volver a todos los días».
+6. **Habilitaciones** se confirman otra vez al aplicar, aunque ya se hubieran decidido en la calculadora (es la única compuerta que también cubre lo escrito a mano y el CSV).
+7. **Notas** distintas entre grupos se permiten y se muestran; solo la **regla de edad** debe coincidir (G.4).
+8. **Empates**: se analiza el cruce completo de cada par; un cruce de más de 1.096 noches es «no verificable» y bloquea (AH.10). El control diferido también rechaza ediciones de una vigencia **sin** grupos que empatarían con una que se vende por grupos (W.2).
+
+## AH.8 Orden de despliegue y dependencias
+preflight_299 → **299** → postcheck_299 → código. El código anterior (3b) funciona con la 299 aplicada (no la usa; ningún grupo se activa al migrar). El código nuevo **exige** la 299 (RPC nuevas, `estado`/`vigentes` en la configuración). Si se aplica la 298, va antes. Rollback: `rollback_299_grupos_dias_activacion.sql` (protegido: aborta con grupos activos o tarifas por grupo; para llegar a cero, «Volver a todos los días»).
+
+## AH.9 Entorno local
+`local4360.ps1 preparar` incluye la 299 y `semilla_local4360_3c.sql` (vigencia **PUENTE** de LOCAL 1, 15–17 mar 2027, prioridad 1, doble Estándar/PAM: compite con la Semana de ALTA). Aplicadas **en el lugar** a `dspacios_local4360` y a la foto `dspacios_local4360_semilla` (preflight y postcheck en OK; no se restauró nada: se conserva el estado de la validación de la 3b). Guía del dueño: `entorno-local-4360.md` §6. Humo ampliado con comprobaciones de solo lectura de la 3c.
+
+
+## AH.10 Correcciones de la auditoría de la 3c (2026-11-12; la 299 sigue local, se corrigió su archivo)
+**1 · Empates en una misma transacción.** Defecto: `tg_empates_43` marcaba hotel + transacción como «comprobado» y saltaba todo lo posterior; una escritura con empate DESPUÉS de una comprobación (`SET CONSTRAINTS … IMMEDIATE`, o dentro de una RPC) pasaba. **Reproducido** con la versión anterior (control negativo: PUENTE quedó en prioridad 1 con el empate guardado). Corrección: marca de **«hay cambios sin comprobar»**: un trigger normal y barato (`trg_43_empates_marca`, se ordena antes) la enciende en cada escritura de `tarifa_hotel`, `hotel_temporadas` y `hotel_temporada_grupos`; la comprobación diferida corre solo si está encendida y la apaga. Se conserva el candado por hotel entre sesiones (R4 y su control negativo siguen igual). Costo: varias filas de un commit = **una** comprobación (medido: 40 filas → el detector corrió 1 vez, `pg_stat_user_functions`); en modo inmediato, una sentencia de varias filas puede comprobar más de una vez (solo pasa al final de las RPC, sin escrituras después). Pruebas nuevas: J1 (dentro de una función) y la transacción del cliente con sentencias separadas (BEGIN → válida → SET CONSTRAINTS IMMEDIATE → empate → COMMIT): se rechaza todo, también la primera.
+
+**3 · Horizonte.** Defecto: el detector miraba solo desde hoy hasta hoy + 1.095 días y no decía nada de lo que quedaba fuera. Corrección: por cada par se analiza el **cruce real completo** de sus fechas futuras (también compra), sin ventana fija; si el cruce supera **1.096 noches** el par se devuelve como **`no_verificable`** (con sus fechas y noches) y **bloquea** igual que un empate, con el mensaje «No se pueden verificar empates entre A y B … acota las fechas»; con más de 200 conflictos se agrega `truncado` (la lista no se recorta en silencio). Pruebas: J3 (empate en 2031, antes invisible, detectado con su rango exacto), J4 (cruce 2027–2030 = 1.461 noches → no verificable), J5 (aplicar con él → rechazado), y las del texto en la pantalla.
+
+**2 · Consumo real del recorrido.** Medido con el **código real** (`aplicarGruposVenta` → RPC → `revalidatePath` → regeneración → `generarTarifario`) contra una base local desechable y su PostgREST, con un proxy que cuenta cada consulta (`supabase/scripts/medir_299_recorrido.sh`; solo se sustituyen la cookie de sesión, `next/cache` y `server-only`).
+- **Navegador:** cada acción es **1 POST** (Server Action); su respuesta trae la ficha revalidada (un solo `revalidatePath` del recorrido). Revisar = 1 POST; marcar casillas y elegir = 0. Las `revalidatePath` que hace cada `generarTarifario` publicado (2 por paquete) invalidan otras rutas, no generan solicitudes del navegador.
+- **Consultas internas y CPU** (Node; base local en Docker, sin red):
+
+  | Escenario | Consultas a la base | Concurrencia máx. | Tiempo | CPU Node |
+  |---|---|---|---|---|
+  | Revisar (alcance) | 1 | 1 | 66–105 ms | 16–78 ms |
+  | Aplicar · hotel **sin paquetes** | 2 (RPC + paquetes del hotel) | 1 | 137–150 ms | 31–78 ms |
+  | Regenerar 4 paquetes que **publican** (antes de aplicar) | 37 | 8 | 506 ms | 453 ms |
+  | Aplicar · hotel con **4** paquetes | 38 | 6–8 | 526–624 ms | 109–421 ms |
+  | Aplicar · hotel con **8** paquetes | 74 | 8 | 989 ms | 655 ms |
+  ~9 consultas por paquete; crece lineal con los paquetes del hotel.
+- **Acotado:** el recorrido usa `regenerarTarifariosDeHotelAcotado` — **2 paquetes a la vez** (antes, todos en paralelo); la concurrencia de consultas queda en ≤ 8 (2 paquetes × sus lecturas en paralelo). Las demás regeneraciones de la app no cambian. Con publicación por lotes (`TARIFARIO_PUBLICACION_POR_LOTES=1`) un paquete que no termina queda «en publicación» y la base lo continúa sola (se informa como tal).
+- **Resultado honesto:** la acción devuelve cuántos paquetes se regeneraron, cuántos siguen en publicación y **cuáles fallaron**; la pantalla lo dice tal cual y **nunca** afirma «todo actualizado» si alguno falló o si no se pudo consultar qué paquetes usan el hotel.
+- **(Corregido en AI.10: la generación anterior queda OCULTA en la vista comercial; el paquete deja de mostrarse, no muestra precios viejos.)** **Hallazgo medido (efecto provisional entre incrementos):** con el hotel vendiéndose por grupos, sus paquetes de **porción terrestre NO se pueden regenerar** («No se generaron tarifas»: el motor no publica un «desde» aproximado hasta la entrega 6) y **conservan publicada su generación anterior**, con los precios de todos los días (medido: generación publicada 1 de 2). La revisión ahora lo anticipa con el número de paquetes de porción del hotel (`paquetes_porcion` en el alcance). **Por eso la 3c no se publica sin la entrega 6.**
+
+**4 · Fallos de la suite unitaria.** Ver AH.11 (comparación por nombre con una base equivalente).
+
+## AH.11 Suite unitaria comparada por nombre con una base equivalente (2026-11-12)
+Base = worktree desechable en el `HEAD` de la rama (`5974d4136`, sin ningún cambio local: ni la 3b sin confirmar, ni la 298, ni la 3c), con el mismo `node_modules` (junction), los mismos parámetros (`--test-concurrency=2`, heap 1 GB) y comparación por **nombre** de cada prueba fallida en todos los niveles (subpruebas incluidas).
+| Corrida | Pruebas | Fallos (todos los niveles) | Fallos solo aquí |
+|---|---|---|---|
+| Base (`HEAD`) | 9.352 | 49 | — |
+| Actual, primera corrida | 9.378 | 51 | **2**: `regenerarTarifariosDeHotel captura explícitamente error…` y `…corta y loguea el error saneado…` |
+| Actual, tras corregir | 9.378 (9.348 pasan) | 49 | **0** |
+Los 2 nuevos los causó esta ronda: había movido la consulta de `regenerarTarifariosDeHotel` a un helper y dos pruebas de cableado leen ese texto. Se devolvió la función a su forma original (la variante acotada usa el helper aparte). Los **49 restantes fallan igual en la base**: son anteriores a todo el trabajo local de este frente (no se investigaron más; están en archivos de otros frentes). El worktree base se quitó después (junction primero; `node_modules` del worktree comprobado intacto).
+
+
+# AI. Entrega 4 implementada en local: promociones por grupo (2026-11-12; sin commit, sin aplicar)
+
+## AI.1 Numeración y alcance
+- **Migración 300 PROVISIONAL** `20260601000300_promociones_grupo.sql`. Revisados todos los worktrees y ramas: el máximo era la 299 (este frente); 296 = #75 (aplicada). **Exige la 293 y la 299**; no depende de la 298 (la ficha del hotel sí la usa). Siguiente libre: 301.
+- No edita ninguna migración aplicada ni la 298/299 (locales): todo lo nuevo vive en la 300.
+- Alcance: X/N1, O, Y/H10, P y S/T de la especificación §4. **No** introduce acumulación ni precedencia nuevas (entrega 5): ver AI.5.
+
+## AI.2 Modelo
+| Pieza | Cómo queda |
+|---|---|
+| Promoción **por noche con reglas** (porcentaje, monto por persona/noche, monto por habitación/noche) | Vigencia de promoción con `promo_base_id` (FK a UNA vigencia `tarifa` del mismo hotel) + filas en `hotel_promocion_reglas`: una por grupo de la base (`grupo_id`, o una sola con grupo NULL si la base no tiene grupos), con su `valor` y sus `dias` (NULL = todos los días del grupo; si no, subconjunto no vacío del grupo). Grupo sin regla = conserva la base. |
+| Noche gratis | `noche_gratis_regla` (`mas_barata`/`mas_cara`/`ultima`; NULL = promedio heredado) + `dias_promo` (días bonificables; NULL = todos). |
+| Monto fijo | `descuento_unidad` (`persona_noche`/`habitacion_noche`/`persona_estadia`; NULL = «unidad anterior»). Persona/estadía usa `descuento_valor` y `dias_promo` = días de **entrada**. |
+| Promociones existentes | Todas las columnas nuevas en NULL: mismo cálculo y misma etiqueta («$/pax», ahora con «(unidad anterior)»; «promedio (anterior)»). La 300 no cambia ninguna fila (postcheck: huellas idénticas). |
+
+**Decisión APROBADA por el dueño el 2026-11-12 (AJ.0) — el precio con reglas se DERIVA al cotizar, no se materializa.** La promoción con reglas no tiene filas propias en `tarifa_hotel`: el motor aplica la regla sobre la tarifa de la base que GANA esa noche. Razones: (1) el monto por habitación/noche y el de persona/estadía solo se pueden resolver al cotizar (S.2); (2) con tarifas por grupo que se editan en el borrador y se aplican (3c), una fila materializada de promoción quedaría obsoleta en cada cambio de la base; derivarla la mantiene coherente con lo que se vende; (3) «base primero» (N1) es exactamente eso. El dato autoritativo es la regla (como una tarifa): cambiarla cambia la cotización al instante y el tarifario al regenerarse (igual que editar una tarifa). Las promociones existentes (Dubai/Mixta, filas manuales) siguen siendo filas materializadas.
+
+## AI.3 Motor (`lib/calc/paquetes.ts` + `lib/calc/promocionesGrupo.ts`, puro)
+Por noche:
+1. **Recorrido de siempre** sobre bases y promociones con fila (sin las de estadía ni las de reglas). Sin grupos y sin reglas: resultado idéntico al anterior (golden E3: 360.000 sigue igual).
+2. **Base de la noche** (solo vigencias `tarifa`, con cobertura del día, disponibilidad y N4). Si la base con grupos cubre la noche sin tarifa o empata: la noche no se vende y **ninguna** promoción la rescata (O.1.2; tampoco una existente sin vínculo, X.3.5).
+3. **Alcance con grupos** (X.3.1): la base ganadora tiene grupos, o existe una promoción con reglas vinculada a ella. Ahí compiten solo las promociones de **esa** base: las existentes cuya fila tiene `temporada_base` = la base (por nombre) y las de reglas con regla para el grupo y el día de esa noche; gana la de mayor prioridad. Igual prioridad con su base o entre dos promociones ⇒ empate N4 (no se vende y se registra). Menor que su base ⇒ no aplica. Una existente vinculada a una base con grupos que **no** gana esa noche no aplica (X.2: 690.000).
+4. **Regla** (`netoConRegla`): `%` ⇒ neto × (1 − v/100); persona/noche ⇒ neto − D si D ≤ neto; habitación/noche ⇒ (neto × ocupantes − D) / ocupantes si D ≤ tarifa de la habitación; niños e infantes no generan habitación. Si no aplica, no cuenta (§T.4) y sigue la siguiente o la base.
+5. Con reglas, `temporadaTarifa` = la base (la edad y las condiciones se leen de su fila) y `temporadaGanadora` = la promoción (procedencia «promoción»).
+
+Por estadía (`resolverPromoEstadia`, sobre las noches ya valoradas): la primera, por prioridad, que cubre la noche de entrada (compra y régimen) y **aplica**: noche gratis sin regla ⇒ `total × (N−1)/N` (mismo número que antes); con regla ⇒ resta una noche (más barata / más cara / última) entre las permitidas, «última» con su día no permitido ⇒ no aplica; persona/estadía ⇒ resta D una vez si el día de entrada está permitido y D ≤ total. El «desde» de porción **sin** grupos aplica la misma regla sobre N noches iguales a la más barata.
+
+Contexto nuevo de los liquidadores (`basePromoPorClave`, `acomodacion`; firmas compatibles): lo pasan los cinco cargadores (cotización por fechas/carrito, reserva, vigencia/visibilidad, generación y publicación). Las variantes simples (`liquidarHotelNoches`, `liquidarHotelMasBarato`) delegan en las de identidad: un solo cálculo.
+
+## AI.4 Garantías en la base (300)
+- `check` de coherencia: unidad solo en monto; regla de noche gratis solo en noche gratis; días solo en noche gratis o persona/estadía, 1–7 sin repetir y no vacíos; vínculo solo en `%` o monto por noche (con `coalesce`: una comparación con NULL dejaría pasar la fila; lo detectó la prueba B9).
+- Trigger de vigencias: la base es `tarifa` del mismo hotel; **la promoción tiene mayor prioridad que su base y distinta de otra promoción de la misma base** (también al editar la prioridad o el tipo de la base); no se desvincula por fuera del editor si tiene reglas.
+- Trigger de reglas: grupo de SU base (sin grupo solo si la base no tiene grupos); días dentro del grupo («Los días elegidos en X deben pertenecer al grupo Y»); `%` < 100.
+- Trigger de grupos: no se borra un grupo con reglas, no se achican sus días por debajo de una regla y una base con regla «todos los días» no se divide en grupos sin resolverla antes (V.3: las promociones dependientes se resuelven primero).
+- `promocion_guardar_reglas` (SECURITY INVOKER: decide la RLS de quien llama): vínculo + reglas en UNA transacción, comparando la **foto** que vio quien edita (PT409 = recargar, sin reintento). RLS de `hotel_promocion_reglas` igual a la de los grupos (293): internos; escritura del catálogo global solo en sesión Mayorista; anon sin acceso. Auditoría (087) adjunta.
+- «Elegir es obligatorio» en promociones nuevas lo exigen el formulario y la acción (`lib/hoteles/promocionesVigencia.ts`, la misma función en los dos lados); la base solo valida valores (no distingue una nueva de la copia de una existente).
+
+## AI.5 Interfaz con la entrega 5 (sin acumulación ni precedencia nuevas)
+- Hoy: por noche gana **una** promoción de la base (prioridad); por estadía aplica **una** (la primera que aplica); EBB / Long Stay se aplican después como hoy (`aplicarDescuentoNeta`). Es exactamente la combinación que ya existía (promoción con fila + noche gratis + EBB).
+- Enganche para la 5, sin reescribir el motor: la lista de candidatas por noche (`cands` en `resolverNetoNocheDetallado`) y el recorrido de estadía (`resolverPromoEstadia`) ya separan «qué promociones cumple esta reserva» de «cuál se elige»; la 5 sustituye la elección por el orden y la acumulación configurados. La procedencia ya identifica la promoción ganadora de cada noche y la de estadía.
+
+## AI.6 Aplicación
+| Archivo | Cambio |
+|---|---|
+| `lib/calc/promocionesGrupo.ts` (nuevo, puro) | Tipos, `SELECT_PROMO_VIGENCIA`, `netoConRegla`, `nocheABonificar`, `repartirExacto` (T.3: 20.000 / 3 = 6.666,67 + 6.666,67 + 6.666,66, en la unidad mínima de la moneda) |
+| `lib/calc/paquetes.ts` | AI.3; `toTemporadaRango` lee las columnas y reglas incrustadas |
+| `lib/calc/netosPorTemporada.ts` | `basesPromoDeFilas` (vínculo `temporada_base` por clave) |
+| `lib/reservar/{liquidacionHotel,cotizar,computo}.ts`, `lib/tarifario/vigencia.ts`, `paquetes/actions.ts` | `${SELECT_PROMO_VIGENCIA}` dentro de la misma lectura de vigencias; `temporada_base` en las tarifas; contexto a cada liquidador |
+| `lib/hoteles/promocionesVigencia.ts` (nuevo, puro) | Validación sin valores por defecto; mensajes claros para los rechazos de la 300 |
+| `producto/hoteles/actions.ts` | Crear/editar vigencia con las elecciones; por habitación solo con ocupación estándar (1 lectura de `hotel_acomodaciones`, solo en ese caso); `guardarReglasPromocion` (1 RPC); copiar vigencias conserva las elecciones y avisa que el vínculo y las reglas no viajan |
+| `HotelDetalleClient.tsx`, `PromocionReglas.tsx` (nuevo), `[id]/page.tsx` | Selectores sin opción preelegida («Elige…» / «Promedio (anterior)» / «Unidad anterior»), «Todos los días» o «Elegir días» sin nada marcado, panel «Reglas por grupo» (base de menor prioridad, regla por grupo, solo los días del grupo) |
+| `calculadoras.ts`, `CalculadoraEditor.tsx`, `contextoGeneracionTarifas.ts` | La Mixta no deriva filas de una promoción con reglas |
+| `types/database.ts` | Columnas, tabla y RPC |
+| Pruebas y soporte | `pruebas/promocionesGrupo43{.test,.acciones.test,.react}.ts`, `promocionesGrupo300.pg.mjs`, `support/stubs/promocionReglasActionsStub.mjs`; `supabase/scripts/{preflight,postcheck,rollback,test}_300_*`, `test_300_carrera.sql`, `test_300_postgrest.sh`, `cierre_43_precios_antiguos.{sh,mjs}` |
+
+## AI.7 Pruebas ejecutadas (local)
+| Prueba | Resultado |
+|---|---|
+| `pruebas/promocionesGrupo43.test.ts` (motor puro + validación): Y.2 520.000 / 510.000; §4 375.000; X.2 690.000 (existente y nueva), sin grupos 360.000, invariancia de prioridad, otra base 630.000; O.4 sin rescate y sin estadía parcial; S.2 680.000 / 740.000 / 760.000; T.3 (80.000, 40.000, 15.000, 0, 0), noches del mismo niño por separado, habitación una vez y nunca a niños; Y.2 persona/estadía 530.000 y entrada jueves sin descuento; P.2 300.000 / 250.000 / 250.000, promedio 266.667, días lun–jue 300.000 / 300.000 / 400.000; reparto exacto; paridad con `evaluarHotelPorFechas`; validación sin preselección | 43 / 43 |
+| `pruebas/promocionesGrupo43.acciones.test.ts` (acciones con cliente simulado y cableado de los cinco cargadores) | 11 / 11 |
+| `pruebas/promocionesGrupo43.react.ts` (panel: 0 solicitudes al editar, nada elegido, días del grupo, 1 acción al guardar, desvincular, foto obsoleta sin reintento, StrictMode y reposo) + caso nuevo en `hotelPestanas22.react.ts` (noche gratis nueva exige elegir; existente se guarda con su promedio) | 3 / 3 y 12 / 12 |
+| Caracterización y motor previos (`motorGrupos43`, `vigenciasPrecedencia43`, `hotelPorFechas43`, `precioFinalAutoritativo`, `liquidacionHotel`, `vigenciaNuncaDerivaPrecio`, `liquidarHotelNochesConTemporadas`) | 161 / 161 sin cambios |
+| Cableado actualizado (texto, no comportamiento): `motorGrupos43.wiring` (el `select` es plantilla con las promociones), `precioFinalAutoritativoWiring` (los liquidadores reciben además el vínculo; las variantes simples delegan; la estadía sale de `resolverPromoEstadia`) | 98 / 98 |
+| React de la ficha y de grupos (`hotelPestanas22`, `gruposDias295`, `calculadoraGrupos297`, `gruposDias299`) | en verde (stub nuevo en el cargador React) |
+| `test_300_promociones_grupo.sh` (pg4360, `local4360_base`): preflight 4 OK → 300 → postcheck 8 OK y huellas idénticas → reaplicar → **39 aserciones** → carrera con dos sesiones (B espera el candado y recibe PT409; queda solo lo de A) → rollback abortado con reglas → rollback → reaplicar | 0 fallos |
+| Suite SQL de la 299 con la 300 aplicada | 76 OK, 0 fallos |
+| `test_300_postgrest.sh` (PostgREST v16.4, JWT por rol): los SELECT exactos de los cargadores y de la ficha responden 200 con grupos y reglas (la tabla de reglas no vuelve ambigua la relación vigencias → grupos); venta 403, Minorista 403, foto obsoleta 409, venta no ve reglas, anon 401 | 10 OK, 10 solicitudes |
+| `tsc`, ESLint de lo tocado | 0 errores (3 avisos previos, ajenos) |
+| **`next build` y humo de la app** | **NO ejecutados** (pendientes del código final, como pidió el dueño) |
+
+## AI.8 Solicitudes (`VALIDACION_CONSUMO_VERCEL.md`)
+| Acción | Solicitudes |
+|---|---|
+| Cotizar, reservar, generar, visibilidad, ficha | **0 nuevas**: columnas y reglas en la misma lectura de vigencias; `temporada_base` ya venía con `*` o se suma a la misma lectura |
+| Editar reglas / elegir días | 0 |
+| Guardar reglas | 1 Server Action = 1 RPC + 1 `revalidatePath` + la regeneración del tarifario de siempre |
+| Crear/editar vigencia | igual que antes; +1 lectura de `hotel_acomodaciones` solo si se elige «por habitación y noche» |
+| CPU | por noche, un recorrido de solo bases además del de siempre, en memoria y solo cuando hay promociones o grupos alrededor |
+
+## AI.9 Orden de despliegue y dependencias
+preflight_300 → **300** → postcheck_300 → código. **El código nuevo exige la 300** (los `select` piden columnas y la relación nueva; sin ella fallan cerrado). El código anterior funciona con la 300 aplicada (no la usa). Orden total: (298) → 299 → 300 → código. Rollback: `rollback_300_promociones_grupo.sql` (protegido: aborta si alguna promoción usa la 300).
+
+## AI.10 Prueba de cierre «sin precios antiguos» y corrección de AH.10
+Pedida para el cierre integral: `supabase/scripts/cierre_43_precios_antiguos.sh` (código real de las acciones contra PostgREST local; 2 paquetes de porción con el hotel). Pasos: publicar con «todos los días» → **activar** → **actualizar** una tarifa por grupo y aplicar → **volver a todos los días**. Criterio: tras cada operación, ningún paquete puede tener VISIBLE (vista comercial única `tarifario_resultado_publicable`, 260) una generación anterior a la operación (FALLO); un paquete que deja de mostrarse es AVISO.
+
+| Modo | Activar | Actualizar | Volver |
+|---|---|---|---|
+| Sin publicación por lotes | AVISO: los paquetes de porción **dejan de mostrarse** (regeneración fallida, ninguna fila visible) | sin filas visibles | generación nueva publicada |
+| `TARIFARIO_PUBLICACION_POR_LOTES=1` | igual; las filas de la generación anterior quedan en la tabla **ocultas** (solo las ve la ficha interna del paquete, que lee la tabla a propósito para diagnosticar) | igual | igual |
+
+**Corrección:** AH.10 decía que esos paquetes «conservan publicada su generación anterior, con los precios de todos los días». Medido con la vista comercial: el puntero de generación publicada no se mueve, pero la vista la oculta (`tarifario_snapshot_publicable` falso). **No se ven precios antiguos; el paquete de porción deja de mostrarse** (AH.7.2). La conclusión no cambia: la 3c (y la 4) no se publican sin la entrega 6. En el cierre integral esta prueba debe dar 0 FALLO **y 0 AVISO** (con la entrega 6 los paquetes de porción deben publicar su «Desde» por estadía). Hoy: 0 FALLO, 2 AVISO en «activar».
+
+## AI.11 Derivados [D] que el dueño debe confirmar (no reabren decisiones aprobadas)
+1. ~~Precio derivado al cotizar~~ — **aprobado** (AJ.0).
+2. **Ámbito**: las reglas por noche también sirven para una base **sin** grupos (una regla «todos los días» con días elegidos); N1 rige para esas promociones nuevas. Las existentes de hoteles sin grupos no cambian.
+3. **Prioridad**: ≤ su base se rechaza; igual a otra promoción de la misma base solo si pueden coincidir (**corregido en AJ.2**).
+4. ~~Ocupación estándar~~ — **corregido en AJ.3**: ocupación del hotel en todos los recorridos.
+5. **Mínimo de noches** de una promoción con reglas = mínimo de la estadía para que aplique (como en la noche gratis); no limita la venta.
+6. **Una promoción de estadía por reserva** (la primera que aplica): persona/estadía y noche gratis no se acumulan entre sí hasta la entrega 5.
+7. **Dubai «descuento solo sobre la base»** no se replica en las reglas por grupo (el `%` actúa sobre el neto del grupo).
+8. Copiar vigencias de otro hotel: las elecciones viajan; el vínculo y las reglas (ids de ese hotel) no, con aviso.
+9. ~~La revisión de «Aplicar a la venta» no lista las promociones~~ — **corregido en AJ.4**.
+
+## AI.12 Integración al cierre de la entrega (suite unitaria, comparada por nombre)
+- Suite completa actual (`--test-concurrency=2`, heap 1 GB): 9.432 pruebas, 9.401 pasan, 31 de primer nivel fallan, en 22 archivos.
+- La misma suite en un worktree desechable en `HEAD` (5974d4136) **fue detenida por falta de memoria** del equipo (no se relanzó). En su lugar se corrieron **esos 22 archivos** en los dos árboles con los mismos parámetros y se compararon los nombres de todos los niveles: **una sola diferencia**, la huella congelada de `lib/calc/paquetes.ts` en `salidaVinculada63Wiring.test.ts` (y su prueba padre). Es un cambio deliberado del motor: la huella se actualizó con su motivo (`c43b0031eded8bbc`). Los demás fallos de esos archivos fallan igual en la base.
+- Límite: un fallo nuevo en un archivo que en la base pasaba entero y aquí también saldría en los 22 (está cubierto); lo que no se comparó es una prueba que hoy pasa aquí y fallaba en la base (no afecta la conclusión).
+
+
+# AJ. Correcciones de la auditoría de la entrega 4 (2026-11-12; local, la 300 sigue sin aplicar y se corrigió su archivo)
+
+## AJ.0 Decisión del dueño: cálculo dinámico APROBADO
+El dueño **aprobó** que las promociones **nuevas** por grupo calculen su precio **al cotizar**, sobre la tarifa de la **base vigente que gana la noche** (AI.2). Deja de ser un derivado pendiente: es **[A]** en la especificación (§4). Se conservan sin cambios las promociones existentes (filas materializadas de Dubai/Mixta y manuales, promedio heredado, «unidad anterior») y todo lo histórico (contratos, cotizaciones, composiciones y tarifarios ya guardados no se recalculan).
+
+## AJ.1 Reparto monetario exacto en el recorrido real (punto 1)
+**Defecto:** el descuento por habitación se convertía en una tarifa por persona (`(habitación − D) / ocupantes`), y el recorrido redondeaba ESA tarifa (EBB a centavos USD / pesos, `redondeoCentavos`) y la multiplicaba por los pasajeros: se perdían o ganaban centavos (USD, triple: 2 × 3 × 27,00 = 162,00 en vez de 161,98).
+**Corrección:**
+- El motor devuelve, cuando una noche lleva descuento por habitación, el **neto exacto de UNA habitación** en la estadía y el descuento aplicado (`habitacion: { ocupantes, total, descuento }`), calculado sobre la habitación completa, sin dividir (también la promoción de estadía: noche gratis y persona/estadía se aplican sobre ese total con la misma operación).
+- **Cotización por fechas / carrito** (`evaluarHotelPorFechas`): `netosHabitacion` por acomodación, con el EBB y el redondeo a centavos aplicados **una sola vez** sobre el total de la habitación.
+- **Reserva** (`computo.ts`): `netoHabitacionPorAcom` (EBB una vez por habitación). El **costo del hotel y la CxP** de la reserva y del carrito salen de la misma función (`costoHotelPersona`): habitaciones × neto exacto de la habitación; las acomodaciones sin ese descuento siguen con tarifa por persona × pax (idéntico a antes).
+- **Snapshot / documento interno** (`cotizacion_composicion`, `ComposicionPrecio`): la línea de habitación guarda y muestra el neto exacto por habitación, el descuento, su **reparto por ocupante** con `repartirExacto` (residuo a los primeros, suma exacta) y el neto de hotel de la línea. `leerComposicion` lo valida al releer.
+- **Precio de venta:** conserva la regla de venta vigente (PVP por persona redondeado hacia arriba al mil COP / dólar entero USD, × pax). Ese redondeo de venta ya existía para toda tarifa y no es pérdida del descuento: el descuento es sobre el neto (base aprobada), y el neto queda exacto. **Si el dueño quiere también el PVP por habitación** (redondear la habitación y no la persona), es un cambio de la regla de venta para todos los hoteles: no se hizo.
+- Sin descuento por habitación nada cambia (mismas sumas, en el mismo orden; caracterización intacta).
+
+## AJ.2 Prioridades: solo bloquea lo que puede coincidir (punto 2)
+**Antes:** la base rechazaba cualquier par de promociones de la misma base con la misma prioridad. **Ahora:** se rechaza solo si **pueden coincidir** en una noche que se pueda vender (`_promo_300_conflictos`): régimen compatible; existe una fecha de reserva ≥ hoy en las dos ventanas de compra (y ≤ la noche); la noche la cubren las dos promociones y su base (rangos menos blackouts); y ese día tiene regla en las dos (mismo grupo de la base, días elegidos). Se consideran todos los grupos de la base (también los preparados: coincidirían al venderse). Cruce > 1.096 noches ⇒ «no verificable» y bloquea. La **acomodación** no las separa en v1 (toda promoción por noche aplica a las habitaciones; el monto por habitación no aplica a niños, donde el motor ya decide sin empate). Se comprueba con **trigger de restricción diferido** en `hotel_temporadas` y `hotel_promocion_reglas`, serializado por base con un candado (dos cambios válidos por separado que juntos empatan no confirman los dos). El mensaje nombra las dos promociones, la prioridad, la base y una noche concreta, y no se elige ninguna. Promoción con prioridad ≤ su base: sigue rechazada (siempre coinciden). Si un conflicto llegara al motor: empate N4, la noche no se vende.
+
+## AJ.3 Ocupación autoritativa del hotel (punto 3)
+Se retiró la restricción «solo ocupación estándar» y la tabla fija 1/2/3/4 del motor. Los ocupantes **tarifados** de cada habitación salen de `hotel_acomodaciones.pax_tarifa` (sin fila: `PAX_TARIFA_DEFAULT`, exactamente como la reserva), leídos **dentro** de lecturas que ya existían: reserva (`paxTarifa`), cotización por fechas (`armado_hoteles → hoteles → hotel_acomodaciones`), generación del tarifario (misma lectura de hoteles). Sin ocupantes el descuento por habitación **no aplica** (nunca se supone). Niños e infantes no son ocupantes tarifados: no reciben el descuento por habitación ni cuentan para repartirlo. La visibilidad del tarifario (`vigencia.ts`) no lo necesita: una promoción no cambia si una noche se vende.
+
+## AJ.4 «Aplicar a la venta» revisa las promociones vinculadas (punto 4)
+- La configuración de grupos (299) se **envuelve** en la 300 (la función original se conserva con otro nombre, `_grupos_43_config_299`, y el rollback la restaura idéntica — comprobado por md5): agrega `promociones_reglas` (cada promoción vinculada con prioridad, fechas, compra, régimen y reglas: grupo, días, valor) y `promociones_conflictos`, y su **huella** las cubre: cambiar una promoción o sus reglas entre «Revisar» y «Aplicar» rechaza la aplicación (PT409).
+- La RPC de reglas toma, en el mismo orden que la aplicación (grupos → vigencia base), candados compartidos (`_promo_300_candado_base`): guardar reglas y aplicar a la venta sobre la misma base se serializan sin interbloqueo.
+- La revisión (`planActivacion`) dice: al aplicar por primera vez **EMPIEZAN a aplicarse** las promociones por grupo (con cada grupo, días y valor, y qué grupos conservan la base); en una actualización **siguen**. Un conflicto entre promociones **bloquea** la aplicación. «Volver a todos los días» avisa que **dejan de aplicar** (quedan guardadas). El aviso de las promociones existentes y el de los paquetes de porción se corrigieron (estos **dejan de mostrarse**, AI.10).
+
+## AJ.5 Pruebas (local)
+| Prueba | Resultado |
+|---|---|
+| `pruebas/promocionesReparto43.test.ts`: triple 840.000 exacto; sin ocupantes no aplica; sin descuento = cálculo de siempre; doble tarifada con 3 personas (280.000, no 180.000); sin configuración = valor de la reserva; niños sin descuento; USD + EBB: habitación 80,99, 2 habitaciones 161,98 (la vía por persona daría 162,00); acomodaciones mixtas; composición guardada y releída con reparto 3,34 + 3,33 + 3,33 y 6.667 + 6.667 + 6.666; cableado de reserva, computo, cotización y generación | 15 / 15 |
+| `promocionesGrupo43` (43) + `.acciones` (11) + `gruposDias299` (27, con 5 nuevas de la revisión) + resto del frente, caracterización y cableado | 494 / 494 |
+| React (`promocionesGrupo43`, `hotelPestanas22`, `gruposDias295/297/299`) | 59 / 59 |
+| `test_300_promociones_grupo.sh`: **56 aserciones** (nuevas: igual prioridad sin días comunes, con miércoles común, compras que no se cruzan, abrir la compra, régimen distinto, régimen libre, fechas que no se cruzan, ampliarlas hasta el 20 ene, acomodación, no verificable; revisión y huella de la aplicación), carrera de foto obsoleta, **carrera de escritura sesgada** (exactamente una confirma, ningún conflicto guardado), rollback protegido y restauración idéntica de la configuración de la 299 | 0 fallos |
+| Suite SQL de la 299 con la 300 | 76 OK |
+| `test_300_postgrest.sh` (+ revisión por HTTP con las promociones, conflicto real rechazado al confirmar y el no conflicto aceptado, lectura `armado_hoteles → hoteles → hotel_acomodaciones`) | 14 OK |
+| `cierre_43_precios_antiguos.sh` | 0 FALLO (2 AVISO: porción deja de mostrarse, hasta la entrega 6) |
+| `tsc`, ESLint de lo tocado | 0 errores (avisos previos ajenos) |
+| **`next build` y humo** | **pendientes** |
+
+## AJ.6 Lo que queda
+- PVP por habitación (AJ.1, último punto): decisión del dueño si lo quiere.
+- La acomodación no separa promociones en v1 (AJ.2).
+- `build` y humo del árbol final.
+
+
+# AK. Entrega 5 implementada en local: acumulación y precedencia con EBB / Long Stay (2026-11-12; sin commit, migración 301 provisional, sin aplicar)
+
+## AK.0 Decisiones aplicadas (del dueño)
+- **Solo EBB y Long Stay:** gana el mayor porcentaje y no se suman (regla vigente, sin cambios).
+- **Con una promoción especial:** rige la acumulación y el orden **configurados según el proveedor**, solo para esa promoción y solo cuando esa promoción aplica a la reserva.
+- **Se pregunta solo cuando pueden coincidir** (estadía máxima 30 noches, §3.8, para Long Stay).
+- **Regla añadida o modificada después** que crea una combinación sin resolver: se **avisa y se retiene**; la versión autorizada sigue vendiéndose.
+- No se inventan prioridades ni se cambia nada existente: lo que ya coincidía al aplicar la 301 queda **«heredada»** y acumula exactamente como hoy (golden 264.000 frente a 330.000).
+
+## AK.1 Modelo (migración `20260601000301_promociones_acumulacion.sql`, provisional, exige la 300)
+- `hotel_promocion_combinacion` (1 fila por promoción, solo si coincide con alguna regla): `estado` `heredada` | `configurada` | `pendiente`, `alternativas` (familias que coinciden), `acumulable_ebb`, `acumulable_long_stay` (sí/no, sin valor por defecto) y `orden` (explícito cuando algo no acumula o coinciden las dos reglas). RLS de lectura interna; escritura solo por RPC.
+- `hotel_reglas_descuento.autorizada` / `propuesta`: una regla **nueva** que crea pares sin resolver nace `autorizada = false`; un **cambio** de una regla autorizada queda en `propuesta`. El motor solo lee las autorizadas (`soloAutorizadas` en `cargarReglasDescuentoHotel` y `cotizar.ts`).
+- Coincidencias (`_e5_requeridas`): EBB de U días coincide si la última noche aplicable de la promoción queda a ≥ U días de la reserva más temprana posible (hoy o el inicio de su compra); Long Stay de U noches, si U ≤ 30 y la promoción tiene alguna noche vendible. Una compra cerrada o sin noches aplicables no coincide con nada.
+- Revisión (`_e5_revisar`) en **disparadores de restricción diferidos** sobre vigencias, reglas, reglas por grupo y combinaciones, serializada por hotel: promoción **nueva** (alta, o sus primeras reglas por la RPC de la 300) que coincide ⇒ `pendiente`; cualquier otro cambio que deje pares sin resolver ⇒ **rechazado** (`COMBINACION_SIN_CONFIGURAR`, nada cambia); dos promociones **configuradas** que pueden coincidir y deciden distinto sobre las reglas que **ambas** contemplan ⇒ rechazado (`CONTRADICCION_PROMOCIONES`). Una regla que una de ellas aún no contempla no es contradicción: le falta configurarla.
+- RPC: `promocion_guardar_combinacion(promoción, combinación, cambios?)` (con `cambios`, el cambio de la promoción y su combinación en **una** transacción), `regla_descuento_guardar` (aplica o retiene y devuelve qué falta), `regla_descuento_aplicar`, `regla_descuento_descartar`, `promociones_combinacion_estado` (lo que muestra la ficha).
+
+## AK.2 Motor (`lib/calc/precedenciaPromociones.ts`, puro)
+`resolverPrecedencia` (R.4): sin promoción aplicada ⇒ mayor % (vigente); con promoción **heredada o sin fila** ⇒ comportamiento vigente (la regla del mayor % sobre el total con la promoción); con promoción **configurada** ⇒ se recorre el orden del proveedor con las alternativas que **esta** reserva cumple, se incluye la primera y cada siguiente solo si acumula con todas las incluidas; si la promoción queda fuera, la regla actúa sobre el neto **sin** la promoción (`liquidarConPrecedencia` re-liquida solo con las bases: la promoción no crea disponibilidad). Configurada sin respuesta para una regla que la reserva cumple, o dos configuraciones contradictorias en la misma estadía ⇒ **falla cerrado**: esa acomodación no se vende y se informa (no se elige nada implícito). Las promociones `pendiente` las ignora el motor (`entradasNoche`): se sigue vendiendo la base.
+
+Dónde se aplica (la misma decisión en precio y costo):
+- **Cotización por fechas / carrito** (`evaluarHotelPorFechas`): por acomodación; si la precedencia decide otro descuento que el de la estadía, `combo.descuentoPorAcom` (la etiqueta mostrada sale del combo elegido).
+- **Precio publicado** (`computo.ts`): el generador guarda en la composición publicada las promociones que aplicaron y el **neto sin ellas** (`BaseMotor.promociones`); al cotizar, con la fecha de compra real y la combinación **vigente**, se decide y se recompone el PVP desde el neto que corresponde (el precio publicado se sigue verificando contra su composición).
+- **Costo y CxP de la reserva** (`computo.ts`, `costoConPrecedencia`): misma decisión con las vigencias vivas.
+
+## AK.3 Ficha del hotel
+- «Promociones» (`HotelPromociones.tsx`): reglas **retenidas** (y cambios retenidos) con «Aplicar» / «Descartar cambio»; aviso de qué promociones falta configurar; lista «Promociones especiales frente a EBB / Long Stay» con su estado (heredada / configurada / pendiente) y «Configurar» (`CombinacionPromo.tsx`: acumula sí/no **sin valor por defecto**; el orden se arma explícitamente y solo cuando hace falta).
+- Vigencias (`HotelDetalleClient.tsx`): una promoción pendiente lo dice en su fila. Editar una promoción que se vende de forma que cree una coincidencia sin configurar: el cambio se **guarda como pendiente** (ver P3 abajo) y la ficha ofrece configurarlo y activarlo en ese momento; si se cierra, sigue en «Promociones».
+- **P3 completo (2026-11-12, pedido del dueño): cambio PENDIENTE persistente de una promoción que se vende.** Solución mínima, sin versionar las vigencias: tabla `hotel_promocion_cambio_pendiente` (una fila por promoción: `cambios` = las columnas editables, `base` = la vigencia tal como estaba al proponer, `faltan`). RPC `promocion_cambio_proponer` (simula el cambio en un subbloque que se deshace para saber qué faltaría; si no falta nada lo aplica directo), `promocion_cambio_activar` (con la combinación si hace falta; en UNA transacción: candado de la fila y del hotel, rechaza `CAMBIO_NO_PENDIENTE` si otra sesión ya lo activó o descartó, `CAMBIO_CONCURRENTE` si la vigencia cambió desde que se propuso, y corre la revisión del hotel con `set constraints all immediate`: pares sin resolver o contradicción ⇒ nada queda) y `promocion_cambio_descartar`. El motor no lee la tabla: mientras tanto se vende la versión autorizada. `promociones_combinacion_estado` devuelve `cambio_pendiente` (con `desactualizado`), así que al cerrar y reabrir la ficha el cambio sigue para revisar, activar o descartar (`HotelPromociones.tsx`: «Configurar y activar» / «Descartar cambio»; desactualizado ⇒ solo descartar). Activar arrastra un renombre igual que un guardado normal. Acciones: `activarCambioPromocion`, `descartarCambioPromocion`; `actualizarTemporada` devuelve `cambioPendiente`.
+- **Etiqueta por acomodación (2026-11-12):** si la precedencia decide un EBB / Long Stay distinto por acomodación, la etiqueta ya no muestra el de la principal como si fuera de todas: `descuentoMostrado` (`precedenciaPromociones.ts`) arma una por acomodación pedida («Doble: EBB · … · Triple: Long Stay · …», o «sin EBB / Long Stay») en `computo.ts` (reserva, cotización guardada, tarjeta), `cotizarPorFechas` (cada combo trae la suya; la UI muestra la del combo elegido) y la búsqueda general. La composición guardada acepta la forma mixta (`porAcomodacion`, sin tipo/umbral/pct). Importes y redondeo PVP sin cambios.
+
+## AK.4 Pruebas (local)
+| Prueba | Resultado |
+|---|---|
+| `pruebas/precedencia43.test.ts`: R.2 (616.000 / 595.000 / 630.000 / 700.000; el orden manda sobre el mayor %), solo reglas ⇒ 595.000, R.5 (554.400 / 554.400 / 595.000), heredada y sin fila = golden 264.000, pendiente ignorada, configurada incompleta falla cerrado, S.1 contradicción, formulario de combinación, mensajes, composición publicada con promociones; **etiqueta por acomodación** (doble EBB 616.000 / triple Long Stay 476.000 por persona; mixta, una sola acomodación, «sin EBB / Long Stay», composición mixta) | 30 / 30 |
+| `pruebas/precedencia43.react.ts`: estado visible (retenida, pendiente), sin valores por defecto, orden obligatorio con dos reglas, 1 acción al guardar, sin orden con una sola regla acumulable, aplicar una retenida; **P3**: el cambio pendiente se ve al abrir la ficha, «Configurar y activar» = 1 acción con todas las reglas, descartar = 1 acción, desactualizado no ofrece activar | 7 / 7 |
+| `test_301_promociones_acumulacion.sh` (pg4360, base desechable): preflight → 301 → postcheck (huellas de reglas y vigencias idénticas, línea base heredada) → reaplicar → **49 aserciones** (coincidencias EBB / Long Stay / compra cerrada; promoción nueva pendiente; regla nueva retenida, escritura directa rechazada al confirmar; configurar con orden, contradicción y su solución; régimen distinto no contradice; editar una promoción que se vende: rechazado, y el mismo cambio con su combinación aceptado; primeras reglas por la RPC ⇒ pendiente; permisos) → **K (P3, 17 aserciones)**: proponer ⇒ pendiente con lo que falta, la versión vendida no cambia, el motor no lo ve, la ficha lo ve; activar sin combinación o incompleta ⇒ rechazado sin cambiar nada; con combinación ⇒ aplicado en una transacción; segunda activación ⇒ `CAMBIO_NO_PENDIENTE`; un cambio que no crea nada se aplica directo; edición ajena ⇒ desactualizado y activar ⇒ `CAMBIO_CONCURRENTE`; descartar; no mueve de hotel; anon no propone ni activa → **sesiones reales**: el pendiente persiste y se lee desde otra conexión; dos activaciones simultáneas ⇒ una aplica y la otra `CAMBIO_NO_PENDIENTE`; edición directa concurrente ⇒ `CAMBIO_CONCURRENTE` y nada cambia → rollback protegido (aborta también con cambios pendientes) → rollback → reaplicar. Total 69 aserciones SQL | 0 fallos |
+| `test_300_promociones_grupo.sh` con la 300 actual | 0 fallos |
+| **Recorrido real** `recorrido_43_e5.sh` (código real de las acciones contra base + PostgREST desechables): promoción pendiente ⇒ se cotiza la base con EBB; con la combinación guardada por la acción de la ficha: cotizar por fechas → crear cotización (composición guardada con el reparto por ocupante) → convertir a contrato → **releer de la base** `ventas.costo_hotel` y la CxP del hotel. Descuento −20.000 por habitación y noche, 2 dobles + 1 triple, 3 noches, EBB 12 %: **acumula ⇒ 1.610.400** (2 × 475.200 + 660.000); **no acumula, EBB primero ⇒ 1.768.800** (2 × 528.000 + 712.800), exactos en costo y obligación. **Ampliado (2026-11-12):** hotel 9307 con decisión distinta por acomodación (doble: promoción + EBB; triple: Long Stay): cotizar doble 297.000 / triple 287.000 (redondeo de siempre), etiqueta «Doble: EBB … · Triple: Long Stay …», composición guardada mixta, contrato con costo y CxP **1.638.900** exactos; **P3** real con las acciones: abrir la compra de una promoción que se vende ⇒ pendiente persistente (se relee desde otra conexión), se sigue vendiendo la versión autorizada (319.000), dos activaciones simultáneas ⇒ una aplica, después se vende el cambio (264.000) | 0 fallos |
+| Unitarias afectadas (128 archivos que tocan lo cambiado) | solo quedan los 7 archivos que ya fallan igual en HEAD (comparado por nombre en un worktree de HEAD) |
+| React de la ficha (`hotelPestanas22`, `gruposDias295/297/299`, `promocionesGrupo43`, `reglasDescuentoCarga90`, `vigenciasFechas43`) | 70 / 70 |
+| Unitarias que tocan lo cambiado (200 archivos, 4.926 pruebas, 2026-11-12) | solo fallan los 17 archivos que fallan igual en HEAD (comparado por nombre de prueba en un worktree de HEAD); los 4 que este cambio rompía (etiqueta ×2, `actualizarTemporada`, conteo de rechazos del contrato manual) se ajustaron con su motivo |
+| React de la ficha y formularios tocados (13 archivos) | 133 / 133 |
+| `tsc` | 0 errores |
+| **`next build` y humo** | **pendientes** |
+
+## AK.5 Orden de aplicación y lo que queda
+- Orden: 300 → preflight_301 → **301** → postcheck_301 → código. Rollback: `rollback_301_promociones_acumulacion.sql` (protegido: aborta si hay combinaciones configuradas, promociones pendientes o reglas retenidas).
+- Con la 301 el código lee `hotel_reglas_descuento.autorizada` y `hotel_promocion_combinacion`: no desplegar este código antes de aplicarla.
+- Limitación conocida: las coincidencias dependen de «hoy» (una promoción puede dejar de coincidir con el tiempo; nunca empieza a coincidir sola). Un cambio pendiente queda «desactualizado» si alguien edita la versión vendida: se descarta y se rehace.
+- Siguen: entrega L (límite global de 30 noches, también receptivos y documentos manuales; primero diagnóstico de productos antiguos) y entrega 6 («Desde» real). `build` y humo del árbol final.
+
+
+# AL. Entrega L implementada en local: estadía máxima global de 30 noches (2026-11-12; sin commit, sin migración)
+
+## AL.0 Decisión aplicada
+Aprobado por el dueño: límite de **30 noches** para todo lo nuevo, todos los tipos (bloqueo, empaquetado, dinámico, porción, programas), **receptivos** y **documentos manuales** (AA.4.1 y AA.4.2 cerrados). «Configurable» = **un valor por capa, sincronizado y verificado**: `MAX_NOCHES_VIAJE` (`lib/reglas/duracionViaje.ts`, el único del código) y `public._e5_max_noches()` (la base: coincidencias de la 301 y CHECK de la 302). **Cambiar el TypeScript no cambia el SQL** (corrección de auditoría: la afirmación anterior de «único lugar» era inexacta). `pruebas/limiteNochesSincronia43L.test.ts` falla si difieren (lee la ÚLTIMA migración que define la función) y comprueba también los dos scripts que repiten el número a propósito (postcheck de la 301 y el diagnóstico, que se corre antes de aplicar la 301). **Para cambiar el límite con la 301 ya aplicada:** una migración nueva que redefina `_e5_max_noches()` con el valor, el mismo cambio en `MAX_NOCHES_VIAJE` y en esos dos scripts, en un único despliegue (migración primero, código después). Sin consultas por cotización y sin panel de configuración (AA.2). Nunca se recorta; mensaje único: «La estadía máxima es de 30 noches; elegiste 31. Ajusta las fechas.».
+
+## AL.1 Dónde se valida (servidor = frontera)
+| Punto | Regla |
+|---|---|
+| Consultas por fechas: `cotizarPorFechas`, `buscarHoteles`, **`buscarReceptivos`**, tarjeta, búsqueda por unidad (`validarRangoFechasConsulta`) | `MAX_NOCHES_CONSULTA = MAX_NOCHES_VIAJE` (antes 60) |
+| Ítems del carrito / solicitudes del portal | también por las fechas del ítem |
+| Reserva por fechas (`computarReserva`) | noches de la estadía |
+| Programa (`reservarPrograma`) | noches incluidas + adicionales |
+| Paquete (noches), salida dinámica, bloqueo (alta y **carga masiva**: la fila se lista rechazada), empaquetado, programa (noches y salidas) | al crear: rechazo; **al editar: solo si la duración cambia** (`validarNochesAlEditar` / `validarFechasAlEditar`): un producto antiguo de más de 30 noches se conserva tal cual hasta que el dueño decida con el diagnóstico |
+| Cotización manual y contrato manual **nuevos** (el contrato, antes de reservar el consecutivo) | fechas de salida y regreso; los guardados se consultan, imprimen y editan como hoy |
+
+Formularios: `max` y aviso con la misma constante en noches del paquete (`ConfigForm`), del programa (`CabeceraForm`) y de sus salidas (`ProgramaEditor`); `ProductoTab` dejó su `max={30}` suelto. Las búsquedas y formularios de fechas muestran el mensaje del servidor.
+Fuera: anticipación de compra, EBB, Long Stay y noches mínimas conservan sus reglas.
+
+## AL.2 Diagnóstico de productos antiguos (lo corre el dueño; no se ejecutó SQL remoto)
+`supabase/scripts/diagnostico_L_productos_mas_30_noches.sql`: **un único SELECT de solo lectura** (`orden|control|observado|esperado|estado|detalle`): productos que se siguen ofreciendo con más de 30 noches (bloqueos e empaquetados con ida desde hoy, salidas dinámicas, porciones activas, programas y sus salidas vigentes) con hasta 30 identificadores por control, e informativo de cotizaciones y contratos históricos. Si todo da 0, no hay nada que decidir; si no, el dueño decide uno por uno (dejar de ofrecer o corregir a mano). Nada se modifica automáticamente. Probado en local (plantilla): 9 filas, 0 en todo.
+
+## AL.3 Pruebas
+| Prueba | Resultado |
+|---|---|
+| `pruebas/duracionViaje43L.test.ts`: regla pura (30 sí, 31 no, 1→31 válida), edición de productos antiguos, consultas (50 noches antes válidas, ahora no), **llamadas directas a las acciones** con 31 noches (bloqueo, empaquetado, salida, paquete, programa, cotización manual: rechazadas sin escribir; bloqueo de 30 llega a la RPC), cableado de edición, carga masiva, reserva, programa y contrato manual (antes de numerar), una sola definición | 18 / 18 |
+| `motorGrupos43.wiring` (el «límite sigue igual» pasó a «es la estadía máxima única») y las de `edadesMenores` (genéricas en la constante) | OK |
+
+
+# AM. Entrega 6 implementada en local: «Desde» de porción por estadía real (2026-11-12; sin commit, migración 302 provisional, sin aplicar)
+
+## AM.1 Cálculo
+`lib/calc/desdeEstadia.ts` → `desdeEstadiaReal`: para cada entrada de la ventana con la salida dentro (entrada + N ≤ fin, nunca antes de hoy) valora la estadía con el **mismo motor de una reserva** (`liquidarHotelNochesConTemporadas` + noches mínimas de `minNochesAplicable`); gana la más económica y, en empate, la entrada más temprana; devuelve total, procedencia, **justificación** (entrada, salida, noches) y **medición**. Sin EBB / Long Stay (P7). Sin candidata vendible o con un límite excedido: **sin «desde»** (nunca aproximado). Solo hoteles **con grupos** (`hotelConGrupos`); los demás siguen por `liquidarHotelMasBaratoConTemporada` sin cambios (la huella de `paquetes.ts` no cambia).
+
+## AM.2 Límites y medición (por combinación y por generación)
+- Por combinación: `LIMITES_DESDE` (400 candidatas, 250 ms).
+- **Por generación** (todas las combinaciones de todos los hoteles del paquete): `crearPresupuestoDesde` / `LIMITES_DESDE_GENERACION` (4 s y 200.000 evaluaciones; manda el tiempo). Agotado ⇒ lo que falta queda sin «desde» y se cuenta.
+- Medición: línea `generarTarifario: desde_estadia paquete_id=… combinaciones=… con_precio=… sin_estadia=… excedidas=… candidatas=… evaluadas=… ms=…` (aviso si hay excedidas). Medido en local: ≈ 19 µs por candidata; 72 combinaciones × 90 días ≈ 6.200 evaluaciones ≈ 120 ms; 150 × 180 días ≈ 26.400 candidatas ≈ 0,4 s; cierre real: 7 combinaciones, 392 evaluaciones, ≈ 9 ms por paquete.
+
+## AM.3 Persistencia (migración 302)
+`tarifario_resultado.desde_entrada` (date; CHECK: solo porción y 1 – `_e5_max_noches()` noches). Salida = entrada + noches; categoría, régimen y acomodación están en la fila y la vigencia/grupo en su procedencia. La vista publicable la expone y `tarifario_resumen` añade `desde_entrada_doble` (la de la doble de la combinación). Los dos insertores con lista explícita (`publicar_tarifario_resultado_interno`, `tarifario_lote_agregar_i`) se recrean con el cuerpo de la 256/260 + la columna, **generados** por `supabase/scripts/generar_302_desde_estadia.mjs` (cada sustitución, coincidencia única). Rollback protegido (aborta con justificaciones publicadas; recrea las vistas dependientes con sus permisos).
+
+## AM.4 Lectura, presentación y cotización
+- Verificación al leer (`lib/tarifario/vigencia.ts`): con grupos, la fila sigue vigente si **su** estadía sigue vendible (una liquidación por fila); sin justificación no se muestra. Sin grupos, como siempre.
+- Tarjeta (`VistaBooking.tsx`, `estadiaDesdeDoble` / `textoEstadiaDesde`): «desde X» y debajo «por persona · N noches · Entrada dd/mm/aaaa», de la fila que origina el «desde» doble.
+- Cotizador: sin fechas elegidas, «Ver opciones» abre la porción con esa entrada y salida **precargadas** y cotiza en vivo (`fechasIniciales`).
+
+## AM.5 Pruebas
+| Prueba | Resultado |
+|---|---|
+| `pruebas/desdeEstadia43.test.ts`: ejemplo aprobado (550.000 · entrada 04/01/2027; nunca 500.000), empate, noche no vendible, sin estadía, ventana = N y < N, hoy, noches mínimas, régimen, límites, equivalencia candidata por candidata, precio plano = «desde» de siempre, medición; **presupuesto de la generación** (candidatas y tiempo agotados ⇒ sin «desde», contados) | 19 / 19 |
+| `pruebas/desdeEstadia43.react.ts`: tarjeta con noches y entrada; sin grupos, la de siempre; singular | 3 / 3 |
+| `test_302_desde_estadia_real.sh` | 0 fallos |
+| **Cierre** `cierre_43_precios_antiguos.sh` (con y sin lotes): activar / actualizar / volver; justificación presente solo con grupos y dentro de la ventana; **paridad**: tarjeta «Desde 300.000 · 3 noches · Entrada 01/02/2027» = cotización en vivo 300.000 | **0 FALLO · 0 AVISO** |
+| Pruebas de cableado ajustadas con su motivo: `precioFinalAutoritativoWiring`, `publicacionLotesCableado` (5.º argumento de `publicarFila`); `vuelosOperacionesActions.react` (doble con `maybeSingle` para la lectura previa de la entrega L) | OK |
+
+Auditoría final del conjunto: `docs/tecnico/auditoria-final-43-60.md`.

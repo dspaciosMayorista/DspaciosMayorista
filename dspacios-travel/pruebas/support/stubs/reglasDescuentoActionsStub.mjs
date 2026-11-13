@@ -4,3 +4,6 @@ const noImpl = (n) => async () => { throw new Error(`${n}: no implementado en el
 export const guardarReglaDescuento = noImpl("guardarReglaDescuento");
 export const alternarReglaDescuento = noImpl("alternarReglaDescuento");
 export const eliminarReglaDescuento = noImpl("eliminarReglaDescuento");
+// #43/#60 entrega 5 (301): reglas retenidas.
+export const aplicarReglaRetenida = noImpl("aplicarReglaRetenida");
+export const descartarReglaRetenida = noImpl("descartarReglaRetenida");

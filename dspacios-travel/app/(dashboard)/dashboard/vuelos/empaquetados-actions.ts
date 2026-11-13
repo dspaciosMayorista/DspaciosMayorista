@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { validarFechasViaje, validarFechasAlEditar } from "@/lib/reglas/duracionViaje";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { esEstadoEmision, esEstadoPago, type EstadoEmision, type EstadoPago } from "@/lib/vuelos/control";
@@ -83,6 +84,8 @@ function validarEmpaquetado(input: EmpaquetadoInput, creando = false): string | 
 export async function crearEmpaquetado(input: EmpaquetadoInput): Promise<Result> { // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   const err = validarEmpaquetado(input, true);
   if (err) return { ok: false, error: err };
+  const vNoches = validarFechasViaje(input.fechaIda, input.fechaRegreso); // entrega L: estadía máxima del viaje
+  if (!vNoches.ok) return vNoches;
 
   const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
   const { data, error } = await sb
@@ -140,6 +143,10 @@ export async function actualizarEmpaquetado(id: number, input: EmpaquetadoInputG
   if (err) return { ok: false, error: err };
 
   const sb = await createClient(); // identidad:n/a — catálogo de empaquetados, sin tablas de contrato
+  // Entrega L: si cambian las fechas, respetan la estadía máxima (uno antiguo que ya tenía más se conserva hasta que el dueño decida).
+  { const { data: prev } = await sb.from("empaquetados").select("fecha_ida, fecha_regreso").eq("id", id).maybeSingle();
+    const vNoches = validarFechasAlEditar(input.fechaIda, input.fechaRegreso, prev?.fecha_ida, prev?.fecha_regreso);
+    if (!vNoches.ok) return vNoches; }
   // Defecto 5 (revisión de PR #268): `.select("id")` + comprobar que
   // devolvió fila — sin esto, un UPDATE cuyo `where` no matchea ninguna fila
   // (RLS filtrando, o un id que ya no existe) NO es un error para

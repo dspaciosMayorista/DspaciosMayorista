@@ -37,8 +37,13 @@ const fuentes = {
   "paquetes/actions.ts": "app/(dashboard)/dashboard/paquetes/actions.ts",
 };
 const selects = {};
+// #43/#60 entrega 4: los cargadores arman la lectura con un template que incrusta SELECT_PROMO_VIGENCIA (lib/calc/promocionesGrupo.ts).
+// Se acepta comilla doble o backtick y se sustituye la constante por su valor REAL, así la consulta enviada sigue siendo la del código.
+const SELECT_PROMO = readFileSync("lib/calc/promocionesGrupo.ts", "utf8").match(/export const SELECT_PROMO_VIGENCIA = "([^"]*)";/)?.[1] ?? null;
 for (const [k, f] of Object.entries(fuentes)) {
-  const m = [...readFileSync(f, "utf8").matchAll(/from\("hotel_temporadas"\)\s*\.select\("([^"]*)"\)/g)].map((x) => x[1]).filter((s) => s.includes("hotel_temporada_grupos("));
+  const m = [...readFileSync(f, "utf8").matchAll(/from\("hotel_temporadas"\)\s*\.select\((?:"([^"]*)"|`([^`]*)`)\)/g)]
+    .map((x) => (x[1] ?? x[2]).replace(/\$\{SELECT_PROMO_VIGENCIA\}/g, SELECT_PROMO ?? "\u0000sin constante"))
+    .filter((s) => s.includes("hotel_temporada_grupos(") && !s.includes("${"));
   ok(m.length === 1, `${k}: la lectura de vigencias del motor incrusta los grupos`);
   selects[k] = m[0];
 }

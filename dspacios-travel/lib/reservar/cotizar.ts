@@ -8,7 +8,8 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import type { ReglaDescuentoHotel } from "@/lib/calc/descuentoHotel";
+import { descuentoMostrado, type DescuentoMostrado } from "@/lib/calc/precedenciaPromociones";
+import { soloAutorizadas } from "@/lib/reservar/reglasDescuentoHotel";
 import {
   noches,
   temporadaParaFecha,
@@ -46,6 +47,7 @@ import { ALCANCE_BUSQUEDA_POR_DEFECTO, parseAlcanceVenta, type AlcanceVenta } fr
 import { leerAlcanceDeServicios } from "@/lib/servicios/alcanceContexto";
 import { combinarHoras, horasAcreditadasDelRecorrido } from "@/lib/reservar/horasRecorrido";
 import { cargarVigenciasServicios, leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
+import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
 import {
   evaluarHotelPorFechas, generarSugerenciasFechas, consolidarSugerenciasGlobales, condicionHotelFechas,
   type ComboCotizado, type DatosHotelPaquete, type FilaTemporadaHotelRaw, type FilaTarifaHotelRaw,
@@ -64,6 +66,7 @@ export type { ComboCotizado, SugerenciaFecha };
 // que falló — ver `cargarDatosHotelPaquete` más abajo.
 const MENSAJE_HOTEL_ERROR_TECNICO = "No pudimos cotizar este hotel en este momento. Intenta nuevamente.";
 const MENSAJE_HOTEL_SIN_TARIFA = "Para las fechas elegidas no encontramos una tarifa.";
+const MENSAJE_PRECEDENCIA_SIN_RESOLVER = "Para las fechas elegidas el hotel tiene una promoción pendiente de configurar con sus descuentos por anticipación o larga estadía. Consulta con el área de producto.";
 const MENSAJE_BUSQUEDA_HOTELES_NO_DISPONIBLE = "Búsqueda no disponible en este momento. Intenta nuevamente.";
 
 type ResultadoCargaHotelPaquete =
@@ -123,12 +126,12 @@ async function cargarDatosHotelPaquete(
     { data: blackouts, error: blackoutsErr },
     { data: reglasDesc, error: reglasDescErr },
   ] = await Promise.all([
-    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda, adults_only)").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
-    admin.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, hotel_temporada_grupos(id, dias, activo)").eq("hotel_id", hotelId).order("orden").order("id"),
+    admin.from("armado_hoteles").select("categorias, regimenes, hoteles(nombre, moneda, adults_only, hotel_acomodaciones(acomodacion, pax_tarifa))").eq("paquete_id", paqueteId).eq("hotel_id", hotelId).maybeSingle(),
+    admin.from("hotel_temporadas").select(`id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, hotel_temporada_grupos(id, dias, activo), ${SELECT_PROMO_VIGENCIA}`).eq("hotel_id", hotelId).order("orden").order("id"),
     admin.from("tarifa_hotel").select("*").eq("hotel_id", hotelId),
     admin.from("armado_servicios").select("incluido, servicio_id, modo, servicios_adicionales(nombre, categoria, precio_persona, precio_infante, liquidacion, proveedor_id)").eq("paquete_id", paqueteId),
     admin.from("hotel_blackouts").select("fecha_inicio, fecha_fin, total, acomodaciones, categorias").eq("hotel_id", hotelId),
-    admin.from("hotel_reglas_descuento").select("tipo, umbral, pct, activa").eq("hotel_id", hotelId).eq("activa", true),
+    admin.from("hotel_reglas_descuento").select("tipo, umbral, pct, activa, autorizada").eq("hotel_id", hotelId).eq("activa", true),
   ]);
   if (hselErr) return { ok: false, motivo: "error_consulta", etapa: "armado_hoteles", detalleInterno: hselErr.message };
   if (!hsel) return { ok: false, motivo: "hotel_no_asociado" };
@@ -139,7 +142,7 @@ async function cargarDatosHotelPaquete(
 
 
   if (reglasDescErr) return { ok: false, motivo: "error_consulta", etapa: "hotel_reglas_descuento", detalleInterno: reglasDescErr.message };
-  const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null } | null;
+  const hotelMeta = hsel.hoteles as unknown as { nombre: string; moneda?: string | null; adults_only?: boolean | null; hotel_acomodaciones?: { acomodacion: string; pax_tarifa: number | null }[] | null } | null;
   const destinoNombre = (pq.destinos as unknown as { nombre: string } | null)?.nombre ?? null;
 
   const datos: DatosHotelPaquete = {
@@ -153,6 +156,8 @@ async function cargarDatosHotelPaquete(
       hotel_nombre: hotelMeta?.nombre ?? null,
       hotel_moneda: hotelMeta?.moneda ?? null,
       hotel_adults_only: hotelMeta?.adults_only ?? null,
+      // #43/#60 entrega 4: ocupantes tarifados por habitación (configuración del hotel), en la MISMA lectura.
+      hotel_pax_tarifa: Object.fromEntries((hotelMeta?.hotel_acomodaciones ?? []).filter((a) => a.pax_tarifa != null).map((a) => [a.acomodacion, Number(a.pax_tarifa)])),
     },
     temporadas: (temps ?? []) as FilaTemporadaHotelRaw[],
     tarifas: (tarifas ?? []) as FilaTarifaHotelRaw[],
@@ -173,7 +178,7 @@ async function cargarDatosHotelPaquete(
       };
     }),
     blackouts: (blackouts ?? []) as FilaBlackoutHotelRaw[],
-    reglasDescuento: (reglasDesc ?? []) as ReglaDescuentoHotel[],
+    reglasDescuento: soloAutorizadas(reglasDesc),
     fechaReserva: fechaNegocio(), // fecha autoritativa del servidor (Bogotá); el cliente nunca la envía
   };
 
@@ -275,8 +280,9 @@ export type CotizarResult =
       // revisión PR #294) — nunca mostrarlo como si estuviera incluido gratis.
       serviciosGrupoPendientes: string[];
       incluidosDeLaSalida?: IncluidosDeLaSalida;
-      // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo se muestra.
-      descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
+      // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo se muestra. Entrega 5: si algún combo decidió
+      // otro por acomodación, cada combo trae el suyo (`combos[i].descuentoHotel`) y este es el del primero.
+      descuentoHotel?: DescuentoMostrado | null;
     }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
@@ -343,6 +349,11 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
     const sugerencias = generarSugerenciasFechas({ datos, fechaIdaSolicitada: input.fechaIda, numNochesSolicitadas: numNoches });
     return { ok: false, error: `Este alojamiento exige un mínimo de ${res.minNoches} noche(s) para esas fechas.`, sugerencias };
   }
+  if (res?.precedenciaSinResolver && !res.combos.length) {
+    // Entrega 5: una promoción coincide con EBB / Long Stay sin configuración: no se elige ningún descuento implícito.
+    console.error(`[cotizarPorFechas] etapa=precedencia_promociones paqueteId=${input.paqueteId} hotelId=${input.hotelId} detalle=${res.precedenciaSinResolver}`);
+    return { ok: false, error: MENSAJE_PRECEDENCIA_SIN_RESOLVER, sugerencias: [] };
+  }
   if (!res || !res.combos.length) {
     // Diagnóstico técnico (SOLO para el log — nunca al cliente, ver mensaje
     // fijo más abajo): ¿qué temporada de las noches elegidas no tiene tarifa
@@ -370,13 +381,16 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
   // Precios de VENTA de menores (226) y precio normal del infante cuando el PVP fijo lo reemplazó (254): sin costos.
   const combosPublicos = res.combos.map((c) => ({
     categoria: c.categoria, regimen: c.regimen, precios: c.precios,
+    // Entrega 5: solo si la precedencia decidió aquí otro EBB / Long Stay que el de la estadía (regla y %, sin importes netos).
+    // y lo que se muestra de él, por acomodación si difiere (nunca el de una como si fuera de todas).
+    ...(c.descuentoPorAcom ? { descuentoPorAcom: c.descuentoPorAcom, descuentoHotel: descuentoMostrado(res.descuentoHotel, c.descuentoPorAcom, Object.keys(c.precios)) } : {}),
     preciosMenor2: c.preciosMenor2, preciosSinFijo: c.preciosSinFijo, preciosMenor2SinFijo: c.preciosMenor2SinFijo,
   }));
   const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
   return {
     ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion,
     // #90: regla EBB / Long Stay que usó ESTE cálculo (null = no se aplicó descuento): solo para mostrarla, no cambia ningún importe.
-    descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta, tipo: res.descuentoHotel.tipo, umbral: res.descuentoHotel.umbral, pct: res.descuentoHotel.pct } : null,
+    descuentoHotel: combosPublicos[0] && "descuentoHotel" in combosPublicos[0] ? combosPublicos[0].descuentoHotel ?? null : descuentoMostrado(res.descuentoHotel, undefined, []),
     // Marca honesta (decisión del dueño): esta tabla es POR PERSONA y no
     // conoce el tamaño del grupo, así que un servicio incluido con cobro por
     // grupo no puede estar en `precios`. Se nombra para que la UI advierta
@@ -447,7 +461,8 @@ export type BusquedaResultado = {
   // condición configurada. Nunca afecta `total`/`combos`.
   condicion?: CondicionHotelFechas | null;
   // #90: regla EBB / Long Stay que aplicó el cálculo de ESTE precio (mismas fechas; null = sin descuento). Solo para mostrarla junto al precio.
-  descuentoHotel?: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
+  // Entrega 5: mixta (`porAcomodacion`) si la precedencia decidió distinto por acomodación de esta composición.
+  descuentoHotel?: DescuentoMostrado | null;
 };
 
 // Máximo de hoteles/paquetes cuyo `DatosHotelPaquete` (ya cargado durante la
@@ -724,7 +739,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     // unión global del combo) — reutiliza `datos.tarifas`, ya cargado por
     // `cargarDatosHotelPaquete`, sin ninguna consulta nueva por combinación.
     let algunCombosFalloEdad = false;
-    const combosValidos: { total: number; categoria: string; regimen: string; pax: number; menores: ClasificacionMenores }[] = [];
+    const combosValidos: { total: number; categoria: string; regimen: string; pax: number; menores: ClasificacionMenores; descuento?: DescuentoMostrado | null }[] = [];
     for (const combo of res.combos) {
       const temporadasUsadas = new Set<string>();
       for (const [acom] of porAcom) for (const t of combo.temporadasTarifaPorAcom?.[acom] ?? []) temporadasUsadas.add(t);
@@ -808,7 +823,8 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         if (!cargo.ok) continue;
         total += cargo.pvp;
       }
-      combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax, menores });
+      // Entrega 5: la etiqueta EBB / Long Stay es la de ESTE combo (la precedencia con una promoción puede decidir otra).
+      combosValidos.push({ total, categoria: combo.categoria, regimen: combo.regimen, pax, menores, descuento: descuentoMostrado(res.descuentoHotel, combo.descuentoPorAcom, [...porAcom.keys(), ...(menores.nino ? ["nino"] : []), ...(menores.nino2 ? ["nino2"] : []), ...(menores.infantes ? ["infante"] : [])]) });
     }
     if (combosValidos.length) {
       combosValidos.sort((a, b) => a.total - b.total); // más barato primero (predeterminado)
@@ -820,7 +836,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         total: mejor.total, noches: numNoches, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, moneda: res.moneda,
         habitaciones: habitacionesOut, menores: mejor.menores, edadesMenores: edades, pax: mejor.pax,
         combos: combosValidos, condicion, incluidosDeLaSalida: incluidosDeLaSalida(res),
-        descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta, tipo: res.descuentoHotel.tipo, umbral: res.descuentoHotel.umbral, pct: res.descuentoHotel.pct } : null,
+        descuentoHotel: mejor.descuento ?? null,
       });
     } else if (algunCombosFalloEdad) {
       registrarRechazo("No se pudo determinar con certeza la regla de edad de niño/infante para ningún combo de este hotel (configuración ambigua o incompleta).");

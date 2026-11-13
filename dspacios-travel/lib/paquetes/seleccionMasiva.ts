@@ -42,3 +42,18 @@ export function mensajeLote(
   if (r.aviso) partes.push(r.aviso);
   return { tono: omitidos.length || r.aviso ? "aviso" : "ok", texto: partes.join(" ") };
 }
+
+/** #50: «Seleccionar todos» sobre una lista: actúa SOLO sobre `visibles` (filas que pasan el filtro y no están
+ *  deshabilitadas) y conserva intacto el resto de la selección. Con todas las visibles marcadas, las desmarca. */
+export function alternarVisibles<T>(sel: ReadonlySet<T>, visibles: readonly T[]): Set<T> {
+  const n = new Set(sel);
+  const todas = visibles.length > 0 && visibles.every((v) => n.has(v));
+  for (const v of visibles) if (todas) n.delete(v); else n.add(v);
+  return n;
+}
+
+/** Estado de la casilla maestra para las filas `visibles` (las ocultas o deshabilitadas no cuentan). */
+export function estadoVisibles<T>(sel: ReadonlySet<T>, visibles: readonly T[]): EstadoSeleccionTodos & { ocultas: number } {
+  const marcadas = visibles.filter((v) => sel.has(v)).length;
+  return { ...estadoSeleccionTodos(visibles.length, marcadas), ocultas: sel.size - marcadas };
+}

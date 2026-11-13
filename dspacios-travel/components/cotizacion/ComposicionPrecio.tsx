@@ -39,6 +39,15 @@ function Hotel({ nombre, c, totalCotizacion }: { nombre: string | null; c: Compo
                   <td className="px-4 py-1.5 text-right tabular-nums">{formatMoneda(Math.round(x.venta * l.pax * 100) / 100, m)}</td>
                 </tr>
               )),
+              ...(l.habitacion ? [
+                <tr key={`${l.clave}-hab`} className="text-gray-600" data-testid="composicion-descuento-habitacion">
+                  <td colSpan={5} className="py-1.5 pl-8 pr-4 text-xs">
+                    Descuento por habitación: {formatMoneda(l.habitacion.descuento, m)} por habitación
+                    (reparto por ocupante: {l.habitacion.repartoDescuento.map((x) => formatMoneda(x, m)).join(" + ")}) ·
+                    neto exacto por habitación {formatMoneda(l.habitacion.netoPorHabitacion, m)} × {l.habitacion.habitaciones} = {formatMoneda(l.habitacion.netoHotelLinea, m)}
+                  </td>
+                </tr>,
+              ] : []),
               ...(l.componentes ? [] : [<tr key={`${l.clave}-n`}><td colSpan={5} className="py-1.5 pl-8 pr-4 text-xs text-amber-700" data-testid="composicion-sin-componentes">{l.nota ?? "Sin componentes verificables."}</td></tr>]),
             ])}
             {c.adicionales.map((x, i) => (

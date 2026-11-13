@@ -83,3 +83,21 @@ export function desdeDobleDetallePrograma(det: {
     .filter(esDoblePublicable);
   return v.length ? Math.min(...v) : null;
 }
+
+/**
+ * #43/#60 entrega 6: estadía que JUSTIFICA el «desde» DOBLE (porción de un hotel con grupos): la de la fila que lo origina. Sin justificación
+ * (hoteles sin grupos, bloqueos, filas anteriores a la 302) devuelve null y la tarjeta se ve como siempre.
+ */
+export function estadiaDesdeDoble<T extends FilaConDoble & { desde_entrada_doble?: string | null; noches?: number | null }>(
+  filas: readonly T[], moneda: string | null | undefined,
+): { entrada: string; salida: string; noches: number } | null {
+  const o = origenDesdeDoble(filas, moneda);
+  const entrada = o?.desde_entrada_doble, noches = o?.noches;
+  if (!entrada || !noches || !/^\d{4}-\d{2}-\d{2}$/.test(entrada)) return null;
+  const salida = new Date(Date.parse(`${entrada}T00:00:00Z`) + noches * 86_400_000).toISOString().slice(0, 10);
+  return { entrada, salida, noches };
+}
+
+/** Texto de la justificación: «5 noches · Entrada 04/01/2027». */
+export const textoEstadiaDesde = (e: { entrada: string; noches: number }) =>
+  `${e.noches} ${e.noches === 1 ? "noche" : "noches"} · Entrada ${e.entrada.slice(8, 10)}/${e.entrada.slice(5, 7)}/${e.entrada.slice(0, 4)}`;
