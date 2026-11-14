@@ -2059,6 +2059,21 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_items"]["Insert"]>;
         Relationships: [];
       };
+      // #94 (migración 304): resumen de precios del cliente congelado al convertir la cotización. Solo importes de cara al cliente; escribe el servidor (service_role).
+      contrato_resumen_precios: {
+        Row: { numero_contrato: string; resumen: Json; created_at: string };
+        Insert: { numero_contrato: string; resumen: Json; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["contrato_resumen_precios"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "contrato_resumen_precios_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            isOneToOne: true;
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
+          },
+        ];
+      };
       // Migración 176 (Fase 3F-2): snapshot PRIVADO por habitación física de
       // un contrato Bernalo (neto/bruto/comisión/fuente en `snapshot`, un
       // `SnapshotAlojamiento` completo de `lib/calc/unidadAlojamiento.ts`).
@@ -2218,8 +2233,9 @@ export type Database = {
         Relationships: [];
       };
       hotel_categorias: {
-        Row: { hotel_id: number; categoria_id: number };
-        Insert: { hotel_id: number; categoria_id: number };
+        // descripcion/incluye = migración 303 (#45): texto de la categoría en ESTE hotel.
+        Row: { hotel_id: number; categoria_id: number; descripcion: string | null; incluye: string | null };
+        Insert: { hotel_id: number; categoria_id: number; descripcion?: string | null; incluye?: string | null };
         Update: Partial<Database["public"]["Tables"]["hotel_categorias"]["Insert"]>;
         Relationships: [];
       };
@@ -3514,6 +3530,9 @@ export type Database = {
           asesor: string | null;
           creado_por: string | null;
           numero_contrato: string | null;
+          clave_envio: string | null;
+          huella_envio: string | null;
+          actor_envio: string | null;
           share_token: string;
           // Nullable durante la fase aditiva (migración 153); la 154 la
           // cierra a NOT NULL. Todo INSERT nuevo debe estamparla igual.
@@ -3556,6 +3575,9 @@ export type Database = {
           id?: number;
           codigo?: string;
           tipo?: string;
+          clave_envio?: string | null;
+          huella_envio?: string | null;
+          actor_envio?: string | null;
           share_token?: string;
           created_at?: string;
           estado?: string;

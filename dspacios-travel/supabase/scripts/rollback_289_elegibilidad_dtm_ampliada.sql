@@ -1,6 +1,12 @@
 -- ROLLBACK de la migración 289 (#75, elegibilidad ampliada): restaura dtm_reuso_bloqueos y eliminar_contrato a la definición de la 287. Una transacción.
 -- No toca datos. Verifica por md5 que lo restaurado es EXACTAMENTE la 287. Si el reuso estaba habilitado, NO lo cambia (esa decisión es aparte).
 begin;
+-- 304 (#94) redefine dtm_reuso_bloqueos (cuerpo de la 289 + contrato_resumen_precios como preparación): con la 304 aplicada este rollback restauraría la 287 sobre una tabla no clasificada.
+do $$ begin
+  if to_regclass('public.contrato_resumen_precios') is not null then
+    raise exception 'ROLLBACK_289: la 304 está aplicada (usa y redefine dtm_reuso_bloqueos). Ejecuta primero rollback_304_contrato_resumen_precios.sql.';
+  end if;
+end $$;
 create or replace function public.dtm_reuso_bloqueos(p_numero text, p_vivo boolean)
 returns text[]
 language plpgsql

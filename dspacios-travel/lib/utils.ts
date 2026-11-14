@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatearHora, parseHora } from "@/lib/calc/trasladoFranjas";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -59,6 +60,13 @@ export function formatFechaLarga(iso: string | null | undefined): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/** Hora de vuelo para mostrar en 24 h «HH:mm» (13:10:00 → 13:10). Solo formatea: sin conversión de zona. Texto no interpretable se deja tal cual; vacío → null. */
+export function formatHora24(valor: unknown): string | null {
+  if (typeof valor !== "string" || !valor.trim()) return null;
+  const min = parseHora(valor);
+  return min == null ? valor.trim() : formatearHora(min);
 }
 
 /** Etiqueta de destino con su código IATA entre paréntesis: "CARTAGENA (CTG)" */

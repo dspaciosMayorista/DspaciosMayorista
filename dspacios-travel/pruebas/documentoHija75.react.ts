@@ -5,6 +5,7 @@
 //   · Incluye / No incluye y descripción editada que la hija hereda de la plantilla de la opción (crear_hija copia `plantilla_hija.detalle` tal cual);
 //   · cotización manual: la tarifa guardada redondeada no se muestra si no cuadra con el valor.
 import { describe, test } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 
@@ -22,8 +23,8 @@ const venta = {
   fecha_emision: "2030-01-10", fecha_salida: "2030-03-01", pax: 2, plan_nombre: null, tours_traslados: null, asistencia_medica: null, moneda: "COP", tenant: "mayorista",
 };
 function doc(extra: Record<string, unknown>) {
-  const props = { venta, pasajeros: [], hoteles: [], vuelos: [], items: [], totalPagado: 0, esCotizacion: true, codigo: "COT-1", agencia: null, condiciones: null, ...extra };
-  return plano(renderToStaticMarkup(createElement(ContratoDocumento, props as unknown as Parameters<typeof ContratoDocumento>[0])));
+  const props = { venta, pasajeros: [], hoteles: [], vuelos: [], items: [], totalPagado: 0, esCotizacion: true, codigo: "COT-1", agencia: AGENCIA_PRUEBA, condiciones: null, ...extra };
+  return plano(renderToStaticMarkup(createElement(ContratoDocumento, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA } as unknown as Parameters<typeof ContratoDocumento>[0])));
 }
 const hab = (id: number, adultos: number, tarifa: number, descripcion = "Hotel Almirante — CARTAGENA · 1 hab Doble (2 pax) · Estándar / PAM") =>
   ({ id, numero_contrato: "", descripcion, adultos, ninos: 0, tarifa_adulto: tarifa, tarifa_nino: 0, orden: id, modo_precio: null, valor_total: null });
@@ -77,7 +78,7 @@ describe("hija heredada de la opción: descripción editada e Incluye / No inclu
 describe("cotización manual: tarifa guardada redondeada", () => {
   const render = (items: unknown[]) => plano(renderToStaticMarkup(createElement(CotizacionManualDocumento, {
     codigo: "COT-2", venta: { cliente: "Ana", destino: "CARTAGENA", fecha_salida: "2030-03-01", fecha_regreso: "2030-03-04", pax: 2, moneda: "COP" }, items, cliente: {}, incluye: null, noIncluye: null,
-    vigenciaHasta: null, fechaEmision: "2030-01-10", agencia: null,
+    vigenciaHasta: null, fechaEmision: "2030-01-10", agencia: AGENCIA_PRUEBA,
   } as unknown as Parameters<typeof CotizacionManualDocumento>[0])));
   test("1.330.455 entre 2: no se imprime 665.228 (× 2 = 1.330.456) sino la tarifa que cuadra, 665.227,50", () => {
     const t = render([{ descripcion: "PAQUETE", cantidad: 2, tarifa_unit: 665_228, valor: 1_330_455 }]);

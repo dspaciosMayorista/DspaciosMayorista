@@ -43,6 +43,10 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = "dummy-service";
 // ── Base en memoria y clientes simulados ─────────────────────────────────
 type Fila = Record<string, unknown>;
 const db: Record<string, Fila[]> = {};
+// Inyección de fallo: la inserción en esta tabla devuelve error y NO persiste nada (prueba de fallos de la conversión).
+let FALLO_INSERT: string | null = null;
+// Opcional: el fallo solo aplica si las filas a insertar cumplen esto (p. ej. distinguir los ítems de tours de los del hotel en la misma tabla).
+let FALLO_FILTRO: ((filas: Fila[]) => boolean) | null = null;
 let usuario: { id: string; email: string } | null = null;
 const CATALOGO_SERVICIO: Record<number, Fila> = {
   9: { id: 9, proveedores: { nombre: "Asistencias SA", aplica_retencion: false, pct_retencion: 0 } },
@@ -54,6 +58,7 @@ function cliente() {
     const filtros: [string, "eq" | "in", unknown][] = [];
     let op: "select" | "insert" | "update" = "select";
     let insertadas: Fila[] = [];
+    let fallaEsta = false;
     let patch: Fila = {};
     const coincide = (f: Fila) => filtros.every(([k, o, v]) => (o === "eq" ? f[k] === v : (v as unknown[]).includes(f[k])));
     const leer = (): Fila[] => {
@@ -62,7 +67,7 @@ function cliente() {
       return (db[tabla] ?? []).filter(coincide);
     };
     const resolver = () => {
-      if (op === "insert") return { data: insertadas, error: null };
+      if (op === "insert") return fallaEsta ? { data: null, error: { message: "fallo simulado de la base" } } : { data: insertadas, error: null };
       if (op === "update") { for (const f of db[tabla] ?? []) if (coincide(f)) Object.assign(f, patch); return { data: null, error: null }; }
       return { data: leer(), error: null };
     };
@@ -75,7 +80,8 @@ function cliente() {
         op = "insert";
         insertadas = (Array.isArray(filas) ? filas : [filas]).map((f) =>
           tabla === "cotizaciones" ? { id: 77, codigo: "COT-77", share_token: "tok", estado: "abierta", numero_contrato: null, ...f } : { ...f });
-        (db[tabla] ??= []).push(...insertadas);
+        fallaEsta = FALLO_INSERT === tabla && (!FALLO_FILTRO || FALLO_FILTRO(insertadas));
+        if (!fallaEsta) (db[tabla] ??= []).push(...insertadas);
         return b;
       },
       update: (p: Fila) => { op = "update"; patch = p; return b; },
@@ -100,17 +106,24 @@ function cliente() {
 type Incluido = { servicioId: number; nombre: string; categoria: "asistencia" | "tour_traslado" | "otro"; incluido: true; costoNeto: number; proveedorId: number | null };
 type HotelSim = { nombre: string; moneda: string; pvp: number; neto: number; cargoGrupo: number; incluidos: Incluido[] };
 let HOTELES: Record<number, HotelSim> = {};
+// Tour del tarifario simulado: null = el servicio no está disponible (comportamiento de siempre).
+let TOUR_SIM: Record<string, unknown> | null = null;
+// Variante por servicio (por id) para cotizar varios servicios distintos en la misma solicitud.
+let TOUR_POR_ID: Record<number, Record<string, unknown>> = {};
 mock.module("@/lib/reservar/computo", {
   namedExports: {
-    computarReserva: async (_sb: unknown, r: { hotelId: number }) => {
+    computarReserva: async (_sb: unknown, r: { hotelId: number; habitaciones?: Record<string, number> }) => {
       const h = HOTELES[r.hotelId];
+      const dobles = r.habitaciones?.doble ?? 1, sencillas = r.habitaciones?.sencilla ?? 0;
+      const lineas = [...(dobles ? [{ acom: "doble", habitaciones: dobles, pax: dobles * 2, pvp: h.pvp }] : []), ...(sencillas ? [{ acom: "sencilla", habitaciones: sencillas, pax: sencillas, pvp: h.pvp }] : [])];
+      const pax = dobles * 2 + sencillas;
       return {
         ok: true,
         data: {
           meta: { hotel_nombre: h.nombre, destino_nombre: "CARTAGENA", fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04" },
-          precioVenta: h.pvp * 2 + h.cargoGrupo, monedaReserva: h.moneda,
-          lineasHab: [{ acom: "doble", habitaciones: 1, pax: 2, pvp: h.pvp }], pvpPorAcom: { doble: h.pvp }, netoPorAcom: { doble: h.neto },
-          numNinos: 0, numNinos2: 0, numInfantes: 0, totalPax: 2, paxConSilla: 2, edadesMenoresUsadas: [],
+          precioVenta: h.pvp * pax + h.cargoGrupo, monedaReserva: h.moneda,
+          lineasHab: lineas, pvpPorAcom: { doble: h.pvp, sencilla: h.pvp }, netoPorAcom: { doble: h.neto, sencilla: h.neto },
+          numNinos: 0, numNinos2: 0, numInfantes: 0, totalPax: pax, paxConSilla: pax, edadesMenoresUsadas: [],
           serviciosIncluidos: h.incluidos, distribucionMenores: [], condicionesTarifa: null,
         },
       };
@@ -120,7 +133,7 @@ mock.module("@/lib/reservar/computo", {
 mock.module("@/lib/reservar/computoReservaBernalo", { namedExports: { computarReservaBernalo: async () => { throw new Error("no se usa"); } } });
 mock.module("@/lib/reservar/cotizar", {
   namedExports: {
-    liquidarServicioPuntual: async () => ({ ok: false, tipo: "no_disponible", mensaje: "no se usa" }),
+    liquidarServicioPuntual: async (e: { servicioId?: number }) => (TOUR_SIM ? { ok: true, resultado: { ...TOUR_SIM, ...(TOUR_POR_ID[e?.servicioId ?? -1] ?? {}) } } : { ok: false, tipo: "no_disponible", mensaje: "no se usa" }),
     cotizarPorFechas: async () => { throw new Error("no se usa"); },
     buscarHoteles: async () => { throw new Error("no se usa"); },
     buscarReceptivos: async () => { throw new Error("no se usa"); },
@@ -128,10 +141,11 @@ mock.module("@/lib/reservar/cotizar", {
 });
 type CxP = { tipo_proveedor: string; servicio: string; valor_total: number; proveedor: string | null; servicio_id: number | null };
 const financieros: { cxp: CxP[]; costos: Fila }[] = [];
+const reversiones: string[] = [];
 mock.module("@/lib/reservar/financieroContrato", {
   namedExports: {
     registrarFinancieroContrato: async (_deps: unknown, a: { cxp: CxP[]; costos: Fila }) => { financieros.push({ cxp: a.cxp, costos: a.costos }); return { ok: true }; },
-    revertirContratoIncompleto: async () => ({ ok: true }),
+    revertirContratoIncompleto: async (_d: unknown, numero: string) => { reversiones.push(numero); return { ok: true }; },
   },
 });
 mock.module("@/lib/contabilidad/asientos", { namedExports: { postearAsientoCxP: async () => ({ ok: true }), eliminarAsientoCxP: async () => ({ ok: true }) } });
@@ -151,9 +165,10 @@ mock.module("@/lib/supabase/server", { namedExports: { createClient: async () =>
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => cliente() } });
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]) } });
 
-const { crearSolicitudReserva } = await import("../app/tarifario/checkout/actions.ts");
+const { crearSolicitudReserva, cuposDeCarrito } = await import("../app/tarifario/checkout/actions.ts");
 const { convertirCotizacionCarrito } = await import("../app/(dashboard)/dashboard/reservar/actions.ts");
 const { totalVisibleContratoItems } = await import("../lib/contrato/valorContratoItem.ts");
+const { resumenAplicable } = await import("../lib/cotizacion/resumenPrecios.ts");
 
 const ASISTENCIA: Incluido = { servicioId: 9, nombre: "ASISTENCIA MEDICA", categoria: "asistencia", incluido: true, costoNeto: 40_000, proveedorId: 5 };
 const TRASLADO_GRUPO: Incluido = { servicioId: 12, nombre: "TRASLADO GRUPAL", categoria: "tour_traslado", incluido: true, costoNeto: 70_000, proveedorId: 8 };
@@ -185,6 +200,11 @@ async function cotizarYConvertir(items: unknown[]) {
 beforeEach(() => {
   for (const k of Object.keys(db)) delete db[k];
   financieros.length = 0;
+  reversiones.length = 0;
+  FALLO_INSERT = null;
+  FALLO_FILTRO = null;
+  TOUR_SIM = null;
+  TOUR_POR_ID = {};
 });
 
 describe("incluido POR PERSONA: OZ HOTEL CARTAGENA, paquete 34, asistencia médica", () => {
@@ -482,5 +502,255 @@ describe("cotizaciones SIN incluidos: convierten como siempre y conservan sus gu
     assert.equal(r.ok, false);
     assert.match(r.error ?? "", /la moneda cambió desde que se generó la cotización/);
     sinEscrituras();
+  });
+});
+
+// ── Fallos de escritura de las líneas del contrato: la conversión NO continúa con un contrato a medias ──
+// Antes, la inserción de los ítems del hotel (y la de tours y vuelos del bloqueo) ignoraba su error y el contrato se completaba sin esas líneas.
+describe("conversión: si no se pueden escribir las líneas del contrato, se revierte y no se completa", () => {
+  test("falla la inserción de los ítems del hotel: error explícito, contrato revertido una vez y sin escritura financiera", async () => {
+    HOTELES = { 1: ozCon([]) };
+    await cotizar([item(1, 34)]);
+    FALLO_INSERT = "contrato_items";
+    const r = await convertir();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /No se pudieron registrar los ítems del hotel "OZ HOTEL CARTAGENA" del contrato: fallo simulado de la base/);
+    assert.deepEqual(reversiones, ["DTM-0900"], "se revirtió el contrato creado");
+    assert.equal(financieros.length, 0, "no se registró ninguna CxP ni costo");
+    assert.equal((db.contrato_items ?? []).length, 0, "no quedó ninguna línea a medias");
+    assert.notEqual(db.cotizaciones[0].estado, "convertida", "la cotización no se marca convertida");
+  });
+  test("sin fallo, la misma conversión completa y no revierte (control)", async () => {
+    HOTELES = { 1: ozCon([]) };
+    await cotizar([item(1, 34)]);
+    const r = await convertir();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(reversiones, []);
+    assert.ok((db.contrato_items ?? []).length > 0);
+    assert.equal(financieros.length, 1);
+  });
+});
+
+// Mismas garantías para cada línea del contrato: error explícito, compensación UNA sola vez, sin escritura financiera ni cotización convertida; y un control sin fallo.
+const TOUR = { servicioId: 12, paqueteId: 34, nombre: "Tour Islas", destino: "CARTAGENA", descripcion: null, noches: 3, pax: 2, total: 200_000, moneda: "COP", categoria: "tour_traslado" };
+const tourEntrada = { servicioId: 12, paqueteId: 34, hotelItemId: null, nombre: "Tour Islas", destino: "CARTAGENA", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax: 2, precio: 1, moneda: "COP" };
+async function cotizarConTour() {
+  HOTELES = { 1: ozCon([]) };
+  TOUR_SIM = TOUR;
+  usuario = null;
+  const r = await crearSolicitudReserva({ items: [item(1, 34)], tours: [tourEntrada], cliente: clienteCot });
+  assert.equal(r.ok, true, (r as { error?: string }).error);
+}
+async function convertirConTour() {
+  usuario = { id: "u-admin", email: "admin@dspacios.test" };
+  return convertirCotizacionCarrito(77, { agrupar: "todo", pasajeros, asesorInterno: "Asesor", asignaciones: [[1, 2]], asignacionesTours: [[1, 2]], monedaCobro: "COP" }) as Promise<{ ok: boolean; error?: string }>;
+}
+const esLineaServicio = (f: Fila) => typeof f.descripcion === "string" && f.descripcion.startsWith("Servicio · ");
+
+describe("conversión: los servicios (tours) del contrato", () => {
+  test("control: sin fallo, la línea del tour se escribe, no hay reversión y la cotización queda convertida", async () => {
+    await cotizarConTour();
+    const r = await convertirConTour();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(reversiones, []);
+    assert.equal((db.contrato_items ?? []).filter(esLineaServicio).length, 1);
+    assert.equal(financieros.length, 1);
+    assert.equal(db.cotizaciones[0].estado, "convertida");
+  });
+  test("falla la inserción del tour: error explícito, una sola reversión, sin escritura financiera y sin marca de convertida", async () => {
+    await cotizarConTour();
+    FALLO_INSERT = "contrato_items";
+    FALLO_FILTRO = (filas) => filas.some(esLineaServicio);
+    const r = await convertirConTour();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /No se pudieron registrar los servicios del contrato: fallo simulado de la base/);
+    assert.deepEqual(reversiones, ["DTM-0900"]);
+    assert.equal(financieros.length, 0);
+    assert.equal((db.contrato_items ?? []).filter(esLineaServicio).length, 0, "la línea del tour no quedó a medias");
+    assert.notEqual(db.cotizaciones[0].estado, "convertida");
+  });
+});
+
+describe("conversión: los vuelos del bloqueo del contrato", () => {
+  async function cotizarBloqueo() {
+    HOTELES = { 1: ozCon([]) };
+    db.cupos_por_bloqueo = [{ id: 5, cupos_disponibles: 10 }];
+    db.bloqueos_vuelo = [{ id: 5, aerolinea: "Avianca", moneda: "COP", record: "ABC123", ruta: "BOG - CTG - BOG", tarifa_para_empaquetar: 500_000, fee_infante: 0, fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04", vuelo_ida: "AV100", vuelo_regreso: "AV101", hora_salida_ida: "06:00", hora_llegada_ida: "07:30", hora_salida_reg: "18:00", hora_llegada_reg: "19:30" }];
+    usuario = null;
+    const r = await crearSolicitudReserva({ items: [{ ...item(1, 34), modulo: "bloqueo", bloqueoId: 5 }], tours: [], cliente: clienteCot });
+    assert.equal(r.ok, true, (r as { error?: string }).error);
+  }
+  test("control: sin fallo se escriben los tramos de ida y regreso, sin reversión y con la cotización convertida", async () => {
+    await cotizarBloqueo();
+    const r = await convertir();
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(reversiones, []);
+    assert.equal((db.contrato_vuelos ?? []).length, 2, "ida y regreso");
+    assert.equal(financieros.length, 1);
+    assert.equal(db.cotizaciones[0].estado, "convertida");
+  });
+  test("falla la inserción de los vuelos: error explícito, una sola reversión, sin escritura financiera y sin marca de convertida", async () => {
+    await cotizarBloqueo();
+    FALLO_INSERT = "contrato_vuelos";
+    const r = await convertir();
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /No se pudo registrar el vuelo del hotel "OZ HOTEL CARTAGENA" del contrato: fallo simulado de la base/);
+    assert.deepEqual(reversiones, ["DTM-0900"]);
+    assert.equal(financieros.length, 0);
+    assert.equal((db.contrato_vuelos ?? []).length, 0, "no quedó ningún tramo a medias");
+    assert.notEqual(db.cotizaciones[0].estado, "convertida");
+  });
+});
+
+// ── #94/#52 (entrega 1): resumen de precios del cliente guardado en la cotización NORMAL ──
+describe("cotización normal con servicios: resumen por pasajero, cobertura explícita y nombre del paquete", () => {
+  type Grupo = { tipo: string; cantidad: number; tarifaCentavos: number; subtotalCentavos: number; incluye: string[] };
+  type Detalle = { items: Fila[]; resumenPrecios?: { unidades: { paquete: { nombre: string | null }; hotel: string; categoria: string; regimen: string; ajusteCentavos: number; grupos: Grupo[] }[]; totalCentavos: number }; resumenPendiente?: string };
+  const detalleDe = () => db.cotizaciones[0].detalle as Detalle;
+  const hotel3 = () => ({ ...item(1, 34), itemId: "h1", habitaciones: { doble: 1, sencilla: 1 }, pax: 3 });
+  const tourDe = (nombre: string, pax: number, servicioId = 12) => ({ ...tourEntrada, servicioId, nombre, pax });
+  const cotizarCon = async (items: unknown[], tours: unknown[], cobertura?: unknown) => {
+    usuario = null;
+    return crearSolicitudReserva({ items, tours, cliente: clienteCot, ...(cobertura ? { cobertura } : {}) }) as Promise<{ ok: boolean; error?: string }>;
+  };
+  const grupos = () => detalleDe().resumenPrecios!.unidades[0].grupos.map((g) => [g.tipo, g.cantidad, g.tarifaCentavos / 100, g.incluye]);
+
+  test("cobertura TOTAL (servicio ligado al hotel y con todos los pasajeros): resumen con nombre del paquete y total que cuadra", async () => {
+    HOTELES = { 1: ozCon([]) };
+    db.tarifario_resumen = [{ paquete_id: 34, paquete_nombre: "Cartagena Esencial" }];
+    TOUR_SIM = TOUR;
+    const r = await cotizarCon([{ ...item(1, 34), itemId: "h1" }], [{ ...tourDe("Tour Islas", 2), hotelItemId: "h1" }]);
+    assert.equal(r.ok, true, r.error);
+    const res = detalleDe().resumenPrecios!;
+    assert.ok(res, "se guardó el resumen");
+    assert.deepEqual([res.unidades[0].paquete.nombre, res.unidades[0].hotel, res.unidades[0].categoria, res.unidades[0].regimen], ["Cartagena Esencial", "OZ HOTEL CARTAGENA", "Estandar", "Desayuno"]);
+    assert.deepEqual(grupos(), [["adulto", 2, 400_000, ["Tour Islas"]]]);
+    assert.equal(res.totalCentavos / 100, 800_000);
+    assert.equal(db.cotizaciones[0].precio_venta, 800_000);
+    assert.equal(totalVisibleContratoItems(detalleDe().items as never), 800_000);
+    assert.ok(resumenAplicable(res, { modalidad: "pvp", moneda: "COP", totalCentavos: 80_000_000 }));
+    assert.equal(detalleDe().resumenPendiente, undefined);
+  });
+  test("un servicio SIN hotel (independiente) no se asigna al único hotel: queda el motivo, sin resumen", async () => {
+    HOTELES = { 1: ozCon([]) };
+    TOUR_SIM = TOUR;
+    const r = await cotizarCon([item(1, 34)], [tourEntrada]);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(detalleDe().resumenPrecios, undefined);
+    assert.match(detalleDe().resumenPendiente ?? "", /no está asignado a un hotel/);
+  });
+  test("cobertura PARCIAL con pasajeros elegidos y servicios SUPERPUESTOS: grupos con su precio completo y total exacto", async () => {
+    HOTELES = { 1: ozCon([]) };
+    TOUR_SIM = { ...TOUR, pax: 2, total: 200_000 };
+    TOUR_POR_ID = { 12: { nombre: "Tour A", servicioId: 12 }, 13: { nombre: "Tour B", servicioId: 13 } };
+    // 3 adultos: doble (2) + sencilla (1). Tour A cubre dos de la doble; tour B cubre uno de la doble y el de la sencilla.
+    const cob = { cupos: { 0: { "adulto:doble": [1, 2], "adulto:sencilla": [1] } }, tours: { 0: { hotel: 0, cubre: ["adulto:doble#1", "adulto:doble#2"] }, 1: { hotel: 0, cubre: ["adulto:doble#2", "adulto:sencilla#1"] } } };
+    const r = await cotizarCon([hotel3()], [tourDe("Tour A", 2), tourDe("Tour B", 2, 13)], cob);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(detalleDe().resumenPendiente, undefined);
+    const g = detalleDe().resumenPrecios!.unidades[0].grupos;
+    assert.equal(g.reduce((s, x) => s + x.subtotalCentavos, 0) + detalleDe().resumenPrecios!.unidades[0].ajusteCentavos, db.cotizaciones[0].precio_venta as number * 100);
+    assert.deepEqual(g.map((x) => x.incluye).sort(), [["Tour A", "Tour B"], ["Tour A"], ["Tour B"]].sort(), "tres grupos: ambos, solo A, solo B");
+  });
+  // Cotización normal soportada (un solo hotel por persona): una cobertura PARCIAL mal declarada RECHAZA la emisión. No se crea cotización ni se escribe nada,
+  // y no se degrada a «resumenPendiente».
+  const snap = () => JSON.stringify(Object.fromEntries(Object.entries(db).map(([k, v]) => [k, v.length])));
+  const rechazada = async (tours: unknown[], cobertura: unknown, esperado: RegExp, items: unknown[] = [item(1, 34)]) => {
+    HOTELES = { 1: ozCon([]) };
+    TOUR_SIM = { ...TOUR, pax: 1, total: 100_000 };
+    const antes = snap();
+    const r = await cotizarCon(items, tours, cobertura);
+    assert.equal(r.ok, false, "la emisión se rechaza");
+    assert.match(r.error ?? "", esperado);
+    assert.equal(snap(), antes, "no se escribió nada (ni cotización, ni contacto, ni otra tabla)");
+    assert.equal((db.cotizaciones ?? []).length, 0);
+  };
+  const CUPOS = { 0: { "adulto:doble": [1, 2] } };
+  test("RECHAZO: cobertura parcial SIN selección (hotel declarado, sin cupos elegidos)", async () => {
+    await rechazada([tourDe("Tour Islas", 1)], { cupos: CUPOS, tours: { 0: { hotel: 0 } } }, /cubre 1 de los 2 pasajeros.*selecciona los pasajeros cubiertos/);
+  });
+  test("RECHAZO: cobertura parcial sin declarar nada (ni cobertura ni hotel): tampoco se emite", async () => {
+    await rechazada([tourDe("Tour Islas", 1)], undefined, /selecciona los pasajeros cubiertos/);
+  });
+  test("RECHAZO: cantidad de pasajeros seleccionados distinta del pax del servicio", async () => {
+    HOTELES = { 1: ozCon([]) };
+    TOUR_SIM = { ...TOUR, pax: 1, total: 100_000 };
+    await rechazada([tourDe("Tour Islas", 1)], { cupos: CUPOS, tours: { 0: { hotel: 0, cubre: ["adulto:doble#1", "adulto:doble#2"] } } }, /cubre 1 pasajeros y se seleccionaron 2/);
+  });
+  test("RECHAZO: pasajero inexistente en la selección", async () => {
+    await rechazada([tourDe("Tour Islas", 1)], { cupos: CUPOS, tours: { 0: { hotel: 0, cubre: ["adulto:doble#9"] } } }, /no existe en la cotización/);
+  });
+  test("RECHAZO: pasajeros repetidos (el cupo cuenta una sola vez)", async () => {
+    HOTELES = { 1: ozCon([]) };
+    TOUR_SIM = { ...TOUR, pax: 2, total: 200_000 };
+    const antes = snap();
+    const r = await cotizarCon([item(1, 34)], [tourDe("Tour Islas", 2)], { cupos: CUPOS, tours: { 0: { hotel: 0, cubre: ["adulto:doble#1", "adulto:doble#1"] } } });
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /inválida/, "la entrada con ids repetidos no pasa la lectura de la cobertura");
+    assert.equal(snap(), antes);
+  });
+  test("RECHAZO: ordinales desfasados (la cantidad liquidada ya no coincide con la que declara el carrito)", async () => {
+    await rechazada([tourDe("Tour Islas", 1)], { cupos: { 0: { "adulto:doble": [3, 4, 5] } }, tours: { 0: { hotel: 0, cubre: ["adulto:doble#3"] } } }, /cambiaron.*vuelve a seleccionar/);
+  });
+  test("RECHAZO: pasajeros declarados de una clase que ya no existe (carrito desfasado)", async () => {
+    await rechazada([tourDe("Tour Islas", 1)], { cupos: { 0: { "adulto:doble": [1, 2], "adulto:triple": [1] } }, tours: { 0: { hotel: 0, cubre: ["adulto:doble#1"] } } }, /cambiaron/);
+  });
+  test("RECHAZO: falta la identidad de los pasajeros cuando hay selección", async () => {
+    await rechazada([tourDe("Tour Islas", 1)], { tours: { 0: { hotel: 0, cubre: ["adulto:doble#1"] } } }, /Falta la identidad de los pasajeros/);
+  });
+  test("SIN rechazo: varios hoteles (flujo fuera de alcance) conserva el comportamiento: pendiente, no bloqueo", async () => {
+    HOTELES = { 1: ozCon([]), 2: ozCon([]) };
+    TOUR_SIM = { ...TOUR, pax: 1, total: 100_000 };
+    const r = await cotizarCon([item(1, 34), item(2, 34)], [tourDe("Tour Islas", 1)], { cupos: CUPOS, tours: { 0: { hotel: 0 } } });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(detalleDe().resumenPrecios, undefined);
+    assert.match(detalleDe().resumenPendiente ?? "", /selecciona los pasajeros cubiertos/);
+  });
+  test("SIN rechazo: la cobertura total no necesita identidad de pasajeros (ordinales ausentes o desfasados no bloquean)", async () => {
+    HOTELES = { 1: ozCon([]) };
+    TOUR_SIM = TOUR;
+    const r = await cotizarCon([item(1, 34)], [tourDe("Tour Islas", 2)], { cupos: { 0: { "adulto:doble": [7] } }, tours: { 0: { hotel: 0 } } });
+    assert.equal(r.ok, true, r.error);
+    assert.ok(detalleDe().resumenPrecios, "con cobertura total sale el resumen");
+  });
+  test("cobertura mal formada se rechaza antes de cotizar", async () => {
+    HOTELES = { 1: ozCon([]) };
+    const r = await cotizarCon([item(1, 34)], [], { cupos: { x: {} } });
+    assert.equal(r.ok, false);
+    assert.match(r.error ?? "", /Cobertura de servicios inválida/);
+  });
+  test("sin servicios adicionales (solo Tarifario, un hotel): el resumen son los grupos del hotel y no hay pendiente", async () => {
+    HOTELES = { 1: ozCon([]) };
+    const r = await cotizarCon([item(1, 34)], []);
+    assert.equal(r.ok, true, r.error);
+    const g = detalleDe().resumenPrecios!.unidades[0].grupos.map((x) => [x.tipo, x.cantidad, x.tarifaCentavos / 100, x.incluye]);
+    assert.deepEqual(g, [["adulto", 2, 300_000, []]]);
+    assert.equal(detalleDe().resumenPendiente, undefined);
+    assert.equal((db.cotizaciones[0].detalle as { tituloPaquete?: string }).tituloPaquete, undefined, "sin edición no se guarda texto: rige el valor por defecto");
+  });
+  test("Ítem editado SIN servicios manuales: el texto se conserva en el detalle guardado", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    const r = await crearSolicitudReserva({ items: [item(1, 34)], tours: [], cliente: clienteCot, tituloPaquete: "Escapada Caribe 2030" }) as { ok: boolean; error?: string };
+    assert.equal(r.ok, true, r.error);
+    assert.equal((db.cotizaciones[0].detalle as { tituloPaquete?: string }).tituloPaquete, "Escapada Caribe 2030");
+  });
+  test("Ítem editado inválido (demasiado corto) no se guarda", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    const r = await crearSolicitudReserva({ items: [item(1, 34)], tours: [], cliente: clienteCot, tituloPaquete: "x" }) as { ok: boolean; error?: string };
+    assert.equal(r.ok, true, r.error);
+    assert.equal((db.cotizaciones[0].detalle as { tituloPaquete?: string }).tituloPaquete, undefined);
+  });
+  test("cuposDeCarrito entrega solo clave, tipo, etiqueta y cantidad: ni tarifas ni netos, y no escribe nada", async () => {
+    HOTELES = { 1: ozCon([]) };
+    usuario = null;
+    const r = await cuposDeCarrito({ items: [hotel3()], tours: [] });
+    assert.equal(r.ok, true, (r as { error?: string }).error);
+    const h = (r as Extract<typeof r, { ok: true }>).hoteles;
+    assert.deepEqual(h.map((x) => x.cupos.map((c) => [c.clave, c.cantidad])), [[["adulto:doble", 2], ["adulto:sencilla", 1]]]);
+    const txt = JSON.stringify(r);
+    assert.ok(!/tarifa|neto|precio|pvp|300000|200000/i.test(txt), "no filtra importes");
+    assert.equal((db.cotizaciones ?? []).length, 0, "no crea cotización");
   });
 });

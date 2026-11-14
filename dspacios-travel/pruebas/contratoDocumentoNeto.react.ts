@@ -7,8 +7,9 @@
 // un NETO muestra el total exigible y su saldo, sin el PVP ni la comisión del
 // aliado en ninguna parte, y que un contrato que no es NETO queda idéntico.
 import { test } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
-import { createElement } from "react";
+import { createElement, type ComponentType } from "react";
 
 const { renderToStaticMarkup } = await import("react-dom/server");
 const { ContratoDocumento } = await import("../components/contrato/ContratoDocumento.tsx");
@@ -35,10 +36,10 @@ const items = [
 
 function render(netoTotalExigible: number | null) {
   const props = {
-    venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: PAGADO, agencia: null, condiciones: null,
+    venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: PAGADO, agencia: AGENCIA_PRUEBA, condiciones: null,
     habitacionesBernalo: [], netoTotalExigible,
   } as unknown as Parameters<typeof ContratoDocumento>[0];
-  const html = renderToStaticMarkup(createElement(ContratoDocumento, props));
+  const html = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA }));
   return html.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
 }
 const $ = (n: number) => formatMoneda(n, "COP").replace(/ /g, " ");
@@ -69,7 +70,7 @@ test("NETO: muestra tarifas prorrateadas por persona sin revelar PVP ni comisió
 
 test("NETO manual de dos adultos: cada persona ve la mitad neta exigible", () => {
   const plan = [{ ...items[0], tarifa_adulto: 1_000_000 }];
-  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
     venta, pasajeros: [], hoteles: [], vuelos: [], items: plan, totalPagado: 0, netoTotalExigible: 1_897_200,
   } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
   assert.match(html, /Tarifa Adulto NETO/);
@@ -80,7 +81,7 @@ test("NETO manual de dos adultos: cada persona ve la mitad neta exigible", () =>
 });
 
 test("NETO sin desglose conciliable muestra solo el total y nunca una tarifa PVP", () => {
-  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
     venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: 0, netoTotalExigible: PVP + 1,
   } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
   assert.ok(html.includes($(PVP + 1)));
@@ -97,7 +98,7 @@ test("no NETO: el documento queda exactamente como antes (suma de ítems y valor
 });
 
 test("Minorista PVP conserva las tarifas originales por persona", () => {
-  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
     venta: { ...venta, tenant: "minorista" }, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: PAGADO,
   } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
   assert.ok(html.includes($(950_000)) && html.includes($(1_900_000)));
@@ -108,6 +109,6 @@ test("render sin la prop (páginas que no la pasan) = comportamiento de siempre"
   const props = {
     venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: PAGADO,
   } as unknown as Parameters<typeof ContratoDocumento>[0];
-  const texto = renderToStaticMarkup(createElement(ContratoDocumento, props)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
+  const texto = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA })).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
   assert.ok(texto.includes(`Total del contrato ${$(PVP)}`));
 });

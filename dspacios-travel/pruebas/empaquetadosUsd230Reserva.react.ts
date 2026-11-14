@@ -182,7 +182,10 @@ test("USD · VINCULADA a un Empaquetado en USD: venta en COP, BNC = R convertido
   assert.equal(cot.ok, true, JSON.stringify(cot));
   if (!cot.ok) return;
   const guardada = bd.filas("cotizaciones")[0];
-  assert.equal(JSON.stringify(guardada).includes(String(N_USD)), false, "el costo N (tarifa del proveedor) no viaja en la cotización");
+  // El costo N viajaría como un NÚMERO del JSON (valor de una clave o elemento de un arreglo). Buscar «380» como subcadena de todo el texto fallaba de vez en cuando: el JSON trae
+  // marcas de tiempo e identificadores aleatorios (uuid) que contienen esos dígitos y no son el costo.
+  const comoNumeroJson = new RegExp(`[:,\\[]\\s*${N_USD}(?:\\.0+)?\\s*[,}\\]]`);
+  assert.equal(comoNumeroJson.test(JSON.stringify(guardada)), false, "el costo N (tarifa del proveedor) no viaja en la cotización");
 
   const r = await convertirCotizacion(cot.id, PASAJEROS_CON_INFANTE as never);
   assert.equal(r.ok, true, JSON.stringify(r));

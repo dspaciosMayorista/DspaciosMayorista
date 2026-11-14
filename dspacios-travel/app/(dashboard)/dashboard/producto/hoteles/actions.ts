@@ -94,24 +94,59 @@ export async function eliminarHotel(id: number): Promise<ResultadoEliminarHotel>
 // No toca las tarifas ya cargadas (tarifa_hotel guarda categoría/régimen como texto).
 export async function actualizarHotelCategoriasRegimenes(
   hotelId: number,
-  categoriaIds: number[],
+  categoriaIdsEntrada: number[],
   regimenIds: number[],
 ): Promise<Result> {
+  // Los ids llegan del navegador y van a un filtro `in`: solo enteros positivos.
+  if (!Array.isArray(categoriaIdsEntrada) || !categoriaIdsEntrada.every((x) => Number.isSafeInteger(x) && x > 0)) {
+    return { ok: false, error: "Categorías inválidas." };
+  }
+  const categoriaIds = [...new Set(categoriaIdsEntrada)];
   const sb = await createClient();
-  await sb.from("hotel_categorias").delete().eq("hotel_id", hotelId);
-  await sb.from("hotel_regimenes").delete().eq("hotel_id", hotelId);
+  // #45 (303): las categorías se actualizan por diferencia, no borrando todo — cada fila guarda la descripción y el
+  // «qué incluye» de esa categoría en este hotel; reinsertarlas los perdería. Primero se agregan las nuevas, luego se quitan las desmarcadas.
   if (categoriaIds.length) {
-    const { error } = await sb.from("hotel_categorias").insert(
-      categoriaIds.map((categoria_id) => ({ hotel_id: hotelId, categoria_id }))
+    const { error } = await sb.from("hotel_categorias").upsert(
+      categoriaIds.map((categoria_id) => ({ hotel_id: hotelId, categoria_id })),
+      { onConflict: "hotel_id,categoria_id", ignoreDuplicates: true }
     );
     if (error) return { ok: false, error: error.message };
   }
+  const quitar = sb.from("hotel_categorias").delete().eq("hotel_id", hotelId);
+  const { error: eQuitar } = categoriaIds.length ? await quitar.not("categoria_id", "in", `(${categoriaIds.join(",")})`) : await quitar;
+  if (eQuitar) return { ok: false, error: eQuitar.message };
+  await sb.from("hotel_regimenes").delete().eq("hotel_id", hotelId);
   if (regimenIds.length) {
     const { error } = await sb.from("hotel_regimenes").insert(
       regimenIds.map((plan_id) => ({ hotel_id: hotelId, plan_id }))
     );
     if (error) return { ok: false, error: error.message };
   }
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true };
+}
+
+/** #45 (303): descripción y «qué incluye» de UNA categoría en ESTE hotel. No toca el nombre global, tarifas ni precios. */
+export async function actualizarTextoCategoriaHotel(
+  hotelId: number,
+  categoriaId: number,
+  descripcion: string,
+  incluye: string,
+): Promise<Result> {
+  if (!Number.isSafeInteger(hotelId) || hotelId <= 0 || !Number.isSafeInteger(categoriaId) || categoriaId <= 0) {
+    return { ok: false, error: "Categoría inválida." };
+  }
+  const limpio = (t: unknown) => (typeof t === "string" ? t.trim() : "");
+  const d = limpio(descripcion), inc = limpio(incluye);
+  if (d.length > 2000 || inc.length > 2000) return { ok: false, error: "Cada texto admite hasta 2.000 caracteres." };
+  const sb = await createClient();
+  const { data, error } = await sb.from("hotel_categorias")
+    .update({ descripcion: d || null, incluye: inc || null })
+    .eq("hotel_id", hotelId).eq("categoria_id", categoriaId)
+    .select("categoria_id");
+  if (error) return { ok: false, error: error.message };
+  // Sin fila actualizada: la categoría no está asignada al hotel o la RLS no deja escribir (no se informa éxito falso).
+  if (!data?.length) return { ok: false, error: "La categoría no está asignada a este hotel o no tienes permiso para editarla." };
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   return { ok: true };
 }

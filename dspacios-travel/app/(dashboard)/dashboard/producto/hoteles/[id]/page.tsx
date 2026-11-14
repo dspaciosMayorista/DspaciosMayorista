@@ -35,7 +35,11 @@ export default async function HotelDetallePage({ params, searchParams }: { param
 
   const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }, { data: reglasDescuento, error: errorReglas }, { data: combinaciones, error: errorComb }, { data: miRol }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
-    sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
+    // #45 (303): textos de la categoría en este hotel. Sin la 303 la columna no existe (42703): se leen sin textos.
+    (async () => {
+      const r = await sb.from("hotel_categorias").select("categoria_id, descripcion, incluye, categorias_habitacion(nombre)").eq("hotel_id", hotelId);
+      return r.error?.code === "42703" ? sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId) : r;
+    })(),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
     sb.from("hotel_temporadas").select(`id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, hotel_temporada_grupos(id, nombre, dias, activo, hotel_calculadora_grupo_bases(tipo, bases, generales, version)), ${SELECT_PROMO_VIGENCIA}`).eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
     sb.from("tarifa_hotel").select("*").eq("hotel_id", hotelId).order("id", { ascending: false }),
@@ -94,7 +98,8 @@ export default async function HotelDetallePage({ params, searchParams }: { param
       .maybeSingle();
   if (politicaError) throw new Error("No se pudo cargar la política del proveedor.");
   const acomConfigs = (acoms ?? []) as AcomConfig[];
-  const catsRows = (cats ?? []) as unknown as { categoria_id: number; categorias_habitacion: { nombre: string } | null }[];
+  const catsRows = (cats ?? []) as unknown as { categoria_id: number; descripcion?: string | null; incluye?: string | null; categorias_habitacion: { nombre: string } | null }[];
+  const textosCategoria = Object.fromEntries(catsRows.map((x) => [x.categoria_id, { descripcion: x.descripcion ?? "", incluye: x.incluye ?? "" }]));
   const regsRows = (regs ?? []) as unknown as { plan_id: number; planes_alimentacion: { codigo: string } | null }[];
   const categorias = catsRows.map((x) => x.categorias_habitacion?.nombre).filter((x): x is string => !!x);
   const regimenes = regsRows.map((x) => x.planes_alimentacion?.codigo).filter((x): x is string => !!x);
@@ -232,6 +237,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           todosRegimenes={todosRegs ?? []}
           categoriaIds={categoriaIds}
           regimenIds={regimenIds}
+          textosCategoria={textosCategoria}
         />
         <HotelFotos hotelId={hotelId} fotos={fotos ?? []} />
         <HotelPromociones hotelId={hotelId} reglas={(reglasDescuento ?? []) as ReglaFila[]} errorCarga={!!errorReglas} errorCombinaciones={!!errorComb} combinaciones={(Array.isArray(combinaciones) ? combinaciones : []) as unknown as EstadoCombinacion[]} />

@@ -4,6 +4,7 @@
 // confirmación»), NO como línea suelta bajo «Valores y Pagos», y su precio queda en el total exactamente una vez. Se renderiza el componente REAL
 // del documento interno y del enlace público (mismo componente) con lo que escribe `crearCotizacionCarrito`.
 import { test, describe } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement, type ComponentType } from "react";
 
@@ -33,8 +34,8 @@ function lineaYTramos(m: Parameters<typeof tramosVueloManual>[0], id: number) {
   };
 }
 function texto(items: unknown[], vuelos: unknown[], netoTotalExigible: number | null = null) {
-  const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos, items, totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible };
-  const html = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props));
+  const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos, items, totalPagado: 0, agencia: AGENCIA_PRUEBA, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible };
+  const html = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA }));
   return html.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 }
 const $ = (n: number) => formatMoneda(n, "COP").replace(/\s+/g, "");
@@ -115,8 +116,8 @@ describe("horas del vuelo manual y #47 (ningún horario ni número de vuelo en e
     { id: 99, numero_contrato: "", aerolinea: "Avianca", record: null, direccion: "ida", numero_vuelo: "AV9123", hora_salida: "05:10", hora_llegada: "06:25", origen_codigo: "BOG", origen_ciudad: "Bogotá", destino_codigo: "CTG", destino_ciudad: "Cartagena", servicios: "Equipaje", fecha_salida: "2030-10-15" },
   ];
   const texto2 = (esCotizacion: boolean) => {
-    const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: conDatosOperativos, items: [itemHotel, item], totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null };
-    return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
+    const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: conDatosOperativos, items: [itemHotel, item], totalPagado: 0, agencia: AGENCIA_PRUEBA, condiciones: null, habitacionesBernalo: [], esCotizacion, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null };
+    return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA })).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
   };
   test("COTIZACIÓN: cada tramo muestra «salida HH:mm (hora local)»; sin hora de llegada inventada", () => {
     const t = texto2(true);
@@ -126,8 +127,8 @@ describe("horas del vuelo manual y #47 (ningún horario ni número de vuelo en e
   });
   test("una hora sin confirmar no muestra nada (ni «salida —»)", () => {
     const sinHora = lineaYTramos(conHotel(base), 2);
-    const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: sinHora.vuelos, items: [itemHotel, sinHora.item], totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null };
-    const t = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props)).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: sinHora.vuelos, items: [itemHotel, sinHora.item], totalPagado: 0, agencia: AGENCIA_PRUEBA, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null };
+    const t = renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA })).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
     assert.doesNotMatch(t, /salida \d|hora local/);
   });
   test("CONTRATO (#47): ningún horario ni número de vuelo, ni del vuelo manual ni de uno de Sistema; la fecha y la ruta siguen", () => {

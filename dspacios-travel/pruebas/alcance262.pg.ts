@@ -1627,6 +1627,12 @@ describe("#435 · tarifa base como respaldo del traslado incluido", () => {
     assert.equal(totalCot(c.cotizacion!.id) - totalControl2, 250000, "200.000 el grupo / 0,8");
     const r = await convertir435(c.cotizacion!.id, 0); assert.equal(r.ok, true, r.error);
     assert.equal(cxp435(r.numeros![0], B.BG), "1|200000");
+    // modo_precio (NOT NULL): el insert en bloque de los ítems del hotel mezclaba filas con y sin modo_precio/valor_total (la del servicio por grupo) y la base lo rechazaba; antes el error se ignoraba y el
+    // contrato quedaba SIN ítems del hotel. Ahora se guardan todos y ninguno queda con modo_precio nulo.
+    const items = sql(`select count(*) || '|' || count(*) filter (where modo_precio is null) || '|' || count(*) filter (where modo_precio = 'total' and valor_total > 0) from public.contrato_items where numero_contrato = '${r.numeros![0]}'`).split("|").map(Number);
+    assert.ok(items[0] >= 2, `los ítems del hotel quedaron guardados (${items[0]})`);
+    assert.equal(items[1], 0, "ningún ítem con modo_precio nulo");
+    assert.equal(items[2], 1, "la línea del servicio incluido por grupo (modo_precio total) está");
     await generar(B.BGF); // la publicación no conoce el pax: valida que existan rangos base válidos
     const antes = escrituras();
     const f = await cotizar435(B.BGF, 0); console.log("      cotizar grupo fuera de rango →", f.ok ? "COTIZÓ (!)" : f.error);

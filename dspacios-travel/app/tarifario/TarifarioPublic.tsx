@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Star, Plane, Bus, Search, X, UtensilsCrossed, BedDouble, Tag } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { VistaBooking } from "./VistaBooking";
+import type { TextosCategoriaPorHotel } from "@/lib/tarifario/textosCategoria";
 import { PorDinamicos, type EvaluarSeleccionFn } from "./PorDinamicos";
 import type { DinamicoPublico } from "@/lib/paqueteDinamico/publico";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
@@ -336,6 +337,7 @@ export function TarifarioPublic({
   infoPorHotel = {},
   planesInfo = {},
   capPorHotel = {},
+  textosCategoria = {},
   descripcionPorPaquete = {},
   filasAddon = [],
   hotelesBernalo = [],
@@ -404,6 +406,8 @@ export function TarifarioPublic({
   // exacta buscada), nunca con `condicionPorOferta`/`politicaPorOferta`
   // (que reflejan el rango genérico de exploración).
   restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
+  /** #45 (303): textos por categoría dentro de cada hotel (solo presentación). */
+  textosCategoria?: TextosCategoriaPorHotel;
 }) {
   const [vista, setVista] = useState<"tabla" | "booking" | "programas" | "dinamicos">(vistaInicial === "dinamicos" && dinamicos.length ? "dinamicos" : "booking");
   const [q, setQ] = useState("");
@@ -638,7 +642,7 @@ export function TarifarioPublic({
       ) : vista === "programas" ? (
         <PorProgramas programas={programas} puedeReservar={puedeReservar} />
       ) : vista === "booking" ? (
-        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelesSolicitud={hotelesSolicitudFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+        <VistaBooking filas={filasFiltradas} subtabsSlot={subtabsSlot} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} puedeReservar={puedeReservar} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} soloAcom={fAcom || null} filtroTexto={q} filtroCategoria={fCat} filtroRegimen={fReg} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={fAcom ? [] : hotelesBernaloFiltrados} hotelesSolicitud={hotelesSolicitudFiltrados} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendados} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} textosCategoria={textosCategoria} />
       ) : (
         <>
           {/* Tabs de módulos */}

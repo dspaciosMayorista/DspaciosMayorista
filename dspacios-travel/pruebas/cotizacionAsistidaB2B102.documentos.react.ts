@@ -5,10 +5,11 @@
 //     siempre; sin plan B2B no cambia.
 //   · Catálogo de aliados (AliadosClient REAL): el interruptor «Activo» escribe `{ activo }` por la acción del servidor.
 import * as nodeModule from "node:module";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import { JSDOM } from "jsdom";
 import { test, describe, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { createElement } from "react";
+import { createElement, type ComponentType } from "react";
 
 type ResolveHook = (specifier: string, context: { parentURL?: string }, nextResolve: (specifier: string, context: unknown) => unknown) => unknown;
 const { registerHooks } = nodeModule as unknown as { registerHooks: (hooks: { resolve: ResolveHook }) => void };
@@ -67,8 +68,8 @@ const items = [
   { id: 2, numero_contrato: "", descripcion: "Servicio · Islas del Rosario — CARTAGENA", adultos: 1, ninos: 0, tarifa_adulto: 300_000, tarifa_nino: 0, orden: 1, modo_precio: "por_persona", valor_total: null },
 ];
 function documento(netoTotalExigible: number | null) {
-  const props = { venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: 0, esCotizacion: true, codigo: "COT-102", vigenciaHasta: "2030-02-20", netoTotalExigible } as never;
-  return renderToStaticMarkup(createElement(ContratoDocumento, props)).replace(/<[^>]+>/g, " ").replace(/&nbsp;|\u00a0/g, " ").replace(/\s+/g, " ");
+  const props = { venta, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: 0, esCotizacion: true, codigo: "COT-102", vigenciaHasta: "2030-02-20", netoTotalExigible };
+  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: AGENCIA_PRUEBA })).replace(/<[^>]+>/g, " ").replace(/&nbsp;|\u00a0/g, " ").replace(/\s+/g, " ");
 }
 const $ = (n: number) => formatMoneda(n, "COP").replace(/\u00a0/g, " ");
 

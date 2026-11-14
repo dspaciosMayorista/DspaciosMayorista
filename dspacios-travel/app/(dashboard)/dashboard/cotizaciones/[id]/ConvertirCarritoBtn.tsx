@@ -9,7 +9,7 @@ import { calcularEdad, formatMoneda } from "@/lib/utils";
 import { trmValida90 } from "@/lib/reservar/monedaPublicacion90";
 import { MENSAJE_COBRO_REQUERIDO, MENSAJE_TRM_COBRO_INVALIDA, MENSAJE_TRM_COBRO_REQUERIDA } from "@/lib/finanzas/cobro";
 import { totalesACobrar } from "@/lib/finanzas/cobroCarrito";
-import { ETIQUETA_MODO_B2B, planDeGrupoB2B, type PlanB2BCotizacion } from "@/lib/cotizacion/asistidaB2B";
+import { ETIQUETA_MODO_B2B, planDeGrupoB2B, planesDeGruposB2B, type PlanB2BCotizacion } from "@/lib/cotizacion/asistidaB2B";
 import { convertirCotizacionCarrito } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
@@ -42,8 +42,10 @@ type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fech
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, items, tours, manuales = [], destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null, contratosPorGrupo = {},
+  id, pax, items, tours, manuales = [], destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null, contratosPorGrupo = {}, recobroUnidades = [],
 }: {
+  /** #14-A: recobro de cada hotel (misma posición que `items`) de una cotización INTERNA a cliente final (sin plan B2B): suma al total a cobrar del contrato. Con plan B2B el recobro viene en el plan. */
+  recobroUnidades?: number[];
   /** #64: grupos ya convertidos en un intento anterior (destino → contrato). Si el primero ya tiene contrato, el servidor no usa costos manuales y no se piden. */
   contratosPorGrupo?: Record<string, string>;
   /** #102: los términos B2B guardados en la cotización están ilegibles; la conversión se rechazaría en el servidor, así que se bloquea desde ya. */
@@ -188,19 +190,33 @@ export function ConvertirCarritoBtn({
   // el total real.
   const preciosUnidades = [...items.map((it) => it.precio ?? 0), ...tours.map((t) => t.precio ?? 0)];
   const grupoDeManual = (m: ManualCarritoUI, gi: number, unidades: readonly number[]) => (m.hotelIndice != null ? unidades.includes(m.hotelIndice) : gi === 0);
-  const contratosPrevia = agruparUnidadesCarrito({
+  const gruposAgrupados = agruparUnidadesCarrito({
     modo: agrupar, destinosItems: items.map((it) => it.destino), destinosTours: tours.map((t) => t.destino), hotelDeTour,
-  }).map((g, gi) => {
-    // Cada servicio manual viaja en el contrato de SU hotel (un vuelo) o en el primero (otro servicio), igual que en el servidor.
+  });
+  // Líneas del plan B2B de cada contrato (sus hoteles/tours y los manuales que le tocan), igual que en el servidor.
+  const lineasDeGrupo = (g: { unidades: readonly number[] }, gi: number) => {
+    if (!b2b) return [];
     const manualesDelGrupo = manuales.map((m, mi) => ({ m, mi })).filter(({ m }) => grupoDeManual(m, gi, g.unidades));
-    const total = g.unidades.reduce((s, u) => s + (preciosUnidades[u] ?? 0), 0) + manualesDelGrupo.reduce((s, { m }) => s + m.precio, 0);
-    // B2B asistida: lo que se cobra es el EXIGIBLE del contrato (PVP, o PVP − comisión en NETO), con los términos congelados.
-    if (!b2b) return { destino: g.destino, total, exigible: total, comision: null as number | null };
-    const lineas = [
+    return [
       ...g.unidades.flatMap((u) => b2b.plan.lineas.filter((l) => l.clave === b2b.clavesUnidades[u])),
       ...manualesDelGrupo.flatMap(({ mi }) => b2b.plan.lineas.filter((l) => l.clave === `manual-${mi}`)),
     ];
-    const pg = planDeGrupoB2B(b2b.plan, lineas);
+  };
+  // #14-A: con recobro en el plan, el exigible de cada contrato sale de la MISMA liquidación que usa la conversión (recobro por contrato y participación repartida entre contratos).
+  const planesConRecobro = b2b && b2b.plan.recobro && b2b.plan.recobro.total > 0 ? planesDeGruposB2B(b2b.plan, gruposAgrupados.map(lineasDeGrupo)) : null;
+  const contratosPrevia = gruposAgrupados.map((g, gi) => {
+    // Cada servicio manual viaja en el contrato de SU hotel (un vuelo) o en el primero (otro servicio), igual que en el servidor.
+    const manualesDelGrupo = manuales.map((m, mi) => ({ m, mi })).filter(({ m }) => grupoDeManual(m, gi, g.unidades));
+    // Recobro de cliente final (sin plan): entra al precio del contrato de su hotel.
+    const recobroGrupo = b2b ? 0 : g.unidades.reduce((s, u) => s + (u < items.length ? recobroUnidades[u] ?? 0 : 0), 0);
+    const total = g.unidades.reduce((s, u) => s + (preciosUnidades[u] ?? 0), 0) + manualesDelGrupo.reduce((s, { m }) => s + m.precio, 0) + recobroGrupo;
+    // B2B asistida: lo que se cobra es el EXIGIBLE del contrato (PVP, o PVP − comisión en NETO), con los términos congelados.
+    if (!b2b) return { destino: g.destino, total, exigible: total, comision: null as number | null };
+    if (b2b.plan.recobro && b2b.plan.recobro.total > 0) {
+      const pc = planesConRecobro?.ok ? planesConRecobro.planes[gi] : null;
+      return pc ? { destino: g.destino, total, exigible: pc.precioFinal, comision: pc.totalAliado } : { destino: g.destino, total, exigible: total, comision: null };
+    }
+    const pg = planDeGrupoB2B(b2b.plan, lineasDeGrupo(g, gi));
     return pg.ok
       ? { destino: g.destino, total, exigible: pg.plan.precioFinal, comision: pg.plan.comision }
       : { destino: g.destino, total, exigible: total, comision: null };

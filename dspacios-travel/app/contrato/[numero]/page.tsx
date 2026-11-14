@@ -10,6 +10,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { Eye } from "lucide-react";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
+import { leerResumenContrato } from "@/lib/contrato/resumenPreciosContrato";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
@@ -77,6 +78,7 @@ export default async function ContratoImprimiblePage({
     { data: overridesCondiciones },
     habitacionesBernalo,
     { data: estancia },
+    resumenContrato,
   ] = await Promise.all([
     // Las dos vistas, no las tablas base: desde la migración 144 el rol
     // `venta` no lee `ventas`, y desde la 148 tampoco `contrato_vuelos`.
@@ -106,6 +108,8 @@ export default async function ContratoImprimiblePage({
     habitacionesBernaloDeContrato(numero),
     // #88: foto de la estancia (sin netos); la RLS decide quién la ve. Sin la migración 244 simplemente no hay fila.
     sb.from("contrato_programa_estancia").select("*").eq("numero_contrato", numero).maybeSingle(),
+    // #94: resumen de precios por pasajero congelado al convertir (solo importes de cara al cliente). Sin fila = contrato histórico (presentación de siempre); un error de lectura se LANZA, no se disfraza de histórico.
+    leerResumenContrato(sb, numero),
   ]);
 
   if (!venta) notFound();
@@ -181,6 +185,7 @@ export default async function ContratoImprimiblePage({
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}
+            resumenPrecios={resumenContrato}
             netoTotalExigible={netoTotalExigible}
             estancia={estancia}
           />

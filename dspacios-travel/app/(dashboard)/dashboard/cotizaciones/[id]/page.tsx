@@ -19,6 +19,7 @@ import { PanelDinamico } from "./PanelDinamico";
 import { ConvertirCarritoBtn } from "./ConvertirCarritoBtn";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { leerPlanB2BDePayload } from "@/lib/cotizacion/asistidaB2B";
+import { leerRecobroClienteDePayload } from "@/lib/cotizacion/recobroCarrito";
 import { monedaOfertaDeCotizacion } from "@/lib/finanzas/cobroCarrito";
 import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
 import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
@@ -366,7 +367,7 @@ export default async function CotizacionDetallePage({
       <CondicionesPanel ui={condicionesUI} moneda={moneda} />
 
       {!esManual && <DesgloseInterno cot={c} moneda={moneda} />}
-      {!esManual && esPagoAutorizado && <ComposicionPrecio guardada={composicionGuardada} totalCotizacion={esCarrito ? null : Number(c.precio_venta) || 0} />}
+      {!esManual && esPagoAutorizado && <ComposicionPrecio guardada={composicionGuardada} totalCotizacion={Number(c.precio_venta) || 0} recobro={planB2B?.recobro?.total ?? (() => { const rc = leerRecobroClienteDePayload(c.payload, itemsCarrito.map((x) => x.ref).filter((r): r is string => typeof r === "string"), !!planB2B); return rc.ok ? (rc.valor?.total ?? 0) : 0; })()} />}
 
       {esManual && (
         <div className="mt-6 overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -551,6 +552,7 @@ export default async function CotizacionDetallePage({
                 items={itemsCarrito.map((i) => ({ hotelNombre: i.hotelNombre, destino: i.destino, pax: i.pax, fechaIda: i.fechaIda ?? null, precio: Number(i.precio) || 0 }))}
                 tours={toursCarrito.map((t, j) => ({ nombre: t.nombre ?? "Tour", destino: t.destino, pax: t.pax, fechaIda: t.fechaIda ?? null, hotelIndice: hotelDeTourCarrito[j] ?? null, precio: Number(t.precio) || 0 }))}
                 contratosPorGrupo={detalleCarrito.contratosPorGrupo ?? {}}
+                recobroUnidades={itemsCarrito.map((i) => { const rc = leerRecobroClienteDePayload(c.payload, itemsCarrito.map((x) => x.ref).filter((r): r is string => typeof r === "string"), !!planB2B); return rc.ok ? (rc.valor?.lineas.find((l) => l.clave === i.ref)?.recobro ?? 0) : 0; })}
                 manuales={(payloadCarrito.manuales ?? []).map((m) => {
                   // Un vuelo va al contrato de SU hotel (por `hotelRef`); un «otro servicio», al primero.
                   const idx = m.clase === "vuelo" ? itemsCarrito.findIndex((i) => i.ref === m.hotelRef) : -1;

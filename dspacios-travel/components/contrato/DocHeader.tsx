@@ -1,18 +1,22 @@
 import { Logo } from "@/components/Logo";
 import { EMPRESA } from "@/lib/contrato/plantilla";
 import { agenciaDe } from "@/lib/tenant.server";
+import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
 import type { Tenant } from "@/lib/tenant";
 
 // Encabezado de marca para documentos imprimibles (recibo, estado de cuenta).
-// Muestra la identidad de la AGENCIA del documento (por tenant); si no hay datos
-// en la tabla `agencias`, cae a la constante EMPRESA.
+// Muestra la identidad de la AGENCIA del documento (por tenant), solo de la tabla
+// `agencias` (#49): sin fila o sin razón social/NIT/RNT lanza error; no hay respaldo
+// en `EMPRESA` (es la identidad de Minorista).
 export async function DocHeader({ tenant }: { tenant?: string }) {
-  const ag = await agenciaDe((tenant as Tenant) ?? "mayorista").catch(() => null);
-  const razonSocial = ag?.razon_social ?? EMPRESA.razonSocial;
-  const nit = ag?.nit ? `${ag.nit}${ag.dv ? `-${ag.dv}` : ""}` : EMPRESA.nit;
-  const rnt = ag?.rnt || EMPRESA.rnt;
-  const correo = ag?.correo ?? EMPRESA.correo;
-  const ciudad = ag?.ciudad ?? EMPRESA.ciudadEmision;
+  const t = ((tenant as Tenant) ?? "mayorista");
+  const ag = await agenciaDe(t).catch(() => null);
+  const id = identidadAgencia(ag, t);
+  const razonSocial = id.razonSocial;
+  const nit = ag?.dv ? `${id.nit}-${ag.dv}` : id.nit;
+  const rnt = id.rnt;
+  const correo = id.correo;
+  const ciudad = ag?.ciudad ?? "";
 
   return (
     <div className="flex items-start justify-between border-b border-gray-200 pb-4">
@@ -21,13 +25,12 @@ export async function DocHeader({ tenant }: { tenant?: string }) {
         <p className="mt-2 text-[11px] leading-tight text-gray-500">
           {razonSocial}
           <br />
-          NIT {nit}{rnt ? ` · RNT ${rnt}` : ""}
-          <br />
-          {correo}
+          NIT {nit} · RNT {rnt}
+          {correo && <><br />{correo}</>}
         </p>
       </div>
       <div className="text-right text-[11px] leading-tight text-gray-500">
-        <p>{ciudad}</p>
+        {ciudad && <p>{ciudad}</p>}
         <p>{EMPRESA.sitio}</p>
       </div>
     </div>
