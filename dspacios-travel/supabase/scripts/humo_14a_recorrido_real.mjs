@@ -100,6 +100,7 @@ async function asistida(p, { modo, recobro, dist }) {
   await p.escribir("#asist-aliado", "Agencia Real 14A · Agencia");
   await p.esperar(`!!document.querySelector('[data-testid="recobro-dist"]')`, "campos de recobro");
   if (modo === "neta") await p.boton("NETO");
+  if (recobro === null) { await p.esperar(`/Total exigible/.test(document.body.innerText)`, "la revisión de términos sin recobro", 60000); return p.texto(); }
   await p.escribir('[data-testid="recobro-total"]', recobro);
   await p.escribir('[data-testid="recobro-dist"]', dist);
   await p.esperar(`/Recobro incluido/.test(document.body.innerText)`, "la revisión de términos con el recobro", 60000);
@@ -331,6 +332,40 @@ try {
     const cartera = num(sql(`select coalesce(sum(precio_venta), 0) from public.ventas where numero_contrato = '${numero}'`));
     check(N, "base de la liquidación (ventas) = total del documento", cartera === TOTAL, String(cartera));
   });
+
+  // 7) CASO DE LA CAPTURA: NETO, 2 adultos con la MISMA tarifa y un traslado manual que cubre a ambos, sin recobro. El desglose por pasajero debe salir 2 × 498.520 = 997.040 con el traslado en «Servicios incluidos».
+  const neto2Adultos = (id, nombre, precioManual, recobro, dist) => async (p) => {
+    const N = nombre;
+    const MANUAL = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", tramo: null, hotelRef: null, hotelEtiqueta: null, pax: 2, precio: precioManual, impuestoNoComisionable: 0, moneda: "COP", fotoUrl: null, noches: null };
+    await cargarCheckout(p, U.staff, [ITEM(), MANUAL]);
+    const rev = await asistida(p, { modo: "neta", recobro, dist });
+    const exig = importeDe(rev, /Total exigible \(NETO\)/);
+    check(N, "revisión NETO: total exigible 997.040", exig === 997040, String(exig));
+    const codigo = await generar(p);
+    const c = cotDeCodigo(codigo);
+    const pendiente = sql(`select coalesce(detalle->>'resumenPendiente', '') from public.cotizaciones where id = ${c.id}`);
+    check(N, "cotización: resumen por pasajero GENERADO (sin motivo pendiente)", c.tiene_resumen === true && !pendiente, pendiente);
+    const resumen = c.tiene_resumen ? json(`select (detalle->'resumenPrecios')::text from public.cotizaciones where id = ${c.id}`) : null;
+    const grupos = resumen ? resumen.unidades.flatMap((u) => u.grupos) : [];
+    check(N, "resumen: UN grupo de 2 adultos a 498.520 (997.040) con el traslado", grupos.length === 1 && grupos[0].cantidad === 2 && grupos[0].tarifaCentavos === 49852000 && grupos[0].subtotalCentavos === 99704000 && JSON.stringify(grupos[0].incluye) === JSON.stringify(["Traslado privado"]), JSON.stringify(grupos));
+    const verTexto = (t) => tiene(t, 997040) && t.includes("498.520") && /Servicios incluidos/.test(t) && /Traslado privado/.test(t) && !/Ajuste (de|por) redondeo/.test(t) && !/ × \$/.test(t);
+    const cotPub = await textoDe(p, null, `/cot/${c.share_token}`);
+    check(N, "documento PÚBLICO de la cotización: 2 × 498.520 = 997.040 y traslado en Servicios incluidos", verTexto(cotPub), cotPub.slice(0, 600));
+    const cotInt = await textoDe(p, U.staff, `/cotizacion/${c.id}`);
+    check(N, "documento INTERNO de la cotización: mismo desglose", verTexto(cotInt), cotInt.slice(0, 600));
+    const numero = await generarContrato(p, c.id, PAX_ADULTOS, [{ costo: 300000, proveedor: "Receptivo 14A" }]);
+    out[N].numero = numero;
+    const v = ventaDe(numero);
+    check(N, "contrato: precio_venta = 997.040 (exigible)", num(v.precio_venta) === 997040 && v.modo_compra === "neta", JSON.stringify(v));
+    const resCont = json(`select resumen::text from public.contrato_resumen_precios where numero_contrato = '${numero}'`);
+    check(N, "resumen congelado en el contrato = el de la cotización", resCont.totalCentavos === 99704000 && JSON.stringify(resCont.unidades.flatMap((u) => u.grupos).map((g) => [g.cantidad, g.tarifaCentavos])) === JSON.stringify(grupos.map((g) => [g.cantidad, g.tarifaCentavos])), JSON.stringify(resCont).slice(0, 300));
+    const docInt = await textoDe(p, U.staff, `/contrato/${numero}`);
+    check(N, "documento INTERNO del contrato: 2 × 498.520 = 997.040 con el traslado", verTexto(docInt), docInt.slice(0, 600));
+    const docPub = await textoDe(p, null, `/c/${v.share_token}`);
+    check(N, "documento PÚBLICO del contrato: mismo desglose", verTexto(docPub), docPub.slice(0, 600));
+  };
+  if (cuales.includes("7")) await escenario("7-neto-2-adultos-traslado", neto2Adultos(7, "7-neto-2-adultos-traslado", 348933, null, null));
+  if (cuales.includes("8")) await escenario("8-neto-2-adultos-traslado-recobro", neto2Adultos(8, "8-neto-2-adultos-traslado-recobro", 293378, "100.000", "50.000"));
 
   if (cuales.includes("3")) await escenario("3-neto-adultos-nino-servicio", async (p) => {
     const N = "3-neto-adultos-nino-servicio";

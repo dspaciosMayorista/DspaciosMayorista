@@ -23,6 +23,7 @@ import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsua
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { ServicioManualPanel } from "./ServicioManualPanel";
 import { useCoberturaNormal } from "./CoberturaServicios";
+import { coberturaTotalB2B, type CoberturaEntrada } from "@/lib/cotizacion/coberturaEntrada";
 import { tituloItemPaquete } from "@/lib/contrato/paqueteTuristicoDocumento";
 import { ResumenOpcionesComparativa } from "./ResumenOpcionesComparativa";
 import { useIatasDestinos } from "@/lib/cart/useIatasDestinos";
@@ -232,7 +233,7 @@ export default function CheckoutPage() {
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
   // Entrada que se manda al servidor (la misma para la solicitud normal y para la comparativa).
-  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[], cobertura?: ReturnType<typeof useCoberturaNormal>["cobertura"], recobroEnvio?: RecobroParaEnviar | null) {
+  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[], cobertura?: ReturnType<typeof useCoberturaNormal>["cobertura"] | CoberturaEntrada, recobroEnvio?: RecobroParaEnviar | null) {
     return {
         // #14-A: SOLO las cifras del recobro (y, en venta asistida, su distribución). El aliado directo nunca manda distribución; el servidor la toma del parámetro.
         ...(recobroEnvio ? { recobro: recobroEnvio } : {}),
@@ -392,6 +393,10 @@ export default function CheckoutPage() {
       ...manualItems.map((m, indice) => ({ id: m.id, nombre: m.nombre, pax: m.pax, tipo: "manual" as const, indice, ligado: false })),
     ],
   });
+  // Venta B2B (no ofrece elegir pasajeros): un servicio que cubre a todos los del único hotel se declara asignado a él para que el servidor pueda repartir el desglose por pasajero.
+  const coberturaB2B = hayB2B && !vista.crear && !vista.continuar && hotelItems.length === 1 && bernaloItems.length === 0
+    ? coberturaTotalB2B(hotelItems[0].pax, tourItems.map((t) => ({ pax: t.pax, ligado: !!t.hotelItemId })), manualItems.map((m) => ({ pax: m.pax })))
+    : null;
   const previaAplica = (asistenciaB2B && !!aliadoElegido) || aliadoDirectoConRecobro;
   const normPrevia = previaAplica ? normalizarCarrito() : null;
   const entradaPrevia = normPrevia?.ok && recobroPrevia.ok ? armarEntrada(normPrevia.itemsNormalizados, null, recobroPrevia.recobro) : null;
@@ -448,7 +453,7 @@ export default function CheckoutPage() {
 
     start(async () => {
       try {
-      const entrada = armarEntrada(itemsNormalizados, activoCob ? cob.cobertura : null, recobroForm.ok ? recobroForm.recobro : null);
+      const entrada = armarEntrada(itemsNormalizados, activoCob ? cob.cobertura : coberturaB2B, recobroForm.ok ? recobroForm.recobro : null);
       if (asistenciaB2B && entrada.asistencia && previa?.clave === clavePrevia && previa.r.ok) {
         const { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } = previa.r.terminos;
         entrada.asistencia = { ...entrada.asistencia, vistos: { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } } as typeof entrada.asistencia;

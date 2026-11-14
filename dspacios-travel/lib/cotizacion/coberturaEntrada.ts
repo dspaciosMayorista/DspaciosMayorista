@@ -52,3 +52,15 @@ export function leerCobertura(inputRaw: unknown): { ok: true; cobertura: Cobertu
   }
   return { ok: true, cobertura: r };
 }
+
+/**
+ * Venta B2B de UN hotel por persona: el checkout no deja elegir pasajeros (eso es solo de la cotización normal), pero un servicio que cubre a TODOS los pasajeros del hotel (`pax` igual al del hotel)
+ * queda declarado como suyo, igual que en la cotización normal, donde ese es el valor por defecto. Sin esta declaración el servidor no sabe a qué hotel pertenece y no genera el desglose por pasajero.
+ * Un servicio que cubre a menos (o ya ligado a un hotel) NO se declara aquí: su cobertura no se adivina. El servidor revalida el `pax` contra lo que liquidó.
+ */
+export function coberturaTotalB2B(paxHotel: number, tours: readonly { pax: number; ligado: boolean }[], manuales: readonly { pax: number }[]): CoberturaEntrada | null {
+  const r: CoberturaEntrada = { cupos: {}, tours: {}, manuales: {} };
+  tours.forEach((t, i) => { if (!t.ligado && t.pax === paxHotel) r.tours[i] = { hotel: 0, cubre: null }; });
+  manuales.forEach((m, i) => { if (m.pax === paxHotel) r.manuales[i] = { hotel: 0, cubre: null }; });
+  return Object.keys(r.tours).length || Object.keys(r.manuales).length ? r : null;
+}
