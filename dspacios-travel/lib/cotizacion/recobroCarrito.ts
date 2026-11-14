@@ -174,6 +174,23 @@ export function tarifasNetoPorPersona(args: {
   };
 }
 
+/**
+ * Reparto SIN centavos contables: lo que habría pagado cada persona si la comisión se dividiera exactamente en proporción a su peso (centavos con 4 decimales). Mismas reglas y pesos que
+ * `tarifasNetoPorPersona`; solo cambia que no se asigna el centavo sobrante a nadie. Sirve para MOSTRAR la tarifa NETO con su precisión de cálculo; los importes contables siguen siendo los enteros.
+ */
+export function tarifasNetoExactasPorPersona(args: { personas: readonly PersonaNeto[]; ordinariaCent: bigint; participacionCent: bigint; excluyeRecobro: boolean }): number[] {
+  const { personas, ordinariaCent, participacionCent, excluyeRecobro } = args;
+  const exacto = (total: bigint, pesos: bigint[]): number[] => {
+    const p = pesos.map((w) => (w < B0 ? B0 : w));
+    const suma = p.reduce((a, b) => a + b, B0);
+    if (total <= B0 || suma === B0) return p.map(() => 0);
+    return p.map((w) => Number((total * w * BigInt(10000)) / suma) / 10000);
+  };
+  const ord = exacto(ordinariaCent, personas.map((p) => (p.pesoCent ?? p.pvpCent) + (excluyeRecobro ? B0 : p.recobroCent)));
+  const par = exacto(participacionCent, personas.map((p) => (p.tipo === "adulto" ? p.recobroCent : B0)));
+  return personas.map((p, i) => Number(p.pvpCent + p.recobroCent) - ord[i] - par[i]);
+}
+
 // ── Entrada del formulario y decisión en servidor ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 export type EntradaRecobro = { total: number; participacion: ParticipacionRecobro | null; participacionEnviada: boolean };

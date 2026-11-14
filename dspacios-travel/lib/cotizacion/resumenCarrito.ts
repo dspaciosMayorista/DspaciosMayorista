@@ -79,6 +79,8 @@ export function construirResumenCarrito(e: {
   netoPorCupo?: Readonly<Record<string, number>>;
   /** #14-A (NETO): importe NETO de cada servicio (centavos) por id. Obligatorio para cada servicio cuando hay `netoPorCupo`. */
   netoServicio?: Readonly<Record<string, number>>;
+  /** #14-A (NETO): tarifa NETO por persona de cada clase con su PRECISIÓN DE CÁLCULO (centavos con fracción), por `${ref}|${clave}`. Es la que muestra el documento; `netoPorCupo` (enteros) sigue siendo la contable y suma el exigible. */
+  netoExactoPorClase?: Readonly<Record<string, number>>;
 }): ResultadoResumenCarrito {
   if (!e.unidades.length) return { ok: false, motivo: "La cotización no tiene hoteles con tarifa por persona." };
   const porUnidad = new Map<string, ServicioCobertura[]>(e.unidades.map((u) => [u.ref, []]));
@@ -130,7 +132,8 @@ export function construirResumenCarrito(e: {
           base = neto;
         }
         posicion++;
-        cupos.push({ id: `${c.clave}#${n}`, tipo: c.tipo, baseCentavos: base });
+        const exacta = e.netoPorCupo ? e.netoExactoPorClase?.[`${u.ref}|${c.clave}`] : undefined;
+        cupos.push({ id: `${c.clave}#${n}`, tipo: c.tipo, baseCentavos: base, ...(exacta !== undefined ? { baseExactaCentavos: exacta } : {}) });
       }
     }
     if (usaSeleccion) {

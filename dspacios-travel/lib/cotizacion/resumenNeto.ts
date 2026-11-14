@@ -10,7 +10,7 @@
 // los contratos se agrupan DESPUÉS de cotizar (uno solo o uno por destino). Un reparto por pasajero hecho en la cotización solo coincidiría con la liquidación de un agrupamiento concreto y, con el
 // otro, el contrato no cuadraría con su resumen. Por eso, con más de un hotel el resumen NETO no se genera (queda el motivo) y cada contrato muestra su total exigible. Con UN hotel (y sus servicios)
 // la cotización y el contrato son la misma liquidación y el resumen cuadra siempre.
-import { repartirRecobroEntreAdultos, tarifasNetoPorPersona, type PersonaNeto } from "./recobroCarrito.ts";
+import { repartirRecobroEntreAdultos, tarifasNetoExactasPorPersona, tarifasNetoPorPersona, type PersonaNeto } from "./recobroCarrito.ts";
 import { aCentavos, repartir } from "./netoHija.ts";
 import { construirResumenCarrito, type ResultadoResumenCarrito, type ServicioEntrada, type UnidadBase } from "./resumenCarrito.ts";
 
@@ -73,10 +73,16 @@ export function resumenNetoCarrito(e: {
   const partUnidad = repartir(participacionCent, porUnidad.map((ps) => ps.reduce((s, p) => s + p.recobroCent, B0)));
 
   const netoPorCupo: Record<string, number> = {};
+  // Tarifa NETO por clase con su precisión de cálculo (promedio de las personas de UNA clase de un hotel, que solo difieren por el centavo contable): es la que se muestra; los enteros siguen sumando el exigible.
+  const netoExactoPorClase: Record<string, number> = {};
   for (let iu = 0; iu < e.unidades.length; iu++) {
     const t = tarifasNetoPorPersona({ personas: porUnidad[iu], ordinariaCent: ordUnidad[iu], participacionCent: partUnidad[iu], excluyeRecobro });
     if (!t.ok) return { ok: false, motivo: t.error };
     t.valor.forEach((x, i) => { netoPorCupo[porUnidad[iu][i].llave] = Number(x.netoCent); });
+    const ex = tarifasNetoExactasPorPersona({ personas: porUnidad[iu], ordinariaCent: ordUnidad[iu], participacionCent: partUnidad[iu], excluyeRecobro });
+    const acum = new Map<string, { suma: number; n: number }>();
+    ex.forEach((v, i) => { const clase = porUnidad[iu][i].llave.replace(/\|[0-9]+$/, ""); const a = acum.get(clase) ?? { suma: 0, n: 0 }; a.suma += v; a.n += 1; acum.set(clase, a); });
+    for (const [clase, a] of acum) netoExactoPorClase[clase] = a.suma / a.n;
   }
   const netoServicio: Record<string, number> = {};
   for (let i = 0; i < e.servicios.length; i++) {
@@ -85,5 +91,5 @@ export function resumenNetoCarrito(e: {
     netoServicio[e.servicios[i].id] = Number(neto);
   }
 
-  return construirResumenCarrito({ unidades: e.unidades, servicios: e.servicios, modalidad: "neto", moneda: e.moneda, total: e.exigible, netoPorCupo, netoServicio });
+  return construirResumenCarrito({ unidades: e.unidades, servicios: e.servicios, modalidad: "neto", moneda: e.moneda, total: e.exigible, netoPorCupo, netoServicio, netoExactoPorClase });
 }

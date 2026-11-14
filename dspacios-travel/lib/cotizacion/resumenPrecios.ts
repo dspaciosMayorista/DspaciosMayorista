@@ -14,7 +14,11 @@ export type TipoCupo = "adulto" | "nino" | "nino2" | "infante";
 export const ETIQUETA_TIPO: Record<TipoCupo, string> = { adulto: "Adulto", nino: "Niño", nino2: "Niño 2", infante: "Infante" };
 
 /** Un pasajero anónimo de la cotización. `id` estable mientras se edita (no se reasigna al reordenar). */
-export type Cupo = { id: string; tipo: TipoCupo; baseCentavos: number };
+export type Cupo = {
+  id: string; tipo: TipoCupo; baseCentavos: number;
+  /** La misma base con su precisión de cálculo (centavos con fracción), antes del reparto contable del centavo. Solo para mostrar la tarifa; los importes contables son `baseCentavos`. Ausente = igual a `baseCentavos`. */
+  baseExactaCentavos?: number;
+};
 
 /** `oculto`: el importe se reparte entre los cupos que cubre pero su NOMBRE no sale en «incluye» (#14-A: el recobro viaja dentro de la tarifa de adulto, sin identificarse). */
 export type ServicioCobertura =
@@ -70,11 +74,12 @@ export function resumenUnidad(
   for (const c of cupos) {
     if (!c.id || idsCupo.has(c.id)) return { ok: false, error: "Los pasajeros de la unidad deben tener identificador único." };
     if (!entero(c.baseCentavos)) return { ok: false, error: "La tarifa de alojamiento de un pasajero no es válida." };
+    if (c.baseExactaCentavos !== undefined && !(Number.isFinite(c.baseExactaCentavos) && c.baseExactaCentavos >= 0)) return { ok: false, error: "La tarifa exacta de alojamiento de un pasajero no es válida." };
     idsCupo.add(c.id);
   }
   const idsServicio = new Set<string>();
   const precio = new Map<string, number>(cupos.map((c) => [c.id, c.baseCentavos]));
-  const exacto = new Map<string, number>(cupos.map((c) => [c.id, c.baseCentavos])); // lo mismo con precisión de cálculo: sin repartir el residuo
+  const exacto = new Map<string, number>(cupos.map((c) => [c.id, c.baseExactaCentavos ?? c.baseCentavos])); // lo mismo con precisión de cálculo: sin repartir el residuo
   const incluidos = new Map<string, string[]>(cupos.map((c) => [c.id, []]));
   const ajuste = 0;
   let sumaEsperada = cupos.reduce((s, c) => s + c.baseCentavos, 0);

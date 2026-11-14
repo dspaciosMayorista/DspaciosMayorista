@@ -367,6 +367,37 @@ try {
   if (cuales.includes("7")) await escenario("7-neto-2-adultos-traslado", neto2Adultos(7, "7-neto-2-adultos-traslado", 348933, null, null));
   if (cuales.includes("8")) await escenario("8-neto-2-adultos-traslado-recobro", neto2Adultos(8, "8-neto-2-adultos-traslado-recobro", 293378, "100.000", "50.000"));
 
+  // 9) 3 adultos de la MISMA clase y cobertura con traslado para todos, NETO 1.633.060 (no divide exacto): UNA fila «3 adultos · 544.353,33 · 1.633.060» en cotización y contrato (internos y públicos);
+  //    la estructura contable (enteros) suma EXACTAMENTE el exigible y la tarifa del documento es la de precisión de cálculo.
+  if (cuales.includes("9")) await escenario("9-neto-3-adultos-precision", async (p) => {
+    const N = "9-neto-3-adultos-precision";
+    // La semilla solo trae doble; se habilita la triple (mismo neto por persona que la doble) antes de armar el carrito.
+    sql("insert into public.hotel_acomodaciones (hotel_id, acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max) values (9101, 'triple', 3, 3, 3, 3, 0, 0, 0, 0) on conflict do nothing");
+    sql("update public.tarifa_hotel set neto_triple = 100000 where hotel_id = 9101");
+    const MANUAL = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", tramo: null, hotelRef: null, hotelEtiqueta: null, pax: 3, precio: 676178, impuestoNoComisionable: 0, moneda: "COP", fotoUrl: null, noches: null };
+    await cargarCheckout(p, U.staff, [ITEM({ habitaciones: { triple: 1 }, pax: 3, precio: 1125000 }), MANUAL]);
+    await asistida(p, { modo: "neta", recobro: null, dist: null });
+    const codigo = await generar(p);
+    const c = cotDeCodigo(codigo);
+    check(N, "plan sellado NETO: total exigible 1.633.060", planDe(c.id).total_exigible === 1633060 && planDe(c.id).modo_compra === "neta", JSON.stringify(planDe(c.id)).slice(0, 200));
+    const pendiente = sql(`select coalesce(detalle->>'resumenPendiente', '') from public.cotizaciones where id = ${c.id}`);
+    check(N, "cotización: resumen por pasajero generado", c.tiene_resumen === true && !pendiente, pendiente);
+    const resumen = c.tiene_resumen ? json(`select (detalle->'resumenPrecios')::text from public.cotizaciones where id = ${c.id}`) : null;
+    const grupos = resumen ? resumen.unidades.flatMap((u) => u.grupos) : [];
+    check(N, "estructura contable: enteros que suman EXACTAMENTE el exigible y misma tarifa exacta en todos", !!resumen && grupos.reduce((x, g) => x + g.subtotalCentavos, 0) === 163306000 && resumen.totalCentavos === 163306000 && grupos.every((g) => Number.isInteger(g.tarifaCentavos) && g.subtotalCentavos === g.cantidad * g.tarifaCentavos && Math.abs(g.tarifaExactaCentavos - 54435333.3333) < 1e-3), JSON.stringify(grupos).slice(0, 400));
+    const verTexto = (t) => tiene(t, 1633060) && t.includes("544.353,33") && /Servicios incluidos/.test(t) && /Traslado privado/.test(t) && !/Ajuste (de|por) redondeo/.test(t) && !/ × $/.test(t);
+    check(N, "documento PÚBLICO de la cotización: 3 adultos · 544.353,33 · 1.633.060", verTexto(await textoDe(p, null, `/cot/${c.share_token}`)), "");
+    check(N, "documento INTERNO de la cotización: mismo desglose", verTexto(await textoDe(p, U.staff, `/cotizacion/${c.id}`)), "");
+    const numero = await generarContrato(p, c.id, [...PAX_ADULTOS, { nombres: "Luz", apellidos: "Pérez", tipoDoc: "CC", doc: "555", nacimiento: "1990-01-01" }], [{ costo: 300000, proveedor: "Receptivo 14A" }]);
+    out[N].numero = numero;
+    const v = ventaDe(numero);
+    check(N, "contrato: precio_venta = 1.633.060 (exigible, base de la liquidación)", num(v.precio_venta) === 1633060 && v.modo_compra === "neta", JSON.stringify(v));
+    const resCont = json(`select resumen::text from public.contrato_resumen_precios where numero_contrato = '${numero}'`);
+    check(N, "resumen congelado en el contrato = el de la cotización (mismos enteros y misma tarifa exacta)", JSON.stringify(resCont.unidades.flatMap((u) => u.grupos).map((g) => [g.cantidad, g.tarifaCentavos, g.tarifaExactaCentavos])) === JSON.stringify(grupos.map((g) => [g.cantidad, g.tarifaCentavos, g.tarifaExactaCentavos])), JSON.stringify(resCont).slice(0, 300));
+    check(N, "documento INTERNO del contrato: 3 adultos · 544.353,33 · 1.633.060", verTexto(await textoDe(p, U.staff, `/contrato/${numero}`)), "");
+    check(N, "documento PÚBLICO del contrato: mismo desglose", verTexto(await textoDe(p, null, `/c/${v.share_token}`)), "");
+  });
+
   if (cuales.includes("3")) await escenario("3-neto-adultos-nino-servicio", async (p) => {
     const N = "3-neto-adultos-nino-servicio";
     await cargarCheckout(p, U.staff, [ITEM({ ninos: 1, pax: 3, precio: 938000, edadesMenores: [8] }), TOUR(3)]);
