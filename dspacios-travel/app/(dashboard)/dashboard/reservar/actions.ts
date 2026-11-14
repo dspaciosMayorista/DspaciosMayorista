@@ -103,6 +103,9 @@ import {
   trmReferenciaAproximada,
   congelarCondicionesContratoBestEffort,
 } from "@/lib/contrato/congelarCondicionesContrato";
+import { resumenParaContrato } from "@/lib/cotizacion/resumenPrecios";
+import { aplicarRecobroAFilasAdulto, leerRecobroClienteDePayload, recobroPorAdultoDeUnidad } from "@/lib/cotizacion/recobroCarrito";
+import { aCentavos } from "@/lib/cotizacion/netoHija";
 import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
@@ -132,7 +135,7 @@ import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, moned
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import {
-  compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON,
+  compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, planesDeGruposB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON, type PlanGrupoB2B,
   type LineaB2B, type PlanB2BCotizacion,
 } from "@/lib/cotizacion/asistidaB2B";
 import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
@@ -2422,7 +2425,11 @@ export async function convertirCotizacionCarrito(
   // Quien firma como «elaboró»: el asesor elegido en pantalla o, si no se eligió (p. ej. superadmin), el usuario interno autenticado. Nunca se inventa.
   const firmaConversion = nombreQuienElabora(opts.asesorInterno, (await resolverFirmasSesion(sb)).elabora);
   // Plan B2B de cada contrato por crear (con los términos CONGELADOS y el PVP/impuesto VIVOS de sus unidades, ya comparados).
-  const planesB2BPorGrupo = new Map<string, PlanComisionReserva>();
+  // #14-A: recobro guardado en la cotización. Con plan B2B vive en `plan.recobro` + `lineas[].recobro`; sin plan (cotización interna a cliente final) en `payload.recobroCliente`.
+  // Un recobro malformado, o los dos a la vez, se rechaza ANTES de numerar: nunca se convierte «como si no hubiera recobro».
+  const recobroClienteLeido = leerRecobroClienteDePayload(cot.payload, itemsCrudos.map((it) => it.ref).filter((r): r is string => typeof r === "string"), planB2BCot != null);
+  if (!recobroClienteLeido.ok) return { ok: false, error: recobroClienteLeido.error };
+  const planesB2BPorGrupo = new Map<string, PlanGrupoB2B>();
   // #64: impuesto no comisionable del grupo (hoteles + manuales). Es lo que se escribe en `ventas.impuesto`, de donde la base recalcula la comisión.
   const impuestoB2BPorGrupo = new Map<string, number>();
 
@@ -2571,12 +2578,26 @@ export async function convertirCotizacionCarrito(
       ];
       const cmpLineas = compararLineasConCongeladas(planB2BCot, vivas, cot.moneda ?? "");
       if (!cmpLineas.ok) return { ok: false, error: cmpLineas.error };
-      const pg = planDeGrupoB2B(planB2BCot, vivas);
-      if (!pg.ok) return { ok: false, error: pg.error };
-      planesB2BPorGrupo.set(claveDeGrupo(grupo), pg.plan);
+      if (!planB2BCot.recobro) {
+        const pg = planDeGrupoB2B(planB2BCot, vivas);
+        if (!pg.ok) return { ok: false, error: pg.error };
+        planesB2BPorGrupo.set(claveDeGrupo(grupo), { ...pg.plan, totalAliado: pg.plan.comision ?? 0 });
+      }
       impuestoB2BPorGrupo.set(claveDeGrupo(grupo), vivas.reduce((s, l) => s + l.impuesto, 0));
     }
     gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
+  }
+
+  // #14-A: con recobro, la participación del aliado se reparte entre TODOS los contratos de la cotización (también los ya convertidos en un intento anterior) a partir de las líneas CONGELADAS
+  // (que las vivas ya igualaron arriba): así cada contrato recibe SIEMPRE la misma parte en un reintento y la suma es exactamente la participación sellada.
+  if (planB2BCot?.recobro) {
+    const lineasPorGrupo = grupos.map((g) => {
+      const claves = new Set([...g.items.map((it) => it.ref ?? ""), ...g.tours.map((t) => `tour-${t.__idx}`), ...g.manuales.map((x) => `manual-${x.idx}`)]);
+      return planB2BCot.lineas.filter((l) => claves.has(l.clave));
+    });
+    const pl = planesDeGruposB2B(planB2BCot, lineasPorGrupo);
+    if (!pl.ok) return { ok: false, error: pl.error };
+    grupos.forEach((g, i) => planesB2BPorGrupo.set(claveDeGrupo(g), pl.planes[i]));
   }
 
   // ── Paso 2: crear un contrato por grupo, con TODOS sus hoteles/tours ──────
@@ -2901,11 +2922,28 @@ export async function convertirCotizacionCarrito(
     // comisión en NETO). `precio_venta`, el total de cobro y todo lo que depende de él (saldo, factura, portal) parten de ese importe.
     const planGrupoB2B = planB2BCot ? planesB2BPorGrupo.get(claveGrupo) ?? null : null;
     if (planB2BCot && !planGrupoB2B) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
-    const precioExigibleGrupo = planGrupoB2B ? planGrupoB2B.precioFinal : precioTotal;
+    // #14-A: recobro de ESTE contrato (dentro de su precio, nunca en documentos del cliente). Con plan: el de su acuerdo; sin plan (cliente final): el de sus hoteles, 100 % de la empresa.
+    const recobroClienteGrupo = (recobroClienteLeido.valor?.lineas ?? []).filter((l) => grupo.items.some((it) => it.ref === l.clave)).reduce((x, l) => x + aCentavos(l.recobro), BigInt(0));
+    const recobroGrupo: { total: number; aliado: number; empresa: number } | null = planGrupoB2B?.recobro ?? (recobroClienteGrupo > BigInt(0) ? { total: Number(recobroClienteGrupo) / 100, aliado: 0, empresa: Number(recobroClienteGrupo) / 100 } : null);
+    const precioExigibleGrupo = planGrupoB2B ? planGrupoB2B.precioFinal : precioTotal + (recobroGrupo?.total ?? 0);
     // 235 (#90 F): el total a cobrar de ESTE contrato se convierte UNA sola vez desde su precio_venta (la oferta no cambia) y se congela en la cabecera.
     // Se calcula ANTES de reservar el número: un total inválido no gasta consecutivo.
     const cobroGrupo = cobroDeContratoCarrito({ precioVenta: precioExigibleGrupo, monedaContrato: monedaGrupo, eleccion: eleccionCobro });
     if (!cobroGrupo.ok) return { ok: false, error: numeros.length ? `${cobroGrupo.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : cobroGrupo.error };
+    // #94: resumen de precios por pasajero de ESTE contrato. Se decide ANTES de reservar el número, así un resumen inconsistente no gasta consecutivo ni deja nada a medias.
+    //   · la cotización NO trae resumen (histórica, o de un tipo que no lo genera, o con `resumenPendiente`) ⇒ no hay snapshot y el contrato se presenta como siempre;
+    //   · trae resumen y este grupo tiene hoteles ⇒ DEBE llegar al contrato: si no cuadra con lo exigible, la conversión se rechaza (nunca se cae en silencio al formato anterior).
+    const resumenGuardadoCot = (cot.detalle as { resumenPrecios?: unknown } | null)?.resumenPrecios ?? null;
+    const refsGrupoResumen = grupo.items.map((it) => it.ref).filter((r): r is string => typeof r === "string");
+    let resumenContrato: ReturnType<typeof resumenParaContrato> = null;
+    if (resumenGuardadoCot != null && refsGrupoResumen.length) {
+      resumenContrato = resumenParaContrato(resumenGuardadoCot, refsGrupoResumen,
+        { modalidad: planGrupoB2B?.modoCompra === "neta" ? "neto" : "pvp", moneda: monedaGrupo, totalCentavos: Math.round(precioExigibleGrupo * 100) });
+      if (!resumenContrato) {
+        const msg = "El resumen de precios por pasajero de la cotización no coincide con el total de este contrato (modalidad, moneda o importe). No se creó nada: genera la cotización de nuevo antes de convertirla.";
+        return { ok: false, error: numeros.length ? `${msg} (los contratos ${numeros.join(", ")} sí quedaron completos)` : msg };
+      }
+    }
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
     const numero = numRes.numero;
@@ -2999,6 +3037,7 @@ export async function convertirCotizacionCarrito(
         : totalHotelesGrupo === 0 ? null : `${totalHotelesGrupo} hoteles`,
       // Lo EXIGIBLE del contrato: el PVP del carrito (`precioTotal`) o, en una venta B2B asistida, el de su plan (PVP, o PVP − comisión en NETO).
       precio_venta: precioExigibleGrupo,
+      ...(recobroGrupo ? { recobro_total: recobroGrupo.total, recobro_empresa: recobroGrupo.empresa, recobro_aliado: recobroGrupo.aliado } : {}),
       estado: "pendiente",
       // Migración 172 — mismo criterio que reservarDesdeTarifarioInterno.
       financiero_estado: "pendiente",
@@ -3318,7 +3357,8 @@ export async function convertirCotizacionCarrito(
               fecha_salida: bq.fecha_regreso, orden: hIdx * 10 + 1,
             });
           }
-          await sb.from("contrato_vuelos").insert(tramos);
+          const { error: eVuelosBloqueo } = await sb.from("contrato_vuelos").insert(tramos);
+          if (eVuelosBloqueo) return fallarYRevertirGrupo(`No se pudo registrar el vuelo del hotel "${meta.hotel_nombre ?? it.hotelNombre}" del contrato: ${eVuelosBloqueo.message}`);
 
           // Menores de 2 años: pagan SOLO el fee de infante del bloqueo (migración
           // 226, precio = costo) y no ocupan silla (`paxConSilla` ya los excluye).
@@ -3332,11 +3372,20 @@ export async function convertirCotizacionCarrito(
         }
       }
 
-      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total"; valor_total?: number }[] = [];
+      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total" | "por_persona"; valor_total?: number | null }[] = [];
       lineasHab.forEach((l, i) => itemsHotel.push({
         numero_contrato: numero, descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
         adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0, orden: hIdx * 300 + i,
       }));
+      // #14-A: el recobro de esta unidad (de las líneas congeladas del plan o del recobro de cliente final) entra a la tarifa de ADULTO sin nombrarse; las filas de adulto se parten solo si dentro
+      // de una fila los adultos llevan centavos distintos. La suma de las filas = precio del hotel + su recobro, exacta.
+      const recobroUnidadCent = aCentavos(planB2BCot ? (planB2BCot.lineas.find((l) => l.clave === it.ref)?.recobro ?? 0) : (recobroClienteLeido.valor?.lineas.find((l) => l.clave === it.ref)?.recobro ?? 0));
+      if (recobroUnidadCent > BigInt(0)) {
+        const adultosUnidad = lineasHab.reduce((n, l) => n + l.pax, 0);
+        const aplicado = aplicarRecobroAFilasAdulto(itemsHotel, recobroPorAdultoDeUnidad(recobroUnidadCent, adultosUnidad));
+        if (!aplicado.ok) return fallarYRevertirGrupo(`No se pudo aplicar el recobro a las tarifas de adulto de "${meta.hotel_nombre ?? it.hotelNombre}": ${aplicado.error}`);
+        itemsHotel.splice(0, itemsHotel.length, ...aplicado.valor);
+      }
       // Menores (migración 226): una fila por clase de hotel y por tarifa (menor
       // de 2 años = tarifa de infante; 2+ = adulto en vuelo y servicios).
       for (const lm of lineasMenores) {
@@ -3362,7 +3411,12 @@ export async function convertirCotizacionCarrito(
           modo_precio: "total", valor_total: rResidual.residual,
         });
       }
-      if (itemsHotel.length) await sb.from("contrato_items").insert(itemsHotel);
+      // Un insert en bloque con filas de forma distinta (la del servicio por grupo trae modo_precio/valor_total y las demás no) deja modo_precio (NOT NULL) en null y la base lo rechaza: se hace explícito en todas.
+      for (const fila of itemsHotel) { fila.modo_precio ??= "por_persona"; fila.valor_total ??= null; }
+      if (itemsHotel.length) {
+        const { error: eItemsHotel } = await sb.from("contrato_items").insert(itemsHotel);
+        if (eItemsHotel) return fallarYRevertirGrupo(`No se pudieron registrar los ítems del hotel "${meta.hotel_nombre ?? it.hotelNombre}" del contrato: ${eItemsHotel.message}`);
+      }
 
       const costoHotel = costoHotelPersona(comp, numInfantes);
       costoHotelTotal += costoHotel;
@@ -3502,7 +3556,8 @@ export async function convertirCotizacionCarrito(
         numero_contrato: numero, descripcion: `Servicio · ${t.nombre}${alcancePorTour.has(t.__idx) ? ` (${etiquetaAlcanceTraslado(alcancePorTour.get(t.__idx))})` : ""}${t.destino ? ` — ${t.destino}` : ""}`,
         adultos: 1, ninos: 0, tarifa_adulto: t.precio, tarifa_nino: 0, orden: 9000 + i,
       }));
-      await sb.from("contrato_items").insert(itemsTours);
+      const { error: eItemsTours } = await sb.from("contrato_items").insert(itemsTours);
+      if (eItemsTours) return fallarYRevertirGrupo(`No se pudieron registrar los servicios del contrato: ${eItemsTours.message}`);
       // Sin fuente de condición propia (servicios_adicionales no la tiene) —
       // neutro (% normal configurable), mismo criterio que traslado/
       // asistencia/otro en componentesManual.ts.
@@ -3632,7 +3687,7 @@ export async function convertirCotizacionCarrito(
         componentes: componentesCondicion,
         moneda: monedaGrupo,
         trm: trmCond,
-        precioTotalMoneda: precioTotal,
+        precioTotalMoneda: precioTotal + (recobroGrupo?.total ?? 0),
         fechaPago: hoyServidor,
         usuarioId: usuarioCond.id,
       });
@@ -3661,6 +3716,15 @@ export async function convertirCotizacionCarrito(
     }
     // Igual que el flujo individual, debe cerrar el estado aunque el payload
     // financiero sea vacío.
+    // #94: el resumen se congela ANTES del cierre financiero: mientras el contrato es `pendiente` un fallo lo revierte completo con el mecanismo de siempre
+    // (`fallarYRevertirGrupo`), y un contrato ya válido nunca se revierte ni se completa a medias. Reintentar la conversión rehace solo este grupo.
+    if (resumenContrato) {
+      const { error: eResumen } = await admin.from("contrato_resumen_precios").insert({ numero_contrato: numero, resumen: resumenContrato as unknown as Json });
+      if (eResumen) {
+        registrarErrorTecnico("convertir_cotizacion", numero, "resumen_precios", "insert", eResumen);
+        return fallarYRevertirGrupo(`No se pudo guardar el resumen de precios del contrato ${numero}: ${eResumen.message}. El contrato no quedó creado; vuelve a intentarlo.`);
+      }
+    }
     const fin = await registrarFinancieroContrato(
       depsFinanciero(idc, numero, tenantCotizacion, hoyServidor),
       { numeroContrato: numero, tenant: tenantCotizacion, costos: costosGrupo, cxp, fecha: hoyServidor, contratoUid }

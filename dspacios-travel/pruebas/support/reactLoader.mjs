@@ -125,7 +125,12 @@ const STUB_CONTEXTO_AGENCIA = pathToFileURL(join(AQUI, "stubs", "contextoAgencia
 const STUB_CONTEXTO_SESION = pathToFileURL(join(AQUI, "stubs", "contextoSesionStub.mjs")).href;
 const STUB_SUPABASE_ADMIN = pathToFileURL(join(AQUI, "stubs", "supabaseAdminStub.mjs")).href;
 
+// PG_ACCIONES_REALES=1 (recorridos «formulario real → acciones reales → Postgres», p. ej. cotizacionAsistidaB2B102.pg.ts R20): el checkout y la conversión usan sus Server Actions REALES.
+const ACCIONES_REALES = process.env.PG_ACCIONES_REALES === "1";
+
 export async function resolve(specifier, context, nextResolve) {
+  // Con acciones reales, "next/headers" (sin mapa de exports para ESM plano) se resuelve a su archivo para que la prueba lo reemplace con `mock.module` (como hace aliasLoader.mjs).
+  if (ACCIONES_REALES && specifier === "next/headers") return nextResolve("next/headers.js", context);
   // #5 D8/D9: la compuerta de catálogos globales y el contexto de sesión (server-only).
   if (specifier === "@/lib/auth/contextoAgencia") {
     return { url: STUB_CONTEXTO_AGENCIA, shortCircuit: true };
@@ -142,7 +147,7 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "next/link") {
     return { url: STUB_NEXT_LINK, shortCircuit: true };
   }
-  if (specifier === "@/app/(dashboard)/dashboard/reservar/actions") {
+  if (!ACCIONES_REALES && specifier === "@/app/(dashboard)/dashboard/reservar/actions") {
     return { url: STUB_RESERVAR_ACTIONS, shortCircuit: true };
   }
   // Vista previa de la conversión del carrito (pruebas/convertirCarritoVinculos.react.ts):
@@ -162,11 +167,11 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./busquedaUnidadActions" && context.parentURL?.endsWith("BuscadorBooking.tsx")) {
     return { url: STUB_BUSQUEDA_UNIDAD_ACTIONS, shortCircuit: true };
   }
-  if (specifier === "./actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
+  if (!ACCIONES_REALES && specifier === "./actions" && (context.parentURL?.endsWith("/tarifario/checkout/page.tsx") || context.parentURL?.endsWith("/tarifario/checkout/CoberturaServicios.tsx"))) {
     return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
   }
   // La comparativa se importa de forma dinámica con el alias (`await import("@/app/tarifario/checkout/actions")`): mismo stub.
-  if (specifier === "@/app/tarifario/checkout/actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
+  if (!ACCIONES_REALES && specifier === "@/app/tarifario/checkout/actions" && context.parentURL?.endsWith("/tarifario/checkout/page.tsx")) {
     return { url: STUB_CHECKOUT_ACTIONS, shortCircuit: true };
   }
   if (specifier === "./actions" && context.parentURL?.endsWith("PasajerosContratoClient.tsx")) {
@@ -233,7 +238,7 @@ export async function resolve(specifier, context, nextResolve) {
   // los cargadores REALES de estado de cuenta/plan/recibo y cuenta de cobro,
   // contra una base simulada en memoria.
   // 65 y 86: con PG65_POSTGREST / PG281A_POSTGREST (recorridos de integración, supabase/scripts/test_65_portal_b2b.sh y test_281_acciones.sh) NO se sustituye el cliente: la prueba aporta clientes REALES contra PostgREST.
-  if (!process.env.PG65_POSTGREST && !process.env.PG281A_POSTGREST && (specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
+  if (!ACCIONES_REALES && !process.env.PG65_POSTGREST && !process.env.PG281A_POSTGREST && (specifier === "@/lib/supabase/server" || specifier === "@/lib/supabase/admin") &&
       (context.parentURL?.endsWith("/lib/cuenta/estado.ts") ||
        context.parentURL?.endsWith("/lib/finanzas/comisionResolver.ts") ||
        // Listado del portal B2B y su columna de comisión (#38, pruebas/comisionPortalB2B.react.ts).

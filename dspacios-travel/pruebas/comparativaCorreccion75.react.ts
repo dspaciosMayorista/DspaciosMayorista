@@ -1,6 +1,7 @@
 // Se ejecuta con npm run test:react (loader del arnés).
 // #75 · ronda de correcciones: cuadre del documento hijo (PVP y NETO con vuelo manual), Incluye ordenado, salida pasada y edición visible del Ítem.
 import { describe, test } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { readFileSync } from "node:fs";
@@ -24,8 +25,8 @@ const venta = {
   fecha_emision: "2030-01-10", fecha_salida: "2030-03-01", pax: 2, plan_nombre: null, tours_traslados: null, asistencia_medica: null, moneda: "COP", tenant: "mayorista",
 };
 function doc(extra: Record<string, unknown>) {
-  const props = { venta, pasajeros: [], hoteles: [], vuelos: [], items: [], totalPagado: 0, esCotizacion: true, codigo: "COT-1", agencia: null, condiciones: null, ...extra };
-  return plano(renderToStaticMarkup(createElement(ContratoDocumento, props as unknown as Parameters<typeof ContratoDocumento>[0])));
+  const props = { venta, pasajeros: [], hoteles: [], vuelos: [], items: [], totalPagado: 0, esCotizacion: true, codigo: "COT-1", agencia: AGENCIA_PRUEBA, condiciones: null, ...extra };
+  return plano(renderToStaticMarkup(createElement(ContratoDocumento, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA } as unknown as Parameters<typeof ContratoDocumento>[0])));
 }
 const item = (id: number, descripcion: string, adultos: number, ninos: number, ta: number, tn: number) =>
   ({ id, numero_contrato: "", descripcion, adultos, ninos, tarifa_adulto: ta, tarifa_nino: tn, orden: id, modo_precio: null, valor_total: null });
@@ -186,7 +187,7 @@ describe("editor de presentación: el Ítem es visible y su vista previa muestra
 describe("cotización normal con servicio manual: un solo ítem «Paquete Turístico …»", () => {
   const ventaCot = { ...venta, destino: "CARTAGENA", fecha_salida: "2030-03-01", fecha_regreso: "2030-03-04" };
   const htmlDoc = (extra: Record<string, unknown>) => renderToStaticMarkup(createElement(ContratoDocumento, {
-    venta: ventaCot, pasajeros: [], hoteles: [], vuelos: [], items: [], totalPagado: 0, esCotizacion: true, codigo: "COT-1", agencia: null, condiciones: null, ...extra,
+    venta: ventaCot, pasajeros: [], hoteles: [], vuelos: [], items: [], totalPagado: 0, esCotizacion: true, codigo: "COT-1", agencia: AGENCIA_PRUEBA, condiciones: null, ...extra,
   } as unknown as Parameters<typeof ContratoDocumento>[0]));
   const centavos = (s: string) => Math.round(Number(s.replace(/\./g, "").replace(",", ".")) * 100);
   const fila = (html: string) => plano(/<tr[^>]*data-testid="fila-paquete-turistico"[^]*?<\/tr>/.exec(html)?.[0] ?? "");
@@ -219,7 +220,8 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
       assert.doesNotMatch(t, /\$ 400\.000|\$ 682\.000/, "los importes del vuelo y del servicio no se muestran por separado");
       assert.doesNotMatch(t, /Vuelo · Avianca/);
       assert.equal((h.match(/fila-paquete-turistico/g) ?? []).length, 1, "un único ítem, no una fila por acomodación");
-      assert.match(t, /Servicios adicionales/);
+      assert.match(t, /Servicios incluidos/, "los servicios se explican (nombre, fechas y a quién cubren) en su sección, sin precio");
+      assert.match(t, /Todos los pasajeros \(2\)/);
     });
     test("NETO: la fila ES el total exigible y el vuelo no se cuenta dos veces", () => {
       const h = htmlDoc({ items, vuelos, netoTotalExigible: netoSnap.exigible, paqueteSnapshot: netoSnap.snap });
@@ -250,7 +252,7 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
     const leer = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
     assert.match(leer("app/tarifario/checkout/page.tsx"), /tituloPaquete: tituloEditado/);
     assert.match(leer("app/tarifario/checkout/actions.ts"), /tituloPaquete: tituloPaqueteEditado\(/);
-    assert.match(leer("app/tarifario/checkout/actions.ts"), /manualesOk\.length && input\.tituloPaquete/);
+    assert.match(leer("app/tarifario/checkout/actions.ts"), /input\.tituloPaquete \? \{ tituloPaquete: input\.tituloPaquete \}/);
     for (const p of ["app/cot/[token]/page.tsx", "app/cotizacion/[id]/page.tsx"]) assert.match(leer(p), /tituloPaquete=\{d\.tituloPaquete \?\? null\}/, p);
   });
 
@@ -261,10 +263,12 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
     const manual = { ...svc, id: 9, descripcion: descripcionCotizacionManual(m.valor) };
     const h = htmlDoc({ items: [item(1, HOTEL, 2, 0, 800_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 400_000), manual], vuelos: [], paqueteSnapshot: snapshot({ hotelPvp: 2_000_000, manuales: [m.valor] }).snap });
     // 2 adultos × 800.000 + 1 niño × 400.000 + servicio 400.000 entre 3 personas (133.333,34 / 133.333,33 / 133.333,33).
-    // Tarifa única por clase (933.333,33 y 533.333,33) y el centavo que no se reparte sale como ajuste explícito.
-    assert.deepEqual(importes(h), [93_333_333, 53_333_333, 240_000_000]);
-    assert.match(plano(h), /Ajuste de redondeo: \+\$ 0,01 \(ya incluido en el valor total\)/);
-    assert.equal(2 * importes(h)[0] + importes(h)[1] + 1, importes(h)[2]);
+    // El centavo que no se reparte NO se reparte: UNA fila por paquete (2 adultos y el niño) con UNA tarifa por tipo con su precisión de cálculo (933.333,33 y 533.333,33) y el total exacto.
+    const filas = [...h.matchAll(/<tr[^>]*data-testid="fila-paquete-turistico"[^>]*>([^]*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>([^]*?)<\/td>/g)].map((c) => plano(c[1]).trim()));
+    assert.equal(filas.length, 1, "una sola fila para el paquete");
+    assert.deepEqual(filas[0].slice(1), ["2", "1", "$ 933.333,33", "$ 533.333,33", "$ 2.400.000"]);
+    assert.doesNotMatch(plano(h), /Ajuste (de|por) redondeo/);
+    assert.doesNotMatch(filas[0].join(" "), / × \$/, "sin sublistas");
   });
 
   test("la edición cambia solo el texto: mismos valores; una edición inválida se ignora", () => {

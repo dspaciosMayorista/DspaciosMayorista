@@ -41,10 +41,16 @@ describe("autoridad: el navegador solo elige; el servidor decide", () => {
 
   test("crearSolicitudReserva resuelve actor y aliado en servidor ANTES de crear la cotización y solo lee del navegador la elección", () => {
     const f = cuerpo(checkout, "export async function crearSolicitudReserva", "function lineasMensajeB2BAsistido");
-    assert.match(f, /leerAsistenciaB2BEntrada\(inputRaw\)/);
-    assert.match(f, /prepararAsistenciaB2B\(await createClient\(\), asistencia\.asistencia\)/);
-    assert.ok(antes(f, "prepararAsistenciaB2B(", "await crearCotizacionCarrito("), "la autorización va antes de crear nada");
-    assert.match(f, /\{ b2b: b2bAsistido \}/);
+    // #14-A: la captura (asistencia, aliado directo, actor y recobro) vive en UNA función común con la vista previa; crear la llama ANTES de crear la cotización.
+    assert.match(f, /resolverCapturaCarrito\(inputRaw, input\.modo, ctxB2B\)/);
+    assert.ok(antes(f, "resolverCapturaCarrito(", "await crearCotizacionCarrito("), "la autorización va antes de crear nada");
+    const captura = cuerpo(checkout, "async function resolverCapturaCarrito", "export async function crearSolicitudReserva");
+    assert.match(captura, /leerAsistenciaB2BEntrada\(inputRaw\)/);
+    assert.match(captura, /prepararAsistenciaB2B\(await createClient\(\), asistencia\.asistencia\)/);
+    assert.ok(antes(captura, "prepararAsistenciaB2B(", "decidirRecobro("), "primero se resuelve quién asiste y después se decide el recobro");
+    // La vista previa de términos usa la MISMA captura: no hay una segunda regla.
+    assert.match(cuerpo(checkout, "export async function previsualizarTerminosB2BAsistido", "export type PrevisualizacionComparativaB2B"), /resolverCapturaCarrito\(inputRaw, v\.input\.modo, ctxB2B\)/);
+    assert.match(f, /\{ b2b: b2bAsistido, /);
     // Nada de lo que podría mandar el navegador para fijar dinero se lee de `input`/`inputRaw` en este camino.
     assert.doesNotMatch(f, /inputRaw[^;\n]*(pct|porcentaje|comision|base|total)/i);
     assert.doesNotMatch(f, /asistencia\.asistencia\.(pct|porcentaje|comision|base|total|tipo)/i);
@@ -101,7 +107,7 @@ describe("conversión: todo se decide ANTES de numerar y el contrato nace del pl
   });
 
   test("lo exigible del contrato (cobro, precio, saldo) parte del plan del grupo; el contrato nace B2B del aliado congelado", () => {
-    assert.match(conv, /const precioExigibleGrupo = planGrupoB2B \? planGrupoB2B\.precioFinal : precioTotal;/);
+    assert.match(conv, /const precioExigibleGrupo = planGrupoB2B \? planGrupoB2B\.precioFinal : precioTotal \+ \(recobroGrupo\?\.total \?\? 0\);/);
     assert.match(conv, /cobroDeContratoCarrito\(\{ precioVenta: precioExigibleGrupo,/);
     const v = cuerpo(conv, 'sb.from("ventas").insert({', "if (ve) {");
     assert.match(v, /precio_venta: precioExigibleGrupo,/);

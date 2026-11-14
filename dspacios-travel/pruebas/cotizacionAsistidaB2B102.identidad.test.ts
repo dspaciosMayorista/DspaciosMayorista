@@ -93,7 +93,7 @@ describe("fila de agencias de la cotización", () => {
     } }) }) }) };
     return { sb, consultas };
   }
-  const fila = (rnt: string | null) => ({ data: { rnt }, error: null });
+  const fila = (rnt: string | null) => ({ data: { rnt, razon_social: "Razón sintética", nit: "800000001" }, error: null });
 
   test("dato válido: trae la fila del tenant de la cotización (Mayorista y Minorista tienen RNT distinto)", async () => {
     const { sb } = lector({ mayorista: fila("RNT-MAY"), minorista: fila("RNT-MIN") });
@@ -122,19 +122,31 @@ describe("fila de agencias de la cotización", () => {
     }
   });
 
-  test("fila ausente: Mayorista conserva su constante (ok con agencia null); Minorista NO se puede acreditar", async () => {
-    assert.deepEqual(await cargarAgenciaDeCotizacion(lector({}).sb, "mayorista"), { ok: true, agencia: null });
-    const min = await cargarAgenciaDeCotizacion(lector({}).sb, "minorista");
-    assert.equal(min.ok === false && min.motivo, "ausente");
-    assert.match(min.ok === false ? min.mensaje : "", /Minorista/);
+  test("#49 fila ausente: NINGUNA agencia se puede acreditar (la constante EMPRESA es de Minorista y no sustituye a Mayorista)", async () => {
+    for (const [tenant, nombre] of [["mayorista", /Mayorista/], ["minorista", /Minorista/]] as const) {
+      const r = await cargarAgenciaDeCotizacion(lector({}).sb, tenant);
+      assert.equal(r.ok === false && r.motivo, "ausente", tenant);
+      assert.match(r.ok === false ? r.mensaje : "", nombre);
+    }
   });
 
-  test("fila de Minorista sin RNT (vacío o espacios) no acredita nada; la de Mayorista conserva el comportamiento histórico", async () => {
-    for (const rnt of [null, "", "   "]) {
-      const min = await cargarAgenciaDeCotizacion(lector({ minorista: fila(rnt) }).sb, "minorista");
-      assert.equal(min.ok === false && min.motivo, "sin_rnt", String(rnt));
+  test("#49 fila sin RNT (nulo, vacío o solo espacios) no acredita nada, en AMBAS agencias", async () => {
+    for (const tenant of ["mayorista", "minorista"]) {
+      for (const rnt of [null, "", "   "]) {
+        const r = await cargarAgenciaDeCotizacion(lector({ [tenant]: fila(rnt) }).sb, tenant);
+        assert.equal(r.ok === false && r.motivo, "sin_rnt", `${tenant} ${String(rnt)}`);
+        assert.match(r.ok === false ? r.mensaje : "", /RNT/);
+      }
     }
-    assert.equal((await cargarAgenciaDeCotizacion(lector({ mayorista: fila(null) }).sb, "mayorista")).ok, true);
+  });
+
+  test("#49 fila sin razón social o sin NIT tampoco acredita (se nombra qué falta)", async () => {
+    for (const tenant of ["mayorista", "minorista"]) {
+      const sinNit = await cargarAgenciaDeCotizacion(lector({ [tenant]: { data: { rnt: "R-1", razon_social: "X", nit: " " }, error: null } }).sb, tenant);
+      assert.match(sinNit.ok === false ? sinNit.mensaje : "", /NIT/);
+      const sinRazon = await cargarAgenciaDeCotizacion(lector({ [tenant]: { data: { rnt: "R-1", razon_social: null, nit: "1" }, error: null } }).sb, tenant);
+      assert.match(sinRazon.ok === false ? sinRazon.mensaje : "", /razón social/);
+    }
   });
 });
 

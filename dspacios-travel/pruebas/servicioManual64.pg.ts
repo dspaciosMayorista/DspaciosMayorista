@@ -434,8 +434,9 @@ describe("64 · cotización con servicio manual: solo personal interno, sin cost
   test("Q4 agregar/editar/quitar el manual no altera hotel ni add-ons: mismo ítem de hotel, mismas líneas; solo cambia el total por el importe del manual", async () => {
     const sin = await solicitar(entrada());
     const con = await solicitar(entrada([VUELO]));
-    const editado = await solicitar(entrada([{ ...VUELO, precio: 2_000_000, pax: 1 }]));
-    assert.ok(sin.ok && con.ok && editado.ok);
+    // El vuelo editado cubre a 1 de los 2 pasajeros: el checkout manda QUIÉN lo cubre (#94); sin esa selección la cotización normal se rechaza (ver V3b).
+    const editado = await solicitar({ ...entrada([{ ...VUELO, precio: 2_000_000, pax: 1 }]), cobertura: { cupos: { 0: { "adulto:doble": [1, 2] } }, manuales: { 0: { cubre: ["adulto:doble#1"] } } } });
+    assert.ok(sin.ok && con.ok && editado.ok, [sin, con, editado].map(msgErr).join(" | "));
     if (!sin.ok || !con.ok || !editado.ok) return;
     const [a, b, e] = [sin, con, editado].map((x) => cotDe(x.cotizacion.id));
     assert.equal(Number(a.precio), 600_000);
@@ -635,12 +636,15 @@ describe("64 · vuelo manual por tramos, ligado a SU hotel del carrito (códigos
   const H1 = () => ({ ...itemPayload(3601), itemId: "h1" });
   const H2 = () => ({ ...itemPayload(3602, "SANTA MARTA"), itemId: "h2" });
   const V = (o: Record<string, unknown> = {}) => ({ ...VUELO, ...o });
+  /** Lo que manda el checkout cuando un servicio cubre solo a algunos pasajeros: identidad estable de los 2 adultos del hotel y a quién cubre el servicio indicado. */
+  const SELECCION = (cubre: Record<number, string[]>) => ({ cupos: { 0: { "adulto:doble": [1, 2] } }, manuales: Object.fromEntries(Object.entries(cubre).map(([i, c]) => [i, { cubre: c }])) });
   const ABIERTAS = () => Number(sql("select count(*) from public.cotizaciones"));
   const crear = async (items: unknown[], manuales: unknown[], opts: { anonimo?: boolean } = {}) => {
     anonimo = opts.anonimo ?? false; uidSesion = UID_ADMIN;
     try { return await crearSolicitudReserva({ items, tours: [], manuales, cliente: { ...CLIENTE, tipoDoc: "CC" } }); } finally { anonimo = false; }
   };
   const err = (r: { ok: boolean }) => ("error" in r ? String((r as { error: unknown }).error) : "");
+  const crearSolicitudReservaCon = async (items: unknown[], manuales: unknown[], cobertura: unknown) => { anonimo = false; uidSesion = UID_ADMIN; return crearSolicitudReserva({ items, tours: [], manuales, cobertura, cliente: { ...CLIENTE, tipoDoc: "CC" } }); };
   type Cot = { precio: number; payload: { manuales: Record<string, unknown>[] }; detalle: { items: { descripcion: string; valor_total: number }[]; vuelos: Record<string, unknown>[] } };
   const cot = (id: number) => JSON.parse(sql(`select json_build_object('precio', precio_venta, 'payload', payload, 'detalle', detalle)::text from public.cotizaciones where id = ${id}`)) as Cot;
   const sinSillas = () => ({ sillas: sql("select count(*) from public.sillas"), bloqueos: sql("select count(*) from public.bloqueos_vuelo") });
@@ -692,7 +696,8 @@ describe("64 · vuelo manual por tramos, ligado a SU hotel del carrito (códigos
   test("V3 vuelos separados con distintos pasajeros: cada uno lleva los suyos y se suman una vez; más pasajeros que la cotización se rechaza", async () => {
     const a = V({ tramo: "ida", fechaRegreso: null, nombre: "Avianca ida", pax: 2, precio: 900_000, impuestoNoComisionable: 0 });
     const b = V({ tramo: "ida", fechaRegreso: null, nombre: "Latam ida", pax: 1, precio: 500_000, impuestoNoComisionable: 0 });
-    const r = await crear([H1()], [a, b]);
+    // «Latam ida» cubre a 1 de los 2 pasajeros: el checkout manda a quién (#94). Sin esa selección la cotización normal se rechaza (V3b).
+    const r = await crearSolicitudReservaCon([H1()], [a, b], SELECCION({ 1: ["adulto:doble#1"] }));
     assert.equal(r.ok, true, err(r));
     if (!r.ok) return;
     const c = cot(r.cotizacion.id);
@@ -701,6 +706,22 @@ describe("64 · vuelo manual por tramos, ligado a SU hotel del carrito (códigos
     const antes = ABIERTAS();
     for (const pax of [3, 0, 1.5]) assert.equal((await crear([H1()], [V({ pax })])).ok, false, `pax ${pax}`);
     assert.equal(ABIERTAS(), antes);
+  });
+
+  test("V3b cobertura parcial SIN elegir pasajeros: la cotización normal se rechaza con el motivo concreto (el checkout sí ofrece elegirlos); en una venta B2B no se rechaza ni se inventa el reparto", async () => {
+    const parcial = V({ nombre: "Latam ida", pax: 1, precio: 500_000, impuestoNoComisionable: 0 });
+    const antes = ABIERTAS();
+    const r = await crear([H1()], [V({ tramo: "ida", fechaRegreso: null, nombre: "Avianca ida", pax: 2, precio: 900_000, impuestoNoComisionable: 0 }), parcial]);
+    assert.equal(r.ok, false);
+    assert.match(err(r), /cubre 1 de los 2 pasajeros.*selecciona los pasajeros cubiertos/);
+    assert.equal(ABIERTAS(), antes, "no se creó nada");
+    // Venta B2B: el checkout no manda cobertura. El carrito válido NO se rechaza: se cotiza sin resumen por pasajero y el total exigible es el de siempre.
+    anonimo = false; uidSesion = UID_ADMIN;
+    const b2b = (await crearSolicitudReserva({ items: [H1()], tours: [], manuales: [parcial], cliente: { ...CLIENTE, tipoDoc: "CC" }, asistencia: { canal: "b2b", aliadoId: 6401, modo: "comisionable" } })) as { ok: boolean; error?: string; cotizacion?: { id: number } };
+    assert.equal(b2b.ok, true, b2b.error);
+    const d = JSON.parse(sql(`select coalesce(detalle, '{}'::jsonb)::text from public.cotizaciones where id = ${b2b.cotizacion!.id}`)) as { resumenPrecios?: unknown; resumenPendiente?: string };
+    assert.equal(d.resumenPrecios, undefined, "sin resumen inventado");
+    assert.match(d.resumenPendiente ?? "", /cubre 1 de los 2 pasajeros/, "el motivo queda registrado");
   });
 
   test("V4 varios destinos: el vuelo se liga al hotel ELEGIDO (nunca al primero), con su IATA y las fechas de SU plan; sin elegir, desconocido o cruzado se rechaza", async () => {

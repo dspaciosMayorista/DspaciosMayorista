@@ -9,6 +9,7 @@ import type { Tenant } from "@/lib/tenant";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
+import { leerResumenContrato } from "@/lib/contrato/resumenPreciosContrato";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { desgloseNetoB2B } from "@/lib/finanzas/netoB2B";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
@@ -65,6 +66,7 @@ export default async function ContratoPublicoPage({
     { data: contratoCondiciones },
     { data: overridesCondiciones },
     habitacionesBernalo,
+    resumenContrato,
   ] = await Promise.all([
     sb.from("contrato_pasajeros").select("*").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_hoteles").select("*").eq("numero_contrato", numero).order("orden"),
@@ -77,6 +79,8 @@ export default async function ContratoPublicoPage({
     // Fase 3F-4B: la autorización aquí es el `share_token` secreto — ya
     // verificado arriba (regla 19).
     habitacionesBernaloDeContrato(numero),
+    // #94: resumen de precios por pasajero congelado al convertir (solo importes de cara al cliente). Sin fila = contrato histórico (presentación de siempre); un error de lectura se LANZA, no se disfraza de histórico.
+    leerResumenContrato(sb, numero),
   ]);
 
   const totalPagado = (abonos ?? []).reduce(
@@ -111,6 +115,7 @@ export default async function ContratoPublicoPage({
             agencia={agencia}
             condiciones={condicionesResueltas}
             habitacionesBernalo={habitacionesBernalo}
+            resumenPrecios={resumenContrato}
             netoTotalExigible={desgloseNetoB2B(venta)?.totalExigible ?? null}
           />
         </div>

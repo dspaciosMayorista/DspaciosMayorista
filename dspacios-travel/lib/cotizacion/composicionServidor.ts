@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Composicion, ComposicionCotizacion } from "./composicionPrecio.ts";
+import type { Composicion, ComposicionCotizacion, ServicioCarritoComposicion } from "./composicionPrecio.ts";
 import { leerComposicionCotizacion } from "./composicionPrecio.ts";
 
 type Hotel = { ref: string | null; nombre: string | null; composicion: Composicion | null };
@@ -8,10 +8,10 @@ type Hotel = { ref: string | null; nombre: string | null; composicion: Composici
  * Guarda la composición PRIVADA de una cotización recién creada (tabla de la migración 272, solo service-role).
  * Mejor esfuerzo: la cotización ya existe y su precio no depende de esto; si la tabla aún no existe o falla, se registra el fallo (sin datos) y la ficha dirá que no se conservó.
  */
-export async function guardarComposicion(admin: SupabaseClient, a: { cotizacionId: number; tenant: string; hoteles: Hotel[] }): Promise<void> {
+export async function guardarComposicion(admin: SupabaseClient, a: { cotizacionId: number; tenant: string; hoteles: Hotel[]; servicios?: ServicioCarritoComposicion[]; total?: number }): Promise<void> {
   const hoteles = a.hoteles.filter((h): h is Hotel & { composicion: Composicion } => h.composicion !== null);
   if (!hoteles.length) return;
-  const composicion: ComposicionCotizacion = { version: 1, hoteles };
+  const composicion: ComposicionCotizacion = { version: 1, hoteles, ...(a.servicios ? { servicios: a.servicios } : {}), ...(a.total !== undefined ? { total: a.total } : {}) };
   try {
     // El tenant es el de la cotización PERSISTIDA, nunca el de la agencia activa de quien valora (un superadmin puede estar en la otra). Si no coincide, no se guarda.
     const { data: cot, error: eCot } = await admin.from("cotizaciones").select("tenant").eq("id", a.cotizacionId).maybeSingle();
@@ -27,7 +27,7 @@ export async function guardarComposicion(admin: SupabaseClient, a: { cotizacionI
 }
 
 /** Mejor esfuerzo total: sin service role, o si crear el cliente falla, no guarda y la cotización sigue (la ficha dirá que no se conservó). */
-export async function guardarComposicionMejorEsfuerzo(crearAdmin: () => SupabaseClient, a: { cotizacionId: number; tenant: string; hoteles: Hotel[] }): Promise<void> {
+export async function guardarComposicionMejorEsfuerzo(crearAdmin: () => SupabaseClient, a: { cotizacionId: number; tenant: string; hoteles: Hotel[]; servicios?: ServicioCarritoComposicion[]; total?: number }): Promise<void> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return;
   let admin: SupabaseClient;
   try { admin = crearAdmin(); } catch { return; }

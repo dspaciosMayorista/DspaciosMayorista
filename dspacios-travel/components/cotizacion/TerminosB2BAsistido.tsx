@@ -3,7 +3,7 @@ import { formatMoneda } from "@/lib/utils";
 import { ETIQUETA_MODO_B2B, ETIQUETA_ORIGEN_PCT, type PlanB2BCotizacion } from "@/lib/cotizacion/asistidaB2B";
 
 /** Lo que muestra el panel: el plan congelado completo, o (vista previa) solo los términos que el servidor liquida antes de generar. */
-export type TerminosVisibles = Pick<PlanB2BCotizacion, "aliado_nombre" | "tipo_asesor" | "modo_compra" | "moneda" | "pvp" | "impuesto" | "base" | "pct" | "pct_origen" | "comision" | "total_exigible"> & { asistido_por?: PlanB2BCotizacion["asistido_por"] };
+export type TerminosVisibles = Pick<PlanB2BCotizacion, "aliado_nombre" | "tipo_asesor" | "modo_compra" | "moneda" | "pvp" | "impuesto" | "base" | "pct" | "pct_origen" | "comision" | "total_exigible"> & { origen?: PlanB2BCotizacion["origen"]; recobro?: PlanB2BCotizacion["recobro"] } & { asistido_por?: PlanB2BCotizacion["asistido_por"] };
 
 // #102 — Términos de una venta B2B ASISTIDA, CONGELADOS en la cotización. Es una vista INTERNA (personal autorizado): muestra
 // comisión y base, así que NO se usa en ningún documento que vea el comprador (esos usan solo el total exigible en NETO).
@@ -25,11 +25,16 @@ export function TerminosB2BAsistido({ plan, previa = false }: { plan: TerminosVi
   const m = (n: number) => formatMoneda(n, plan.moneda);
   const neta = plan.modo_compra === "neta";
   const pctTexto = `${(plan.pct * 100).toLocaleString("es-CO", { maximumFractionDigits: 2 })} %`;
+  const directo = plan.origen === "aliado_directo";
+  // #14-A: con recobro se muestra su liquidación (solo uso interno). `plan.pvp` ya lo incluye; `comision` = ordinaria + participación.
+  const rec = plan.recobro && plan.recobro.total > 0 ? plan.recobro : null;
+  const participacion = rec?.participacion ?? 0;
+  const pctPart = rec && rec.total > 0 ? Math.round((participacion / rec.total) * 10000) / 100 : 0;
   return (
-    <section className="rounded-xl border border-sky-200 bg-sky-50/60 p-4" data-testid={previa ? "terminos-b2b-previa" : "terminos-b2b-asistido"} aria-label="Venta B2B asistida">
+    <section className="rounded-xl border border-sky-200 bg-sky-50/60 p-4" data-testid={previa ? "terminos-b2b-previa" : "terminos-b2b-asistido"} aria-label={directo ? "Venta B2B del aliado" : "Venta B2B asistida"}>
       <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
         <BadgePercent className="h-4 w-4" aria-hidden style={{ color: "var(--brand-primary)" }} />
-        Venta B2B asistida
+        {directo ? "Venta B2B del aliado" : "Venta B2B asistida"}
       </h3>
       <p className="mt-1 text-xs text-gray-500">
         {previa
@@ -40,12 +45,23 @@ export function TerminosB2BAsistido({ plan, previa = false }: { plan: TerminosVi
       <dl className="mt-3">
         <Fila etiqueta="Aliado" valor={`${plan.aliado_nombre} · ${plan.tipo_asesor === "agencia" ? "Agencia" : "Freelance"}`} testid="b2b-aliado" />
         <Fila etiqueta="Modalidad" valor={ETIQUETA_MODO_B2B[plan.modo_compra]} testid="b2b-modalidad" />
-        <Fila etiqueta="PVP" valor={m(plan.pvp)} testid="b2b-pvp" />
+        <Fila etiqueta={rec ? "PVP (con el recobro dentro de la tarifa de adulto)" : "PVP"} valor={m(plan.pvp)} testid="b2b-pvp" />
         <Fila etiqueta="Impuesto no comisionable" valor={m(plan.impuesto)} testid="b2b-impuesto" />
         <Fila etiqueta="Base comisionable" valor={m(plan.base)} testid="b2b-base" />
         <Fila etiqueta={ETIQUETA_ORIGEN_PCT[plan.pct_origen]} valor={pctTexto} testid="b2b-pct" />
+        {rec && <Fila etiqueta="Recobro incluido" valor={m(rec.total)} testid="b2b-recobro" />}
+        {rec && (
+          <Fila
+            etiqueta={participacion > 0
+              ? `Participación del aliado en el recobro (${pctPart.toLocaleString("es-CO", { maximumFractionDigits: 2 })} % · ${rec.origen_participacion === "parametro" ? "definida por el sistema" : "indicada por el personal"})`
+              : "Participación del aliado en el recobro (sin distribución: el recobro entra a la base comisionable)"}
+            valor={m(participacion)} testid="b2b-recobro-participacion" />
+        )}
+        {/* La parte que conserva la empresa es lectura del PERSONAL (liquidación interna, ya registrada en el contrato); el aliado ve su liquidación y su participación, no el margen de la empresa. */}
+        {rec && !directo && <Fila etiqueta="Del recobro, para la empresa" valor={m(Math.max(rec.total - participacion, 0))} testid="b2b-recobro-empresa" />}
+        {rec && <Fila etiqueta="Comisión ordinaria" valor={m(Math.max(plan.comision - participacion, 0))} testid="b2b-comision-ordinaria" />}
         <Fila
-          etiqueta={neta ? "Comisión (descontada del precio)" : "Comisión (pendiente de liquidar)"}
+          etiqueta={(neta ? "Comisión (descontada del precio)" : "Comisión (pendiente de liquidar)") + (rec ? " · ordinaria + participación" : "")}
           valor={neta ? `−${m(plan.comision)}` : m(plan.comision)}
           testid="b2b-comision"
         />

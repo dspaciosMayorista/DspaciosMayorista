@@ -19,6 +19,11 @@ let contextoAsistencia = { puede: false };
 export function __setContextoAsistencia(ctx) {
   contextoAsistencia = ctx;
 }
+let contextoRecobro = { tipo: "ninguno" };
+export function __setContextoRecobro(ctx) { contextoRecobro = ctx; }
+export const __llamadasContextoRecobro = { n: 0 };
+export async function getContextoRecobroCarrito() { __llamadasContextoRecobro.n++; return contextoRecobro; }
+
 export async function getContextoAsistenciaB2B() {
   return contextoAsistencia;
 }
@@ -83,4 +88,15 @@ export async function previsualizarPresentacionComparativa(input) {
   __previasPresentacion.push(input);
   if (implPreviaPres) return implPreviaPres(input);
   return { ok: false, error: "previsualizarPresentacionComparativa: no implementado en el stub de pruebas" };
+}
+// #94/#52: pasajeros (cupos) del hotel del carrito. Cada prueba instala lo que devolvería el servidor.
+export const __cupos = [];
+let implCupos = null;
+export function __setCuposDeCarrito(fn) {
+  implCupos = fn;
+}
+export async function cuposDeCarrito(input) {
+  __cupos.push(input);
+  if (implCupos) return implCupos(input);
+  return { ok: false, error: "cuposDeCarrito: no implementado en el stub de pruebas" };
 }

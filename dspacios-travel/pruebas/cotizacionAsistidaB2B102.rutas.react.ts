@@ -117,10 +117,12 @@ for (const [nombre, ruta] of RUTAS) {
       estado.tenant = "mayorista"; estado.escenario = "error";
       await assert.rejects(async () => { html(await ruta()); }, /RNT/);
     });
-    test("fila ausente (tabla sin sembrar): conserva el comportamiento histórico, la constante propia de Mayorista", async () => {
-      estado.tenant = "mayorista"; estado.escenario = "ausente";
-      assert.ok(html(await ruta()).includes(`RNT ${EMPRESA.rnt}`));
-    });
+    for (const escenario of ["ausente", "sin_rnt"] as const) {
+      test(`#49 ${escenario}: falla explícita; ya no se imprime la constante EMPRESA (identidad de Minorista) en una cotización de Mayorista`, async () => {
+        estado.tenant = "mayorista"; estado.escenario = escenario;
+        await assert.rejects(async () => { html(await ruta()); }, /RNT/);
+      });
+    }
   });
 }
 

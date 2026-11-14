@@ -71,6 +71,7 @@ type CotizadaTarjeta = Extract<Awaited<ReturnType<typeof import("./cotizarTarjet
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
+import { TextoCategoriaHotel, TextosCategoriaProvider, type TextosCategoriaPorHotel } from "./TextoCategoriaHotel";
 import { ExploraReceptivos } from "./ExploraReceptivos";
 import { ModoComparativaBooking } from "@/lib/cotizacion/comparativaBooking";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
@@ -604,6 +605,7 @@ export function VistaBooking({
   infoPorHotel = {},
   planesInfo = {},
   capPorHotel = {},
+  textosCategoria = {},
   soloAcom = null,
   filtroTexto = "",
   filtroCategoria = "",
@@ -696,6 +698,8 @@ export function VistaBooking({
   // EXACTA buscada, nunca el rango genérico de exploración que usa
   // `condicionPorOferta`).
   restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
+  /** #45 (303): descripción y «qué incluye» por categoría DENTRO de cada hotel (solo texto). */
+  textosCategoria?: TextosCategoriaPorHotel;
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -1835,6 +1839,7 @@ export function VistaBooking({
   const iconoBloqueoCls = (activo: boolean) => `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${activo ? "text-[var(--brand-success)]" : "text-slate-400"}`;
 
   return (
+    <TextosCategoriaProvider textos={textosCategoria}>
     <div>
       {subtabsSlot && createPortal(subtabsBotones, subtabsSlot)}
 
@@ -2208,6 +2213,7 @@ export function VistaBooking({
         <ReceptivoModal receptivo={receptivoAbierto} onClose={() => setReceptivoAbierto(null)} />
       )}
     </div>
+    </TextosCategoriaProvider>
   );
 }
 
@@ -2873,6 +2879,7 @@ export function TarjetaUnidadBusqueda({
             </select>
           </label>
         </div>
+        <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
 
         {errorAgregar && <p className="text-xs text-red-600">{errorAgregar}</p>}
 
@@ -3247,6 +3254,7 @@ function Selector({
           )}
         </div>
       </div>
+      <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
 
       {eligioOtra && <p role="status" data-testid="modal-seleccion-ajustada" className="text-xs text-amber-700">Tu elección anterior no está disponible en esta salida: te mostramos {catEff} · {regEff}.</p>}
       {cc && <div data-testid="modal-precio-fechas" className="text-xs text-gray-500">Importes calculados para la salida que elegiste{comboCot?.descuento && <span className="ml-2"><EtiquetaDescuentoHotel descuento={comboCot.descuento} /></span>}</div>}
@@ -4152,6 +4160,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
+          <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
           <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
           <EditorPax pvp={pvp} pvpMenor2={pvpMenor2Cot} pvpInfanteSinFijo={pvpInfanteSinFijoCot} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
             servicios={servicios ? {

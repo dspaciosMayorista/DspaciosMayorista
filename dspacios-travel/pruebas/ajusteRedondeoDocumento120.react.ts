@@ -3,6 +3,7 @@
 // #120 · Presentación al CLIENTE de la línea de ajuste de redondeo del reparto de un hotel a solicitud: «Ajuste por redondeo», con el importe (±) solo en «Valor total» y «—» en Adultos, Niños y tarifas.
 // NO cambia ningún importe: la suma de las filas del documento y el total que imprime son los de siempre (también con el ajuste en negativo). El texto completo («…del reparto del hotel») queda en los ítems guardados.
 import { test, describe } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement, type ComponentType } from "react";
 
@@ -21,8 +22,8 @@ const item = (id: number, descripcion: string, adultos: number, ninos: number, t
 const base = [item(1, "1 hab Doble (2 pax) · A confirmar / A confirmar", 2, 0, 1_000_000, 0), item(2, "Niño 1 · A confirmar / A confirmar", 0, 1, 0, 751_000)];
 
 function html(items: unknown[], esCotizacion = true) {
-  const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: [], items, totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null, paqueteSnapshot: null };
-  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props));
+  const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos: [], items, totalPagado: 0, agencia: AGENCIA_PRUEBA, condiciones: null, habitacionesBernalo: [], esCotizacion, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null, paqueteSnapshot: null };
+  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA }));
 }
 const plano = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 /** Celdas (texto) de la fila de la tabla de valores cuya primera celda empieza por `inicio`. */

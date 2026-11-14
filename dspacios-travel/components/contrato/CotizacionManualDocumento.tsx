@@ -1,4 +1,5 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
+import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
 import {
   EMPRESA,
   CONTRATO_TITULO,
@@ -65,7 +66,7 @@ type Props = {
   noIncluye?: string | null;
   vigenciaHasta?: string | null;
   fechaEmision?: string | null;
-  /** Fila de `agencias` del tenant de la cotización (RNT, NIT, cuenta). Ausente = constante de Mayorista (documentos viejos). */
+  /** Fila de `agencias` del tenant de la cotización (RNT, NIT, cuenta). #49: sin fila o sin razón social/NIT/RNT el documento falla; no hay fallback a `EMPRESA` (identidad de Minorista). */
   agencia?: Agencia | null;
 };
 
@@ -87,16 +88,8 @@ function Pill({ label, value }: { label: string; value: string }) {
 }
 
 export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision, agencia }: Props) {
-  const empresa = {
-    razonSocial: agencia?.razon_social ?? EMPRESA.razonSocial,
-    nit: agencia?.nit ?? EMPRESA.nit,
-    rnt: agencia?.rnt ?? EMPRESA.rnt,
-    correo: agencia?.correo ?? EMPRESA.correo,
-    banco: agencia?.banco ?? EMPRESA.cuentaBancaria.banco,
-    tipoCuenta: agencia?.tipo_cuenta ?? EMPRESA.cuentaBancaria.tipo,
-    numeroCuenta: agencia?.numero_cuenta ?? EMPRESA.cuentaBancaria.numero,
-    titular: agencia?.razon_social ?? EMPRESA.cuentaBancaria.titular,
-  };
+  const idAgencia = identidadAgencia(agencia);
+  const empresa = { ...idAgencia, titular: idAgencia.razonSocial };
   const moneda = venta.moneda ?? "COP";
   const total = items.reduce((s, it) => s + (it.valor ?? 0), 0);
   const ninos = Number(venta.ninos ?? 0);
@@ -134,7 +127,7 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
         </div>
         <div className="text-right text-xs opacity-90">
           <div>{EMPRESA.sitio}</div>
-          <div>{empresa.correo}</div>
+          {empresa.correo && <div>{empresa.correo}</div>}
           <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
@@ -280,8 +273,12 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
 
           <div className="mt-6 rounded-lg bg-gray-50 p-3 text-[11px]">
             <div className="font-semibold text-gray-700">Datos de pago</div>
-            <div>{empresa.banco} — {empresa.tipoCuenta} {empresa.numeroCuenta}</div>
-            <div>A nombre de {empresa.titular}</div>
+            {empresa.numeroCuenta && (
+              <>
+                <div>{[empresa.banco, empresa.tipoCuenta].filter(Boolean).join(" — ")} {empresa.numeroCuenta}</div>
+                <div>A nombre de {empresa.titular}</div>
+              </>
+            )}
             <div className="mt-1">{empresa.razonSocial} · NIT {empresa.nit} · RNT {empresa.rnt}</div>
           </div>
 

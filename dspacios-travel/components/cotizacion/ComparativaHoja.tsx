@@ -8,6 +8,7 @@
 import { GitCompareArrows } from "lucide-react";
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import { EMPRESA } from "@/lib/contrato/plantilla";
+import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
 import { ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { formatFechaLarga } from "@/lib/utils";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
@@ -21,7 +22,7 @@ export type MadreHoja = {
   codigo: string; cliente: string | null; destino: string | null; fecha_salida: string | null; fecha_regreso: string | null;
   pax: number | null; moneda: string | null; vigencia_hasta: string | null; created_at: string; tenant: string | null;
 };
-/** Identidad de la agencia dueña de la cotización, ya ACREDITADA por la ruta (`cargarAgenciaDeCotizacion`; si no se acredita, la ruta falla y no hay hoja). `null` = constantes de Mayorista. */
+/** Identidad de la agencia dueña de la cotización, ya ACREDITADA por la ruta (`cargarAgenciaDeCotizacion`; si no se acredita, la ruta falla y no hay hoja). `null`/incompleta = error: no hay constantes de respaldo (#49). */
 export type IdentidadHoja = { razon_social?: string | null; nit?: string | null; rnt?: string | null; correo?: string | null } | null;
 
 const etiquetaAcom = (a: string) => (a === "unica" ? "" : (ACOM_ROOM_LABEL[a as AcomRoom] ?? (a === "mixta" ? "Mixta" : a)));
@@ -39,11 +40,10 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
   madre: MadreHoja; grupos: GrupoHotel[]; resumenes: Record<string, ResumenHotelUI>; vencida: boolean; identidad: IdentidadHoja;
 }) {
   const minorista = madre.tenant === "minorista";
-  // Defensa del componente: sin dato propio, Minorista nunca hereda las constantes de Mayorista.
-  const rnt = identidad?.rnt ?? (minorista ? null : EMPRESA.rnt);
-  const nit = identidad?.nit ?? (minorista ? null : EMPRESA.nit);
-  const razon = identidad?.razon_social ?? (minorista ? null : EMPRESA.razonSocial);
-  const correo = identidad?.correo ?? (minorista ? null : EMPRESA.correo);
+  // #49: identidad SOLO de la fila de la agencia dueña (la ruta ya la acreditó). Sin fallback: `EMPRESA` es la identidad de Minorista, no de Mayorista.
+  const id = identidadAgencia(identidad, madre.tenant);
+  const { rnt, nit, razonSocial: razon } = id;
+  const correo = id.correo || null;
   const detalle = (g: GrupoHotel) => resumenes[g.opcionRef] ?? resumenes[`${g.opcionRef}/${g.acomodaciones[0]?.acomodacionRef}`] ?? {};
   // Común = idéntico en TODAS las opciones (se imprime una vez al final); si difiere, cada opción lleva el suyo.
   const { comun, porAcomodacion } = condicionesPorOpcion(grupos, resumenes);

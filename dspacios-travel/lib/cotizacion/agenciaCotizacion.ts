@@ -1,17 +1,18 @@
 import type { Agencia } from "@/types/database";
+import { camposFaltantesIdentidad } from "@/lib/agencia/identidadAgencia";
 
 // #102 (Preview #403) — Fila de `agencias` (RNT, NIT, razón social, cuenta de pago) de la agencia DUEÑA DE LA COTIZACIÓN. El tenant sale SIEMPRE de la fila de la
 // cotización (ya autorizada por sesión o por share_token), nunca de la URL. `agencias` es de lectura pública (109); la ruta pública lee con service-role.
 //
 // Tres casos que NO se confunden (antes todos caían a la constante de Mayorista, e imprimían su RNT en una cotización de Minorista):
 //   · dato válido      → { ok: true, agencia }.
-//   · fila ausente     → solo Mayorista (la constante fija ES la suya: tabla sin sembrar) → { ok: true, agencia: null }; en Minorista no se puede acreditar → error.
+//   · fila ausente     → error en AMBAS agencias (#49): la constante `EMPRESA` es la identidad de MINORISTA y no acredita a Mayorista.
 //   · error técnico    → error, sea cual sea el tenant: no se sabe qué RNT corresponde.
 // Una fila sin RNT en Minorista tampoco acredita nada y es error. La ruta que recibe `ok: false` debe fallar de forma explícita (no imprimir).
 type LectorAgencias = { from: (tabla: "agencias") => { select: (cols: "*") => { eq: (col: "tenant", valor: string) => { maybeSingle: () => PromiseLike<{ data: unknown; error?: { message?: string } | null }> } } } };
 
 export type ResultadoAgenciaCotizacion =
-  | { ok: true; agencia: Agencia | null }
+  | { ok: true; agencia: Agencia }
   | { ok: false; motivo: "tenant_invalido" | "error_tecnico" | "ausente" | "sin_rnt"; mensaje: string };
 
 const NOMBRE: Record<string, string> = { mayorista: "Mayorista", minorista: "Minorista" };
@@ -33,8 +34,8 @@ export async function cargarAgenciaDeCotizacion(sb: unknown, tenant: string | nu
   }
   if (respuesta.error) return falla("error_tecnico", "falló la lectura de agencias");
   const fila = respuesta.data as (Agencia & { rnt?: string | null }) | null;
-  if (!fila) return tenant === "mayorista" ? { ok: true, agencia: null } : falla("ausente", "no existe la fila de la agencia");
-  const rnt = typeof fila.rnt === "string" ? fila.rnt.trim() : "";
-  if (!rnt && tenant === "minorista") return falla("sin_rnt", "la agencia no tiene RNT registrado");
+  if (!fila) return falla("ausente", "no existe la fila de la agencia");
+  const faltan = camposFaltantesIdentidad(fila);
+  if (faltan.length) return falla("sin_rnt", `falta ${faltan.join(", ")} en «Datos de la agencia»`);
   return { ok: true, agencia: fila };
 }

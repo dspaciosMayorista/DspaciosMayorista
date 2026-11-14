@@ -2,7 +2,8 @@
 // Sin hooks ni acciones: solo pintan lo que ya trae `ResumenHotelUI` (nada de costos, proveedores ni términos NETO).
 import { Check, Package, Plane, X } from "lucide-react";
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
-import { formatFechaLarga } from "@/lib/utils";
+import { formatFechaLarga, formatHora24 } from "@/lib/utils";
+import { AvisoItinerariosVuelos } from "@/components/cotizacion/AvisoItinerariosVuelos";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import type { MenorOpcion, OtroServicioOpcion, TarifaVisible, TiqueteVuelo } from "@/lib/cotizacion/comparativa";
 import type { TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
@@ -56,7 +57,7 @@ export function VuelosOpcion({ tiquetes }: { tiquetes?: TiqueteVuelo[] }) {
             {t.tramos.map((tr, j) => (
               <div key={j} className="grid grid-cols-[4rem_1fr] gap-x-2">
                 <dt className="text-gray-400">{tr.direccion === "regreso" ? "Regreso" : "Ida"}</dt>
-                <dd className="min-w-0 break-words">{tr.origen} → {tr.destino}{tr.fecha ? ` · ${formatFechaLarga(tr.fecha)}` : ""}{tr.hora ? ` · salida ${tr.hora} (hora local)` : ""}</dd>
+                <dd className="min-w-0 break-words">{tr.origen} → {tr.destino}{tr.fecha ? ` · ${formatFechaLarga(tr.fecha)}` : ""}{formatHora24(tr.hora) ? ` · salida ${formatHora24(tr.hora)} (hora local)` : ""}</dd>
               </div>
             ))}
           </dl>
@@ -64,6 +65,7 @@ export function VuelosOpcion({ tiquetes }: { tiquetes?: TiqueteVuelo[] }) {
         </div>
       ))}
       <p className="text-[11px] text-gray-400">El valor de los vuelos ya está incluido en el total de esta opción.</p>
+      <AvisoItinerariosVuelos />
     </div>
   );
 }
@@ -163,12 +165,6 @@ export function TarifaPaqueteOpcion({ paquete, moneda, sufijo = "" }: { paquete:
       <p className="text-left text-[11px] leading-snug text-gray-400">{etiqueta} por pasajero{paquete.conAdicionales ? " (incluye vuelos y servicios)" : ""}{paquete.neto ? " · NETO" : ""}{sufijo}</p>
       {fila("Adultos", "por adulto", paquete.tarifaAdulto, paquete.adultos)}
       {fila("Niños", "por niño", paquete.tarifaNino, paquete.ninos)}
-      {paquete.ajusteCentavos > 0 && (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 text-xs text-gray-500" data-testid="tarifa-paquete-ajuste">
-          <span className="text-left">Ajuste de redondeo</span>
-          <span className="whitespace-nowrap text-right font-medium tabular-nums text-gray-700">+{formatoExacto(paquete.ajusteCentavos / 100, moneda)}</span>
-        </div>
-      )}
     </div>
   );
 }

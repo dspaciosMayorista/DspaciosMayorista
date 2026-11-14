@@ -4,6 +4,7 @@
 // «Total del contrato $0», porque la ruta pública renderizaba `ContratoDocumento` con ítems `{cantidad, tarifa_unit, valor}` que ese documento no entiende.
 // Aquí se renderizan los componentes REALES a HTML con el snapshot que guarda `crear_cotizacion_din` y se fija la corrección.
 import { test, describe } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 
@@ -50,7 +51,7 @@ describe("snapshot de la cotización de un paquete dinámico", () => {
 
 describe("render del enlace /cot/[token] con ítems manuales", () => {
   test("PREMISA: el documento del tarifario con estos ítems sí mostraba «$ NaN» (por eso existe la rama manual)", () => {
-    const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+    const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
       venta: detalle.venta as never, pasajeros: [], hoteles: [], vuelos: [], items: detalle.items as never, totalPagado: 0, esCotizacion: true, codigo: "C-0001",
     } as never));
     assert.match(html, /NaN/);
@@ -58,7 +59,7 @@ describe("render del enlace /cot/[token] con ítems manuales", () => {
 
   const html = renderToStaticMarkup(createElement(CotizacionManualDocumento, {
     codigo: "C-0001", venta: detalle.venta as never, items: itemsDeManual(detalle.items), cliente: {}, incluye: detalle.incluye ?? null, noIncluye: detalle.noIncluye ?? null,
-    vigenciaHasta: "2026-11-06", fechaEmision: String(detalle.venta.fecha_emision), agencia: null,
+    vigenciaHasta: "2026-11-06", fechaEmision: String(detalle.venta.fecha_emision), agencia: AGENCIA_PRUEBA,
   } as never));
 
   test("la rama manual muestra el total y el concepto, sin NaN y con «Total cotización» (no «Total del contrato $0»)", () => {

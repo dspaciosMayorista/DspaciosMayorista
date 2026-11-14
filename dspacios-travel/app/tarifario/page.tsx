@@ -8,6 +8,7 @@ import { completarDesdeHoteles88 } from "@/lib/programas/estanciaHotelDatos88";
 import { Logo } from "@/components/Logo";
 import { cargarResumenTarifario, MSG_ERROR_CARGAR_TARIFARIO } from "@/lib/tarifario/resumen";
 import { cargarHotelesBajoSolicitud } from "@/lib/tarifario/datosSolicitud";
+import { cargarTextosCategoria } from "@/lib/tarifario/textosCategoria";
 import { cargarHotelesBernaloDescubiertos, cargarInfoHotelesBernalo, cargarDescripcionPaquetesBernalo, cargarPrioridadesRecomendadosBernalo } from "@/lib/tarifario/datosBernalo";
 import { idsPaqueteBernaloFaltantes, fusionarDescripcionPaquete } from "@/lib/tarifario/descripcionPaquete";
 import { orquestarCargaPublica } from "@/lib/tarifario/orquestacion";
@@ -175,6 +176,8 @@ export default async function TarifarioPublicoPage({ searchParams }: { searchPar
   // corrían en serie (`await` uno, luego `await` el otro), pagando dos
   // round-trips secuenciales sin necesidad.
   const hotelIdsBernalo = [...new Set(hotelesBernalo.map((h) => h.hotelId))];
+  // #45 (303): textos por categoría de cada hotel. Arranca ya (en paralelo con lo de abajo) y se espera antes de pintar; decorativo.
+  const textosCategoriaPromise = cargarTextosCategoria([...Object.keys(infoPorHotelLegacy).map(Number), ...hotelIdsBernalo]);
   const paqueteIdsBernaloFaltantes = idsPaqueteBernaloFaltantes(hotelesBernalo, descripcionPorPaqueteLegacy);
   // Hoteles recomendados (migración 183) — prioridades de paquetes UNIDAD
   // (ver la cabecera de `cargarPrioridadesRecomendadosBernalo`). Se LANZA
@@ -222,6 +225,10 @@ export default async function TarifarioPublicoPage({ searchParams }: { searchPar
   const fotosPorHotel = { ...fotosPorHotelLegacy, ...resultadoInfoBernalo.fotosPorHotel };
   const galeriaPorHotel = { ...galeriaPorHotelLegacy, ...resultadoInfoBernalo.galeriaPorHotel };
   const infoPorHotel = { ...infoPorHotelLegacy, ...resultadoInfoBernalo.infoPorHotel };
+  const resultadoTextosCategoria = await textosCategoriaPromise;
+  if (resultadoTextosCategoria.error) {
+    registrarErrorTecnico(FLUJO, flujoId, "datos_auxiliares_pagina", "error_textos_categoria_hotel", resultadoTextosCategoria.error);
+  }
 
   // Best-effort (mismo criterio que fotos/info arriba): un fallo acá deja
   // esos paquetes sin Incluye/No incluye — nunca toca precio ni
@@ -317,7 +324,7 @@ export default async function TarifarioPublicoPage({ searchParams }: { searchPar
         {!dinamicos.length && !filasVisibles.length && !programas.length && !hotelesBernalo.length && !hotelesSolicitud.length ? (
           <p className="py-20 text-center text-gray-400">Tarifario en preparación.</p>
         ) : (
-          <TarifarioPublic filas={filasVisibles} programas={programas} dinamicos={dinamicos} evaluarDinamico={evaluarSeleccionDin} vistaInicial={sp.vista === "dinamicos" ? "dinamicos" : undefined} dinAbierto={typeof sp.din === "string" && /^\d+:(\d+|x)$/.test(sp.din) ? sp.din : null} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} />
+          <TarifarioPublic filas={filasVisibles} programas={programas} dinamicos={dinamicos} evaluarDinamico={evaluarSeleccionDin} vistaInicial={sp.vista === "dinamicos" ? "dinamicos" : undefined} dinAbierto={typeof sp.din === "string" && /^\d+:(\d+|x)$/.test(sp.din) ? sp.din : null} puedeReservar={puedeReservar}cuposPorBloqueo={cuposPorBloqueo} origenPorBloqueo={origenPorBloqueo} origenPorSalida={origenPorSalida} fotosPorHotel={fotosPorHotel} galeriaPorHotel={galeriaPorHotel} fotosPorServicio={fotosPorServicio} ventanaPorPaquete={ventanaPorPaquete} infoPorHotel={infoPorHotel} planesInfo={planesInfo} capPorHotel={capPorHotel} descripcionPorPaquete={descripcionPorPaquete} filasAddon={filasAddon} hotelesBernalo={hotelesBernalo} hotelesSolicitud={hotelesSolicitud} hotelIdsUnidadAutoritativos={hotelIdsUnidadAutoritativos} prioridadesRecomendados={prioridadesRecomendadasCombinadas} condicionPorOferta={condicionPorOferta} politicaPorOferta={politicaPorOferta} restriccionPorPaquete={restriccionPorPaquete} textosCategoria={resultadoTextosCategoria.textos} />
         )}
       </main>
     </div>

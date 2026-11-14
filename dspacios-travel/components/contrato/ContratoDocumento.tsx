@@ -1,4 +1,5 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
+import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
 import { ETIQUETA_AJUSTE_CLIENTE, esLineaAjusteRedondeo } from "@/lib/reservar/solicitudHotel";
 import { EstanciaContratoBloque, type EstanciaContratoVista } from "@/components/contrato/EstanciaContratoBloque";
 import {
@@ -11,7 +12,8 @@ import {
   COPYRIGHT_PREFIJO,
   POWERED_BY,
 } from "@/lib/contrato/plantilla";
-import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, formatHora24, calcularEdad } from "@/lib/utils";
+import { AvisoItinerariosVuelos } from "@/components/cotizacion/AvisoItinerariosVuelos";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tarifaPaquete, vincularAdicionales, type SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
@@ -31,6 +33,10 @@ import type { CondicionesContratoResueltas } from "@/lib/contrato/condicionesCon
 import { nombreQuienElabora } from "@/lib/cotizacion/identidadB2B";
 import { esLineaVueloManual, esTramoVueloManual, notaVueloManual } from "@/lib/cart/servicioManual";
 import { formatoExacto, repartoPorPersona } from "@/lib/contrato/repartoTarifa";
+import { resumenAplicable } from "@/lib/cotizacion/resumenPrecios";
+import { ResumenPreciosCliente } from "@/components/contrato/ResumenPreciosCliente";
+import { ServiciosIncluidos } from "@/components/contrato/ServiciosIncluidos";
+import { serviciosDeDocumento } from "@/lib/contrato/serviciosDocumento";
 
 // Incluye / No incluye guardado como texto (una línea por ítem) → viñetas. Mismo criterio que `lineasTexto` de la comparativa.
 const lineasTextoDoc = (t?: string | null) => (t || "").split(/\r?\n|·|;/).map((x) => x.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
@@ -95,8 +101,8 @@ type Props = {
   codigo?: string;
   vigenciaHasta?: string | null;
   // Identidad fiscal de la agencia dueña del contrato (tabla `agencias`,
-  // una fila por tenant). Si no se pasa (páginas viejas sin actualizar),
-  // cae a la EMPRESA fija (mayorista) — ver abajo.
+  // una fila por tenant). OBLIGATORIA en la práctica (#49): sin fila o sin
+  // razón social/NIT/RNT el documento falla; no hay fallback a `EMPRESA`.
   agencia?: Agencia | null;
   // Condiciones PERMANENTES del contrato (migración 164, Commit 6), YA
   // resueltas por `lib/contrato/condicionesContrato.ts` — el MISMO resolver
@@ -125,6 +131,8 @@ type Props = {
   tituloPaquete?: string | null;
   /** Resumen del snapshot congelado de la cotización (cobertura de cada adicional y su NETO), derivado en el servidor con `snapshotPaqueteDePayload`. Sin él no se reparte. */
   paqueteSnapshot?: SnapshotPaquete | null;
+  /** #94/#52: resumen de precios congelado al cotizar (JSON guardado). Solo se usa si coincide con el acuerdo vigente del documento; si no, el documento sigue como antes. */
+  resumenPrecios?: unknown;
 };
 
 // Marca por tenant: mayorista mantiene los colores/logo de siempre;
@@ -198,6 +206,7 @@ export function ContratoDocumento({
   noIncluye = null,
   tituloPaquete = null,
   paqueteSnapshot = null,
+  resumenPrecios = null,
 }: Props) {
   const lineasIncluye = lineasTextoDoc(incluye);
   const lineasNoIncluye = lineasTextoDoc(noIncluye);
@@ -245,9 +254,14 @@ export function ContratoDocumento({
   // El vuelo y los servicios adicionales entran en las tarifas de esa fila (repartidos entre los pasajeros que cubren), no en una segunda tabla de importes.
   // Una línea de precio total que NO es de un hotel Bernalo: los servicios incluidos por grupo de un hotel normal. Esa línea no impide el ítem único (se reparte, o se muestra el total).
   const lineasGrupo = alojItemsTotal.filter(esLineaGrupoIncluido);
-  const unificarPaquete = esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
+  // #94: con un resumen aplicable el cliente ve grupos de pasajeros (precio completo por persona y subtotal) y ningún importe por servicio.
+  const resumen = resumenAplicable(resumenPrecios, { modalidad: esNeto ? "neto" : "pvp", moneda, totalCentavos: Math.round(total * 100) });
+  const unificarPaquete = !resumen && esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
   const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
   const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
+  // Cotización normal con reparto por pasajero: el Ítem es el texto editado o, por unidad, «Paquete Turístico {nombre comercial}» (#52; sin nombre, el destino).
+  // Nunca el hotel, la categoría ni los servicios: categoría y régimen siguen en «Servicio / Plan».
+  const tituloEditadoResumen = tituloPaqueteEditado(tituloPaquete);
   // Cada línea adicional se vincula con el snapshot congelado (a cuántos pasajeros cubre y, en NETO, su parte del plan B2B). Sin vínculo seguro NO se infiere nada
   // (ni de «venta.pax» ni del texto de la línea): se muestra el total agregado y se explica.
   const adLineas = unificarPaquete ? [...lineasVuelo, ...servicioItems] : [];
@@ -285,19 +299,20 @@ export function ContratoDocumento({
   const MARCA = MARCA_POR_TENANT[tenant];
   const PRIMARY = MARCA.primary;
   const TITULO = MARCA.titulo;
-  // Identidad fiscal: la de `agencias` (tenant real) si llegó por prop; si no,
-  // la constante fija de siempre (documentos viejos sin actualizar a esta prop).
+  // Identidad fiscal (#49): SOLO la fila `agencias` del tenant del contrato. Sin fallback a `EMPRESA` (es la identidad de MINORISTA): fila ausente o
+  // razón social/NIT/RNT vacíos → error explícito, el documento no se genera. Correo y cuenta son opcionales y se omiten si faltan.
+  const idAgencia = identidadAgencia(agencia, tenant);
   const empresa = {
-    razonSocial: agencia?.razon_social ?? EMPRESA.razonSocial,
-    nit: agencia?.nit ?? EMPRESA.nit,
-    rnt: agencia?.rnt ?? EMPRESA.rnt,
+    razonSocial: idAgencia.razonSocial,
+    nit: idAgencia.nit,
+    rnt: idAgencia.rnt,
     sitio: EMPRESA.sitio,
-    correo: agencia?.correo ?? EMPRESA.correo,
+    correo: idAgencia.correo,
     cuentaBancaria: {
-      banco: agencia?.banco ?? EMPRESA.cuentaBancaria.banco,
-      tipo: agencia?.tipo_cuenta ?? EMPRESA.cuentaBancaria.tipo,
-      numero: agencia?.numero_cuenta ?? EMPRESA.cuentaBancaria.numero,
-      titular: agencia?.razon_social ?? EMPRESA.cuentaBancaria.titular,
+      banco: idAgencia.banco,
+      tipo: idAgencia.tipoCuenta,
+      numero: idAgencia.numeroCuenta,
+      titular: idAgencia.razonSocial,
     },
   };
 
@@ -359,7 +374,7 @@ export function ContratoDocumento({
         </div>
         <div className="text-right text-xs opacity-90">
           <div>{empresa.sitio}</div>
-          <div>{empresa.correo}</div>
+          {empresa.correo && <div>{empresa.correo}</div>}
           <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
@@ -475,13 +490,13 @@ export function ContratoDocumento({
                       <div className="mt-1 text-xs text-gray-500">
                         Ida: {formatFechaLarga(v.fecha_salida)}
                         {mostrarHorario && v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
-                        {mostrarHorario && v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
+                        {mostrarHorario && formatHora24(v.hora_salida_ida) ? ` · ${formatHora24(v.hora_salida_ida)}${formatHora24(v.hora_llegada_ida) ? `–${formatHora24(v.hora_llegada_ida)}` : ""}` : ""}
                       </div>
                       {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
                         <div className="text-xs text-gray-500">
                           Regreso: {formatFechaLarga(v.fecha_regreso)}
                           {mostrarHorario && v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
-                          {mostrarHorario && v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                          {mostrarHorario && formatHora24(v.hora_salida_reg) ? ` · ${formatHora24(v.hora_salida_reg)}${formatHora24(v.hora_llegada_reg) ? `–${formatHora24(v.hora_llegada_reg)}` : ""}` : ""}
                         </div>
                       )}
                     </>
@@ -489,8 +504,8 @@ export function ContratoDocumento({
                     <div className="mt-1 text-xs text-gray-500">
                       {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
                       {mostrarHorario && v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
-                      {mostrarHorario && v.hora_salida
-                        ? (manual ? ` · salida ${v.hora_salida} (hora local)` : ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}`)
+                      {mostrarHorario && formatHora24(v.hora_salida)
+                        ? (manual ? ` · salida ${formatHora24(v.hora_salida)} (hora local)` : ` · ${formatHora24(v.hora_salida)}${formatHora24(v.hora_llegada) ? `–${formatHora24(v.hora_llegada)}` : ""}`)
                         : ""}
                     </div>
                   )}
@@ -503,6 +518,8 @@ export function ContratoDocumento({
                 {avisosVuelosManuales.map((a) => `Vuelos sin reserva confirmada: ${a}.`).join(" ")}
               </p>
             )}
+            {/* Una sola vez al pie de la sección y solo en cotización (el contrato no muestra horarios). */}
+            {esCotizacion && <AvisoItinerariosVuelos />}
           </section>
         )}
 
@@ -694,7 +711,8 @@ export function ContratoDocumento({
               $0) parecía un dato real y no lo es. Se separa en una fila
               agregada limpia — el detalle por habitación va aparte, debajo
               (sección "Detalle por habitación", regla F.32-34). */}
-          {alojItemsTotal.length > 0 && !filaPaquete && (
+          {resumen && <ResumenPreciosCliente resumen={resumen} tituloEditado={tituloEditadoResumen} destino={ventaTexto.destino ?? null} />}
+          {alojItemsTotal.length > 0 && !filaPaquete && !resumen && (
             <div className="mb-3 space-y-2">
               {alojItemsTotal.map((it) => (
                 <div key={it.id} className="flex break-inside-avoid items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-xs">
@@ -742,12 +760,8 @@ export function ContratoDocumento({
               {/* Teléfono: una tarjeta con etiqueta y cifra en su propia fila (seis columnas no caben en 390 px). Desde sm y al imprimir: la tabla de siempre. */}
               <dl className="space-y-1 rounded-lg border border-gray-200 p-3 text-xs sm:hidden print:hidden" data-testid="paquete-movil">
                 <dt className="font-semibold text-gray-800">{tituloPaqueteDoc}</dt>
-                {filaPaquete.adultos > 0 && (
-                  <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Adultos ({filaPaquete.adultos}){filaPaquete.tarifa.ok ? " · tarifa por adulto" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda)}</dd>}</div>
-                )}
-                {filaPaquete.ninos > 0 && (
-                  <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>
-                )}
+                {filaPaquete.adultos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Adultos ({filaPaquete.adultos}){filaPaquete.tarifa.ok ? " · tarifa por adulto" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda)}</dd>}</div>}
+                {filaPaquete.ninos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>}
                 <div className="flex items-baseline justify-between gap-3 border-t border-gray-100 pt-1 font-medium"><dd>Total del paquete{esNeto ? " NETO" : ""}</dd><dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</dd></div>
               </dl>
               <div className="hidden overflow-x-auto sm:block print:block">
@@ -778,11 +792,6 @@ export function ContratoDocumento({
                 </tbody>
               </table>
               </div>
-              {filaPaquete.tarifa.ok && filaPaquete.tarifa.ajusteCentavos > 0 && (
-                <p className="mt-1 text-[11px] text-gray-600" data-testid="ajuste-redondeo">
-                  Ajuste de redondeo: +{formatoNetoDocumento(filaPaquete.tarifa.ajusteCentavos / 100, moneda)} (ya incluido en el valor total).
-                </p>
-              )}
               {filaPaquete.adicionales.length > 0 && (
                 <p className="mt-1 text-[11px] text-gray-500" data-testid="nota-paquete">
                   {filaPaquete.tarifa.ok
@@ -793,7 +802,7 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {alojItemsPorPersona.length > 0 && !filaPaquete && (
+          {alojItemsPorPersona.length > 0 && !filaPaquete && !resumen && (
             <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-collapse text-xs">
               <thead className="break-inside-avoid break-after-avoid">
@@ -887,7 +896,11 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {servicioItems.length > 0 && (
+          {/* Con el importe ya repartido en las tarifas por pasajero (resumen o fila de paquete) los servicios se explican SIN precio: qué incluyen, cuándo y a quién cubren. */}
+          {servicioItems.length > 0 && (resumen || filaPaquete) && (
+            <ServiciosIncluidos servicios={serviciosDeDocumento(servicioItems, resumen, (venta as { pax?: number | null }).pax ?? null, (l) => vinculoPorId.get(l.id)?.pax ?? null)} color={TITULO} />
+          )}
+          {servicioItems.length > 0 && !resumen && !filaPaquete && (
             <div className="mt-3 overflow-x-auto">
               <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Servicios adicionales</p>
               <table className="w-full min-w-[300px] border-collapse text-xs">
@@ -1047,11 +1060,15 @@ export function ContratoDocumento({
 
           <div className="mt-6 rounded-lg bg-gray-50 p-3 text-[11px]">
             <div className="font-semibold text-gray-700">Datos de pago</div>
-            <div>
-              {empresa.cuentaBancaria.banco} — {empresa.cuentaBancaria.tipo}{" "}
-              {empresa.cuentaBancaria.numero}
-            </div>
-            <div>A nombre de {empresa.cuentaBancaria.titular}</div>
+            {empresa.cuentaBancaria.numero && (
+              <>
+                <div>
+                  {[empresa.cuentaBancaria.banco, empresa.cuentaBancaria.tipo].filter(Boolean).join(" — ")}{" "}
+                  {empresa.cuentaBancaria.numero}
+                </div>
+                <div>A nombre de {empresa.cuentaBancaria.titular}</div>
+              </>
+            )}
             <div className="mt-1">
               {empresa.razonSocial} · NIT {empresa.nit} · RNT {empresa.rnt}
             </div>

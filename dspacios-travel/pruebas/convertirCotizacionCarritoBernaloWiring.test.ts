@@ -186,8 +186,8 @@ describe("convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo",
   test("regla C.12: ventas.precio_venta se arma sumando validadosPersona + validadosBernalo + tours (precioTotal)", () => {
     assert.match(codigo, /const precioTotal = validadosPersona\.reduce\(\(s, v\) => s \+ v\.comp\.precioVenta, 0\)/);
     assert.match(codigo, /validadosBernalo\.reduce\(\(s, v\) => s \+ v\.resultado\.precioVenta, 0\)/);
-    // #102: en una venta B2B asistida lo exigible es el del plan del contrato (PVP, o PVP − comisión en NETO); sin plan es EXACTAMENTE `precioTotal`.
-    assert.match(codigo, /const precioExigibleGrupo = planGrupoB2B \? planGrupoB2B\.precioFinal : precioTotal;/);
+    // #102: en una venta B2B asistida lo exigible es el del plan del contrato (PVP, o PVP − comisión en NETO); sin plan es `precioTotal` (+ el recobro del contrato, #14-A: 0 sin recobro).
+    assert.match(codigo, /const precioExigibleGrupo = planGrupoB2B \? planGrupoB2B\.precioFinal : precioTotal \+ \(recobroGrupo\?\.total \?\? 0\);/);
     assert.match(codigo, /precio_venta: precioExigibleGrupo,/);
   });
 

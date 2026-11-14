@@ -673,12 +673,12 @@ describe("app/tarifario/checkout/page.tsx — envía ítems Bernalo y maneja pre
     assert.match(codigoPage, /modeloTarifario: "unidad" as const,/);
   });
 
-  test('detecta la variante precio_actualizado (discriminada por "tipo" in r) y actualiza el carrito vía actualizarPrecioBernalo — nunca acepta el resultado como éxito', () => {
-    assert.match(codigoPage, /else if \("tipo" in r\)/);
+  test('detecta la variante precio_actualizado (discriminada por "tipo" in r y r.tipo === "precio_actualizado": hay otra variante con tipo, envio_duplicado) y actualiza el carrito vía actualizarPrecioBernalo — nunca acepta el resultado como éxito', () => {
+    assert.match(codigoPage, /else if \("tipo" in r && r\.tipo === "precio_actualizado"\)/);
     assert.match(codigoPage, /actualizarPrecioBernalo\(item\.id, r\.pvp, r\.moneda\)/);
     // El branch de éxito (`setRes`/`clear()`) solo se alcanza en `r.ok` — el
     // branch de precio_actualizado nunca llama a `clear()` ni a `setRes`.
-    const idxBranch = codigoPage.indexOf('else if ("tipo" in r)');
+    const idxBranch = codigoPage.indexOf('else if ("tipo" in r && r.tipo === "precio_actualizado")');
     const bloque = codigoPage.slice(idxBranch, idxBranch + 400);
     assert.doesNotMatch(bloque, /setRes\(|clear\(\)/);
   });
@@ -694,7 +694,7 @@ describe("app/tarifario/checkout/page.tsx — envía ítems Bernalo y maneja pre
   });
 
   test("cierre #1: correlaciona el precio_actualizado por itemId (r.itemId) — nunca por paqueteId+hotelId", () => {
-    const idxBranch = codigoPage.indexOf('else if ("tipo" in r)');
+    const idxBranch = codigoPage.indexOf('else if ("tipo" in r && r.tipo === "precio_actualizado")');
     const bloque = codigoPage.slice(idxBranch, idxBranch + 400);
     assert.match(bloque, /bernaloItems\.find\(\(i\) => i\.id === r\.itemId\)/);
     assert.doesNotMatch(bloque, /i\.paqueteId === r\.paqueteId && i\.hotelId === r\.hotelId/);

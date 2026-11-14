@@ -112,10 +112,12 @@ for (const [nombre, ruta] of RUTAS) {
       await assert.rejects(async () => { html(await ruta()); }, /RNT/);
     });
 
-    test("Mayorista · tabla sin sembrar (fila ausente): conserva la constante histórica de Mayorista", async () => {
-      estado.tenant = "mayorista"; estado.escenario = "ausente";
-      assert.match(html(await ruta()), new RegExp(`RNT ${EMPRESA.rnt}`));
-    });
+    for (const escenario of ["ausente", "sin_rnt"] as const) {
+      test(`#49 Mayorista · ${escenario}: falla explícita; no hereda la constante EMPRESA (identidad de Minorista)`, async () => {
+        estado.tenant = "mayorista"; estado.escenario = escenario;
+        await assert.rejects(async () => { html(await ruta()); }, /RNT/);
+      });
+    }
 
     test("Mayorista · dato válido: el de su agencia", async () => {
       estado.tenant = "mayorista";

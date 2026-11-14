@@ -15,6 +15,7 @@
 // Depende de la entrega A (documento NETO: lib/contrato/presentacionValores.ts,
 // netoContrato.server.ts; lib/finanzas/netoB2B.ts).
 import { usarBD, type Fila } from "./support/fechaNegocioArnes.ts";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
@@ -256,7 +257,7 @@ test("documento: total y saldo del total exigible; ni el PVP ni la comisión apa
   const { bd, numero, v } = await contratoNeto();
   const neto = await netoTotalExigibleDeContrato(numero);
   assert.equal(neto, 1_840_000);
-  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
     venta: v, pasajeros: [], hoteles: [], vuelos: [], items: bd.filas("contrato_items"), totalPagado: 0, netoTotalExigible: neto,
   } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
   assert.ok(html.includes(`Total del contrato ${$(1_840_000)}`));

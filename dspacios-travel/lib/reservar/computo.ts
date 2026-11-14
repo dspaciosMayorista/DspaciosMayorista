@@ -1383,7 +1383,10 @@ export async function computarReserva(
       paxConSilla,
     });
   } else if (!esServicios) {
-    const { data: pqImp } = await leerCompartida(lecturas, `sb:armado_paquetes:impuesto_fijo:${input.paqueteId}`, () => sb
+    // El BNC es un dato de LIQUIDACIÓN del servidor, no algo que la sesión deba poder leer: un aliado B2B logueado no lee `armado_paquetes` (RLS) y con su sesión el impuesto salía 0 en silencio,
+    // lo que inflaba su base comisionable y hacía que la conversión (hecha por el personal, con impuesto real) rechazara el plan congelado. Se lee con la llave de servicio; sin ella, con la sesión.
+    const lectorImpuesto = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb; // identidad:n/a — lectura de configuración de liquidación; no escribe tablas de contrato
+    const { data: pqImp } = await leerCompartida(lecturas, `srv:armado_paquetes:impuesto_fijo:${input.paqueteId}`, () => lectorImpuesto
       .from("armado_paquetes")
       .select("impuesto_fijo")
       .eq("id", input.paqueteId)

@@ -16,7 +16,13 @@ export type ParteTarifa = { tarifa: number; cantidad: number };
 export type AdicionalPaquete = { nombre: string; centavos: number; pax: number | null };
 
 export type TarifaPaquete =
-  | { ok: true; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number; ajusteCentavos: number; totalCentavos: number; conAdicionales: boolean; neto: boolean }
+  | {
+    ok: true; adultos: number; ninos: number;
+    /** Tarifa por persona de cada clase con su PRECISIÓN DE CÁLCULO (unidades de moneda, puede traer fracción de centavo): base ÷ personas de la clase + parte exacta de los adicionales. */
+    tarifaAdulto: number; tarifaNino: number;
+    /** Heredado: siempre 0 (no hay línea de ajuste: solo el total se redondea, y ya viene redondeado). */
+    ajusteCentavos: number; totalCentavos: number; conAdicionales: boolean; neto: boolean;
+  }
   | { ok: false; adultos: number; ninos: number; totalCentavos: number; motivo: string; neto: boolean };
 
 /** Pro rata por mayor fracción (desempate por posición): los repartos suman EXACTAMENTE `total`. */
@@ -53,14 +59,10 @@ export function tarifaPaquete(e: {
       ? `no se pudo verificar cuántos pasajeros cubre ${parcial.nombre}`
       : `${parcial.nombre} cubre ${parcial.pax} de los ${n} pasajeros`);
   }
-  // UNA tarifa por clase (todos los adultos pagan lo mismo; todos los niños, lo mismo): la parte entera en centavos de su base + su parte del adicional.
-  // Lo que no se reparte en centavos exactos (menos de un centavo por persona) NO se esconde: sale como «ajuste de redondeo» explícito, de modo que
-  // adultos × tarifa + niños × tarifa + ajuste = total, siempre al centavo.
-  const pisoAdic = Math.floor(sumaAdic / n);
-  const pisoA = adultos > 0 ? Math.floor(e.baseAdultoCentavos / adultos) + pisoAdic : 0;
-  const pisoN = ninos > 0 ? Math.floor(e.baseNinoCentavos / ninos) + pisoAdic : 0;
-  const ajusteCentavos = totalCentavos - adultos * pisoA - ninos * pisoN;
-  return { ok: true, adultos, ninos, tarifaAdulto: pisoA / 100, tarifaNino: pisoN / 100, ajusteCentavos, totalCentavos, conAdicionales: e.adicionales.length > 0, neto };
+  // La tarifa de cada clase conserva su precisión de cálculo (base de la clase ÷ personas + parte exacta de los adicionales); NO se reparte ningún residuo entre pasajeros ni se inventa un múltiplo de
+  // redondeo. El total es el exacto del paquete (ya redondeado por la regla monetaria vigente en su origen): cantidad × tarifa puede diferir de él en fracciones de centavo, y no hay línea de ajuste.
+  const exacta = (base: number, personas: number) => (personas > 0 ? (base / personas + sumaAdic / n) / 100 : 0);
+  return { ok: true, adultos, ninos, tarifaAdulto: exacta(e.baseAdultoCentavos, adultos), tarifaNino: exacta(e.baseNinoCentavos, ninos), ajusteCentavos: 0, totalCentavos, conAdicionales: e.adicionales.length > 0, neto };
 }
 
 // ── Opción de una comparativa de carrito ──

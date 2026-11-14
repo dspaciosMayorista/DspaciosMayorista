@@ -75,8 +75,11 @@ function Hotel({ nombre, c, totalCotizacion }: { nombre: string | null; c: Compo
   );
 }
 
+const ROTULO_SERVICIO = { tour: "Servicio / tour", vuelo: "Vuelo (manual)", otro: "Servicio (manual)" } as const;
+
 // Composición del precio tal como se guardó al cotizar (privada: lleva netas y markup). Solo se monta para roles con acceso a costos.
-export function ComposicionPrecio({ guardada, totalCotizacion }: { guardada: ComposicionCotizacion | null; totalCotizacion: number | null }) {
+// Concilia TODOS los componentes: composición de cada hotel + servicios del carrito (se cobran fuera del hotel) = total de la cotización.
+export function ComposicionPrecio({ guardada, totalCotizacion, recobro = 0 }: { guardada: ComposicionCotizacion | null; totalCotizacion: number | null; /** #14-A: recobro del carrito. Va DENTRO de la tarifa de adulto y no tiene componente propio: se suma aquí para que la conciliación cuadre con el precio (vista interna, solo roles con acceso a costos). */ recobro?: number }) {
   if (!guardada) {
     return (
       <p className="mt-6 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm text-gray-500" data-testid="composicion-no-conservada">
@@ -84,13 +87,60 @@ export function ComposicionPrecio({ guardada, totalCotizacion }: { guardada: Com
       </p>
     );
   }
+  const servicios = guardada.servicios ?? [];
+  const m = guardada.hoteles[0].composicion.moneda;
+  const sumaHoteles = guardada.hoteles.reduce((t, h) => t + h.composicion.total, 0);
+  const sumaServicios = servicios.reduce((t, x) => t + x.total, 0);
+  const suma = Math.round((sumaHoteles + sumaServicios + recobro) * 100) / 100;
+  const mezcla = servicios.some((x) => x.moneda !== m);
+  // Total contra el que se concilia: el de la cotización viva si llega; si no, el que se guardó junto a la composición.
+  const total = totalCotizacion ?? guardada.total ?? null;
+  const difiere = total != null && Math.abs(total - suma) > 0.01;
   return (
     <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5" data-testid="composicion-precio">
       <h2 className="text-sm font-semibold text-gray-700">Composición del precio (guardada al cotizar)</h2>
       <p className="mt-1 text-xs text-gray-500">Importes que produjo el motor en ese momento, sin recalcular. Netos y markup: solo roles con acceso a costos.</p>
       {guardada.hoteles.map((h, i) => (
-        <Hotel key={`${h.ref ?? "h"}-${i}`} nombre={guardada.hoteles.length > 1 ? h.nombre : null} c={h.composicion} totalCotizacion={guardada.hoteles.length === 1 ? totalCotizacion : null} />
+        <Hotel key={`${h.ref ?? "h"}-${i}`} nombre={guardada.hoteles.length > 1 || servicios.length > 0 ? h.nombre : null} c={h.composicion} totalCotizacion={null} />
       ))}
+      {servicios.length > 0 && (
+        <div className="mt-3 rounded-lg border border-gray-100" data-testid="composicion-servicios">
+          <div className="border-b border-gray-100 px-4 py-2 text-sm font-medium text-gray-700">Servicios del carrito (se cobran fuera de la composición del hotel)</div>
+          <ResponsiveTableShell minWidth={560} className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead><tr className="bg-gray-50 text-left text-xs uppercase text-gray-400">
+                <th className="px-4 py-2">Servicio</th><th className="px-4 py-2">Clase</th><th className="px-4 py-2 text-right">Neto</th><th className="px-4 py-2 text-right">Pax</th><th className="px-4 py-2 text-right">Venta total</th>
+              </tr></thead>
+              <tbody>
+                {servicios.map((x, i) => (
+                  <tr key={i} className="border-t border-gray-100 text-gray-700" data-testid="composicion-servicio">
+                    <td className="px-4 py-2">{x.nombre}</td>
+                    <td className="px-4 py-2 text-gray-500">{ROTULO_SERVICIO[x.tipo]}</td>
+                    <td className="px-4 py-2 text-right text-gray-400">—</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{x.pax ?? "—"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{formatMoneda(x.total, x.moneda)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ResponsiveTableShell>
+          <p className="border-t border-gray-100 px-4 py-2 text-xs text-gray-500">Neto no conservado: el servicio se cotizó con su precio de venta (el manual lo declara el asesor); no se deduce ni se recalcula con tarifas actuales.</p>
+        </div>
+      )}
+      <div className="mt-3 space-y-1 rounded-lg bg-gray-50 px-4 py-3 text-xs text-gray-600" data-testid="composicion-concilia">
+        <p>
+          {guardada.hoteles.length > 1 ? "Hoteles" : "Hotel"} {formatMoneda(sumaHoteles, m)}{servicios.length > 0 && <> + servicios del carrito {formatMoneda(sumaServicios, m)}</>}{recobro > 0 && <> + recobro (dentro de la tarifa de adulto) {formatMoneda(recobro, m)}</>} = <b>{formatMoneda(suma, m)}</b>
+          {total != null && <> · precio de la cotización {formatMoneda(total, m)}</>}
+        </p>
+        {mezcla && <p className="text-amber-700" data-testid="composicion-monedas">Hay servicios en una moneda distinta de la del hotel: la suma no es comparable.</p>}
+        {difiere && !mezcla && (
+          <p className="text-amber-700" data-testid="composicion-difiere">
+            El total de la composición ({formatMoneda(suma, m)}) difiere del precio de la cotización ({formatMoneda(total!, m)}).
+            {guardada.servicios === undefined && " Esta cotización se guardó antes de conservar los servicios del carrito: su composición solo incluye el hotel."}
+          </p>
+        )}
+        {!difiere && total != null && !mezcla && <p className="text-emerald-700" data-testid="composicion-cuadra">La composición cuadra con el precio de la cotización.</p>}
+      </div>
     </div>
   );
 }
