@@ -8,7 +8,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/DateInput";
-import { asignarContratoManual, editarContratoManual, quitarContratoManual, retirarCupo } from "../actions";
+import { asignarContratoManual, editarContratoManual, quitarContratoManual, retirarCupo, resolverContratoManual } from "../actions";
+import { identidadDe, unirIdentidades, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { nuevaOperacionId } from "@/lib/vuelos/operaciones";
 
 // Celda "Contrato" de la silla. Maneja los tres casos:
@@ -17,9 +18,19 @@ import { nuevaOperacionId } from "@/lib/vuelos/operaciones";
 //    (si el pasajero se queda, quitar pide el plazo: queda retenido en plazo)
 //  · sin contrato y vendible → asignar contrato manual, incluso con pasajero
 //  · libre de verdad → también retirar cupo
+// Asignar/editar una referencia manual es «resolver y confirmar» (#75): primero se verifica la referencia (acción de solo lectura) y se muestra a qué
+// contrato apunta; el uid confirmado viaja con el envío definitivo. Si el contrato cambia entre la confirmación y el envío, la base rechaza.
+type Confirmacion = { ref: string; ident: IdentidadContrato; texto: string };
+async function verificarReferencia(ref: string): Promise<{ ok: true; conf: Confirmacion } | { ok: false; error: string }> {
+  const r = await resolverContratoManual(ref);
+  if (!r.ok) return r;
+  if (r.externa) return { ok: true, conf: { ref, ident: {}, texto: "Referencia externa: no corresponde a un contrato del sistema." } };
+  return { ok: true, conf: { ref, ident: identidadDe(r.numero, r.uid), texto: `Contrato ${r.numero}${r.cliente ? ` · ${r.cliente}` : ""}` } };
+}
+
 export function SillaContrato({
   sillaId, bloqueoId, numeroContrato, contratoManual, estado, libre, version, vencida = false,
-  pasajero = false, plazo = null, hoy = "",
+  pasajero = false, plazo = null, hoy = "", identidad,
 }: {
   sillaId: number;
   bloqueoId: number;
@@ -38,6 +49,8 @@ export function SillaContrato({
   plazo?: string | null;
   /** Día de negocio de Bogotá (AAAA-MM-DD): el plazo no puede ser anterior. */
   hoy?: string;
+  /** Identidad del contrato al que apunta la referencia manual actual, tal como la leyó la página ({} si no hay o es externa). Se reenvía sin recalcular. */
+  identidad: IdentidadContrato;
 }) {
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
@@ -50,6 +63,7 @@ export function SillaContrato({
   const [motivoRetiro, setMotivoRetiro] = useState("");
   const [opRetiro, setOpRetiro] = useState("");
   const [errRetiro, setErrRetiro] = useState("");
+  const [conf, setConf] = useState<Confirmacion | null>(null);
 
   // Orgánico: solo enlace (lo gestiona el flujo de ventas).
   if (numeroContrato !== null) {
@@ -58,12 +72,18 @@ export function SillaContrato({
 
   // Manual: mostrar + editar la referencia + quitar.
   if (contratoManual !== null) {
-    const cerrar = () => { setModoManual(null); setErr(""); };
+    const cerrar = () => { setModoManual(null); setErr(""); setConf(null); };
     const abrirEditar = () => { setErr(""); setRefEdit(contratoManual); setModoManual("editar"); };
     const abrirQuitar = () => { setErr(""); setPlazoQuitar(plazo && hoy && plazo >= hoy ? plazo : ""); setModoManual("quitar"); };
-    const guardarRef = () => start(async () => {
+    const verificarEdit = () => start(async () => {
       if (!refEdit.trim()) { setErr("Escribe el número de contrato manual."); return; }
-      const r = await editarContratoManual(sillaId, refEdit, bloqueoId, version);
+      const v = await verificarReferencia(refEdit);
+      if (v.ok) { setErr(""); setConf(v.conf); } else setErr(v.error);
+    });
+    const guardarRef = () => start(async () => {
+      if (!conf || conf.ref !== refEdit) return;
+      // Se declaran la identidad del contrato actual y la del nuevo destino.
+      const r = await editarContratoManual(sillaId, refEdit, bloqueoId, version, unirIdentidades(identidad, conf.ident));
       if (r.ok) cerrar(); else setErr(r.error);
     });
     const confirmarQuitar = () => start(async () => {
@@ -71,7 +91,7 @@ export function SillaContrato({
         if (!plazoQuitar) { setErr("Indica la fecha de plazo: el pasajero queda retenido en plazo."); return; }
         if (hoy && plazoQuitar < hoy) { setErr(`La fecha de plazo ya pasó; indica ${hoy} o una posterior.`); return; }
       }
-      const r = await quitarContratoManual(sillaId, bloqueoId, version, pasajero ? plazoQuitar : null);
+      const r = await quitarContratoManual(sillaId, bloqueoId, version, pasajero ? plazoQuitar : null, identidad);
       if (r.ok) cerrar(); else setErr(r.error);
     });
     return (
@@ -88,12 +108,15 @@ export function SillaContrato({
           )}
         </span>
         {modoManual === "editar" && (
-          <div className="flex items-center gap-1">
-            <input value={refEdit} onChange={(e) => setRefEdit(e.target.value)} aria-label="Nuevo número de contrato manual"
-              className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" autoFocus />
-            <button type="button" disabled={pending} onClick={guardarRef}
-              className="rounded px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</button>
-            <button type="button" aria-label="Cancelar" onClick={cerrar} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1">
+              <input value={refEdit} onChange={(e) => { setRefEdit(e.target.value); setConf(null); }} aria-label="Nuevo número de contrato manual"
+                className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" autoFocus />
+              <button type="button" disabled={pending} onClick={conf && conf.ref === refEdit ? guardarRef : verificarEdit}
+                className="rounded px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : conf && conf.ref === refEdit ? "Confirmar y guardar" : "Verificar"}</button>
+              <button type="button" aria-label="Cancelar" onClick={cerrar} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
+            </div>
+            {conf && conf.ref === refEdit && <span className="text-[10px] text-gray-600">{conf.texto}</span>}
           </div>
         )}
         {modoManual === "quitar" && (
@@ -147,13 +170,25 @@ export function SillaContrato({
           {libre && <button type="button" onClick={abrirRetiro} className="text-[11px] text-gray-400 hover:text-red-500">retirar cupo</button>}
         </div>
       ) : (
-        <div className="flex items-center gap-1">
-          <input value={num} onChange={(e) => setNum(e.target.value)} placeholder="N.º contrato"
-            className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" autoFocus />
-          <button type="button" disabled={pending}
-            onClick={() => start(async () => { const r = await asignarContratoManual(sillaId, num, bloqueoId, version); if (r.ok) { setAbierto(false); setNum(""); } else setErr(r.error); })}
-            className="rounded px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "OK"}</button>
-          <button type="button" aria-label="Cancelar" onClick={() => { setAbierto(false); setErr(""); }} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1">
+            <input value={num} onChange={(e) => { setNum(e.target.value); setConf(null); }} placeholder="N.º contrato"
+              className="w-28 rounded border border-gray-300 px-2 py-1 text-xs" autoFocus />
+            <button type="button" disabled={pending}
+              onClick={() => start(async () => {
+                if (!conf || conf.ref !== num) {
+                  if (!num.trim()) { setErr("Escribe el número de contrato manual."); return; }
+                  const v = await verificarReferencia(num);
+                  if (v.ok) { setErr(""); setConf(v.conf); } else setErr(v.error);
+                  return;
+                }
+                const r = await asignarContratoManual(sillaId, conf.ref, bloqueoId, version, conf.ident);
+                if (r.ok) { setAbierto(false); setNum(""); setConf(null); } else setErr(r.error);
+              })}
+              className="rounded px-2 py-1 text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : conf && conf.ref === num ? "Confirmar y asignar" : "Verificar"}</button>
+            <button type="button" aria-label="Cancelar" onClick={() => { setAbierto(false); setErr(""); setConf(null); }} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
+          </div>
+          {conf && conf.ref === num && <span className="text-[10px] text-gray-600">{conf.texto}</span>}
         </div>
       )}
       {err && <span className="text-[10px] text-red-600">{err}</span>}

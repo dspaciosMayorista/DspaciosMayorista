@@ -22,6 +22,8 @@ const ACCIONES = datos(`
   const reg = (n, a) => ${G}.llamadas.push([n, a]);
   export async function crearTemporada(...a) { reg('crearTemporada', a); return ${G}.resp('crearTemporada'); }
   export async function actualizarTemporada(...a) { reg('actualizarTemporada', a); return ${G}.resp('actualizarTemporada'); }
+  export async function guardarCombinacionPromocion(...a) { reg('guardarCombinacionPromocion', a); return ${G}.resp('guardarCombinacionPromocion'); }
+  export async function activarCambioPromocion(...a) { reg('activarCambioPromocion', a); return ${G}.resp('activarCambioPromocion'); }
   export async function eliminarTemporada(...a) { reg('eliminarTemporada', a); return { ok: true }; }
   export async function copiarTemporadasDesdeHotel(...a) { reg('copiarTemporadasDesdeHotel', a); return { ok: true, copiadas: 0 }; }
   export async function crearTarifa(...a) { reg('crearTarifa', a); return ${G}.resp('crearTarifa'); }
@@ -346,4 +348,33 @@ test("temporadas: crear, editar y cancelar conservan el flujo de siempre (USD ro
   assert.equal(h22.llamadas[0][1][0], 1);
   assert.equal((h22.llamadas[0][1][1] as { hotelId: number }).hotelId, 5);
   assert.equal((h22.llamadas[0][1][1] as { nombre: string }).nombre, "ALTA");
+});
+
+test("#43/#60 entrega 4: noche gratis — una NUEVA exige elegir la noche y los días; una existente se guarda con su promedio", async () => {
+  const ngHeredada = { ...T_PROMO, id: 9, nombre: "NG VIEJA", tipo: "promo_noche_gratis", descuento_valor: null, min_noches: 3 };
+  const r = await montar(props({ pestanaInicial: "temporadas", temporadas: [T_ALTA, ngHeredada] }));
+  const pt = panel(r, "temporadas");
+  assert.match(pt.textContent ?? "", /promedio \(anterior\)/);
+  // Existente: se guarda tal cual (sin elegir), sin reinterpretar.
+  await pulsar([...pt.querySelectorAll("li button")].filter((b) => b.textContent === "Editar")[1]);
+  assert.equal(pt.querySelector<HTMLSelectElement>("[data-promo-noche-gratis] select")!.selectedOptions[0].textContent, "Promedio (anterior)");
+  await pulsar(botonTexto(r, "Guardar cambios")!);
+  assert.equal(h22.llamadas.length, 1);
+  assert.equal((h22.llamadas[0][1][1] as { nocheGratisRegla: unknown }).nocheGratisRegla, null);
+  h22.llamadas.length = 0;
+  // ALTA pasa a noche gratis: cuenta como nueva ⇒ nada viene elegido y no se envía hasta elegir.
+  await pulsar([...pt.querySelectorAll("li button")].filter((b) => b.textContent === "Editar")[0]);
+  await elegir(etiquetaCampo(pt, "Tipo"), "promo_noche_gratis");
+  assert.equal(pt.querySelector<HTMLSelectElement>("[data-promo-noche-gratis] select")!.value, "");
+  await pulsar(botonTexto(r, "Guardar cambios")!);
+  assert.match(pt.textContent ?? "", /Elige qué noche se bonifica/);
+  await elegir(pt.querySelector<HTMLSelectElement>("[data-promo-noche-gratis] select")!, "mas_barata");
+  await pulsar(botonTexto(r, "Guardar cambios")!);
+  assert.match(pt.textContent ?? "", /Elige los días que se pueden bonificar/);
+  assert.equal(h22.llamadas.length, 0, "sin elección no hay solicitud");
+  await pulsar([...pt.querySelectorAll<HTMLInputElement>("[data-eleccion-dias='dias-bonifica'] input[type=radio]")][0]);
+  await pulsar(botonTexto(r, "Guardar cambios")!);
+  assert.equal(h22.llamadas.length, 1);
+  const enviado = h22.llamadas[0][1][1] as { tipo: string; nocheGratisRegla: string; diasPromo: unknown };
+  assert.deepEqual([enviado.tipo, enviado.nocheGratisRegla, enviado.diasPromo], ["promo_noche_gratis", "mas_barata", "todos"]);
 });

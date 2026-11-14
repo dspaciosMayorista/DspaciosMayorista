@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { actualizarAsesorContrato, actualizarPasajerosContrato, type PasajeroEdit } from "./editar-contrato-actions";
 import { filasIniciales } from "@/lib/reservar/pasajerosEdicion";
 import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
@@ -16,8 +17,9 @@ const TIPOS_DOC = ["CC", "TI", "CE", "PAS", "RC"];
 
 export function EditarAsesorPasajeros({
   numero, asesores, asesorActual, puedeAsesor, pasajeros, fechaSalida, pax, titularNombre,
-  puedeEditar = true,
+  puedeEditar = true, identidad,
 }: {
+  identidad: IdentidadContrato;
   numero: string;
   asesores: { nombre: string; email: string | null }[];
   asesorActual: string;
@@ -76,7 +78,7 @@ export function EditarAsesorPasajeros({
 
   function guardarAsesor() {
     setMsgA("");
-    start(async () => { const r = await actualizarAsesorContrato(numero, asesor); setMsgA(r.ok ? "✓ Guardado" : r.error); if (r.ok) router.refresh(); });
+    start(async () => { const r = await actualizarAsesorContrato(numero, asesor, identidad); setMsgA(r.ok ? "✓ Guardado" : r.error); if (r.ok) router.refresh(); });
   }
   function guardarPasajeros() {
     setMsgP("");
@@ -93,7 +95,7 @@ export function EditarAsesorPasajeros({
       const edad = calcularEdad(p.fechaNacimiento, fechaSalida);
       if (edad != null && edad < 18 && p.tipoId === "CC") { setMsgP(`Pasajero ${i + 1}: un menor no puede tener CC (usa RC o TI).`); return; }
     }
-    start(async () => { const r = await actualizarPasajerosContrato(numero, filas); if (r.ok) { setMsgP("✓ Pasajeros guardados"); router.refresh(); } else setMsgP(r.error); });
+    start(async () => { const r = await actualizarPasajerosContrato(numero, filas, identidad); if (r.ok) { setMsgP("✓ Pasajeros guardados"); router.refresh(); } else setMsgP(r.error); });
   }
 
   // Solo lectura (asesor consultando el contrato de un colega). No se muestra

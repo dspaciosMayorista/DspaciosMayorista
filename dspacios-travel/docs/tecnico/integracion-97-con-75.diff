@@ -1,0 +1,32 @@
+# Parche de integración #97 + #75 — SOLO aplica sobre el archivo YA FUSIONADO (cambios de #75 + de #97): app/(dashboard)/dashboard/contratos/actions.ts.
+# No se puede aplicar en la rama de #97 sola: allí revertirContratoManual/depsFinancieroManual no reciben la identidad (idc) todavía.
+# Tres llamadas de #97 siguen con la firma de 2/3 argumentos y no compilan tras fusionar. Verificado: con el parche, el árbol combinado compila (tsc = 0) y pasa el arnés.
+# ESTADO DE NACIMIENTO: ya NO hay conflicto ni línea que resolver. #97 usa la MISMA línea que #75 (estado: tenant === "minorista" ? "activo" : "pendiente"): el interruptor de comisión
+# no decide si una venta está confirmada y este parche NO toca esa línea. #97 solo agrega, antes de numerar, un rechazo: un manual B2B de Mayorista (nace pendiente) sin el ciclo encendido no se crea.
+@@ -925,7 +925,7 @@
+     if (!com.ok) {
+       elevarEstadoFlujo(estado, "error");
+       registrarErrorTecnico("crear_contrato", flujoId, "comision_pvp", "error_comision_pvp", com.error);
+-      const rev = await revertirContratoManual(numero, tenant);
++      const rev = await revertirContratoManual(idc, numero, tenant);
+       return {
+         ok: false,
+         error: rev.ok
+@@ -1123,7 +1123,7 @@
+     const deshacer = async (motivo: string): Promise<CrearContratoResult> => {
+       elevarEstadoFlujo(estado, "error");
+       registrarErrorTecnico("crear_contrato", flujoId, "cierre_negociado", "error_cierre_negociado", motivo);
+-      const rev = await revertirContratoManual(numero, tenant);
++      const rev = await revertirContratoManual(idc, numero, tenant);
+       return {
+         ok: false,
+         error: rev.ok
+@@ -1132,7 +1132,7 @@
+       };
+     };
+     if (falloCopia) return deshacer(falloCopia);
+-    const fin = await registrarFinancieroContrato(depsFinancieroManual(numero, tenant, fechaElegidaONegocio(input.fechaEmision)), {
++    const fin = await registrarFinancieroContrato(depsFinancieroManual(idc, numero, tenant, fechaElegidaONegocio(input.fechaEmision)), {
+       numeroContrato: numero, tenant, costos: costosCopiados ?? {}, cxp: [], fecha: fechaElegidaONegocio(input.fechaEmision),
+     });
+     if (!fin.ok) return deshacer(`no se pudo cerrar el registro financiero (${fin.error})`);

@@ -7,9 +7,10 @@ import { HotelCategoriasRegimenesEditor } from "./HotelCategoriasRegimenesEditor
 import { HotelDocumentos } from "./HotelDocumentos";
 import { HotelFotos } from "./HotelFotos";
 import { HotelBlackouts } from "./HotelBlackouts";
-import { HotelPromociones, type ReglaFila } from "./HotelPromociones";
+import { HotelPromociones, type ReglaFila, type EstadoCombinacion } from "./HotelPromociones";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
-import { CalculadoraEditor } from "./CalculadoraEditor";
+import { CalculadoraEditor, type VigenciaConGrupos } from "./CalculadoraEditor";
+import type { BasesGrupo } from "@/lib/hoteles/calculadoraGrupos";
 import { TarifasHistorial } from "./TarifasHistorial";
 import { consultarHistorialTarifas } from "./historial-actions";
 import { TarifasUnidadEditor, type FilaTarifaUnidadUI } from "./TarifasUnidadEditor";
@@ -18,6 +19,8 @@ import type { AcomConfig } from "@/lib/acomodaciones";
 import type { DubaiParams, MixtaParams, CorporativaParams, CalcTipo } from "@/lib/calc/calculadoras";
 import { adaptarTarifaAlojamientoPersistida } from "@/lib/calc/tarifaAlojamientoPersistida";
 import { hoyISO, toTemporadaRango } from "@/lib/calc/paquetes";
+import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
+import { promocionesDinamicasHotel, ROLES_VEN_NETOS, type VigenciaPromoFicha, type FilaTarifaFicha } from "@/lib/hoteles/promocionesDinamicas";
 
 export const dynamic = "force-dynamic";
 // Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
@@ -30,15 +33,19 @@ export default async function HotelDetallePage({ params, searchParams }: { param
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }, { data: reglasDescuento, error: errorReglas }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }, { data: reglasDescuento, error: errorReglas }, { data: combinaciones, error: errorComb }, { data: miRol }] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
-    sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId),
+    // #45 (303): textos de la categoría en este hotel. Sin la 303 la columna no existe (42703): se leen sin textos.
+    (async () => {
+      const r = await sb.from("hotel_categorias").select("categoria_id, descripcion, incluye, categorias_habitacion(nombre)").eq("hotel_id", hotelId);
+      return r.error?.code === "42703" ? sb.from("hotel_categorias").select("categoria_id, categorias_habitacion(nombre)").eq("hotel_id", hotelId) : r;
+    })(),
     sb.from("hotel_regimenes").select("plan_id, planes_alimentacion(codigo)").eq("hotel_id", hotelId),
-    sb.from("hotel_temporadas").select("id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo").eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
+    sb.from("hotel_temporadas").select(`id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, hotel_temporada_grupos(id, nombre, dias, activo, hotel_calculadora_grupo_bases(tipo, bases, generales, version)), ${SELECT_PROMO_VIGENCIA}`).eq("hotel_id", hotelId).order("prioridad", { ascending: false }).order("orden"),
     sb.from("tarifa_hotel").select("*").eq("hotel_id", hotelId).order("id", { ascending: false }),
     sb.from("rangos_edad").select("id, denominacion, edad_min, edad_max").order("edad_min"),
     sb.from("hotel_acomodaciones").select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max").eq("hotel_id", hotelId),
-    sb.from("hotel_calculadora").select("tipo, params").eq("hotel_id", hotelId).maybeSingle(),
+    sb.from("hotel_calculadora").select("tipo, params, version").eq("hotel_id", hotelId).maybeSingle(),
     sb.from("categorias_habitacion").select("id, nombre").order("nombre"),
     sb.from("planes_alimentacion").select("id, codigo").order("codigo"),
     sb.from("hotel_documentos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("hotel_id", hotelId).order("created_at", { ascending: false }),
@@ -48,7 +55,11 @@ export default async function HotelDetallePage({ params, searchParams }: { param
     sb.from("destinos").select("id, nombre").order("nombre"),
     sb.from("proveedores").select("id, nombre").eq("tipo", "hotelero").order("nombre"),
     sb.from("hotel_tarifas_unidad").select("*").eq("hotel_id", hotelId).order("tarifa_id").order("version_tarifario"),
-    sb.from("hotel_reglas_descuento").select("id, tipo, umbral, pct, activa").eq("hotel_id", hotelId).order("tipo").order("umbral"),
+    sb.from("hotel_reglas_descuento").select("id, tipo, umbral, pct, activa, autorizada, propuesta").eq("hotel_id", hotelId).order("tipo").order("umbral"),
+    // Entrega 5 (301): coincidencias de cada promoción con EBB / Long Stay y su combinación.
+    sb.rpc("promociones_combinacion_estado", { p_hotel: hotelId }),
+    // Rol para la vista explicativa de promociones dinámicas (netos): suma UNA solicitud por carga; corre en paralelo con las demás.
+    sb.rpc("mi_rol"),
   ]);
 
   if (!hotel) notFound();
@@ -87,7 +98,8 @@ export default async function HotelDetallePage({ params, searchParams }: { param
       .maybeSingle();
   if (politicaError) throw new Error("No se pudo cargar la política del proveedor.");
   const acomConfigs = (acoms ?? []) as AcomConfig[];
-  const catsRows = (cats ?? []) as unknown as { categoria_id: number; categorias_habitacion: { nombre: string } | null }[];
+  const catsRows = (cats ?? []) as unknown as { categoria_id: number; descripcion?: string | null; incluye?: string | null; categorias_habitacion: { nombre: string } | null }[];
+  const textosCategoria = Object.fromEntries(catsRows.map((x) => [x.categoria_id, { descripcion: x.descripcion ?? "", incluye: x.incluye ?? "" }]));
   const regsRows = (regs ?? []) as unknown as { plan_id: number; planes_alimentacion: { codigo: string } | null }[];
   const categorias = catsRows.map((x) => x.categorias_habitacion?.nombre).filter((x): x is string => !!x);
   const regimenes = regsRows.map((x) => x.planes_alimentacion?.codigo).filter((x): x is string => !!x);
@@ -106,10 +118,28 @@ export default async function HotelDetallePage({ params, searchParams }: { param
   const modeloTarifario: ModeloTarifario = h.modelo_tarifario === "unidad" ? "unidad" : "persona";
   // Moneda de las tarifas netas de ESTE hotel: solo decide cómo se rotulan los importes (USD vs COP), nunca su valor.
   const moneda = ((h as { moneda?: string | null }).moneda ?? "COP").toUpperCase() === "USD" ? "USD" : "COP";
+  // Promociones dinámicas por grupo explicadas (solo lectura, sin consultas: los mismos datos de arriba). Son NETOS: solo a quien ve costos.
+  const promosDinamicas = (ROLES_VEN_NETOS as readonly string[]).includes(String(miRol ?? ""))
+    ? promocionesDinamicasHotel((temporadas ?? []) as unknown as VigenciaPromoFicha[], (tarifas ?? []) as unknown as FilaTarifaFicha[], acomConfigs, moneda)
+    : null;
   const calcTipo = (calc?.tipo ?? null) as CalcTipo | null;
   const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;
   const mixtaInicial = calc?.tipo === "mixta" ? (calc.params as unknown as MixtaParams) : null;
   const corporativaInicial = calc?.tipo === "corporativa" ? (calc.params as unknown as CorporativaParams) : null;
+  // #43/#60 3b: grupos de días (inactivos) de las vigencias de tarifa, con sus bases de calculadora. Vienen
+  // incrustados en la lectura de vigencias: 0 solicitudes nuevas. Nunca para hoteles por unidad.
+  const gruposCalc: VigenciaConGrupos[] = modeloTarifario === "unidad" ? [] : (temporadas ?? [])
+    .filter((t) => (t.tipo ?? "tarifa") === "tarifa" && (t.hotel_temporada_grupos ?? []).length > 0)
+    .map((t) => ({
+      temporadaId: t.id, vigencia: t.nombre,
+      grupos: (t.hotel_temporada_grupos ?? []).map((g) => ({
+        id: g.id, nombre: g.nombre, dias: g.dias, activo: g.activo === true,
+        bases: (g.hotel_calculadora_grupo_bases ?? []).map((b) => ({
+          tipo: b.tipo as CalcTipo, bases: b.bases as unknown as BasesGrupo, version: b.version,
+          generales: (b.generales ?? null) as Record<string, unknown> | null,
+        })),
+      })),
+    }));
 
   // Lectura defensiva de "Tarifas por unidad" (fase 2 Bernalo): cada fila se
   // pasa por el MISMO adaptador que valida las Server Actions al escribir
@@ -161,6 +191,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           regimenes={regimenes}
           temporadas={temporadas ?? []}
           tarifas={(tarifas ?? []) as never}
+          promosDinamicas={promosDinamicas}
           otrosHoteles={otrosHoteles ?? []}
           adultsOnly={h.adults_only ?? false}
           mostrarTarifaPersona={modeloTarifario === "persona"}
@@ -206,9 +237,10 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           todosRegimenes={todosRegs ?? []}
           categoriaIds={categoriaIds}
           regimenIds={regimenIds}
+          textosCategoria={textosCategoria}
         />
         <HotelFotos hotelId={hotelId} fotos={fotos ?? []} />
-        <HotelPromociones hotelId={hotelId} reglas={(reglasDescuento ?? []) as ReglaFila[]} errorCarga={!!errorReglas} />
+        <HotelPromociones hotelId={hotelId} reglas={(reglasDescuento ?? []) as ReglaFila[]} errorCarga={!!errorReglas} errorCombinaciones={!!errorComb} combinaciones={(Array.isArray(combinaciones) ? combinaciones : []) as unknown as EstadoCombinacion[]} />
         <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} categorias={categorias} />
         <HotelDocumentos hotelId={hotelId} documentos={documentos ?? []} />
         <HotelAcomodacionesEditor
@@ -226,6 +258,8 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           temporadas={temporadasNombres}
           regimenes={regimenes}
           tipoInicial={calcTipo}
+          versionInicial={calc?.version ?? null}
+          gruposCalc={gruposCalc}
           dubaiInicial={dubaiInicial}
           mixtaInicial={mixtaInicial}
           corporativaInicial={corporativaInicial}

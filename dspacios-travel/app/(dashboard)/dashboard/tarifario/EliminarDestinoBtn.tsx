@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { Loader2, X } from "lucide-react";
 import { ComboDestino } from "@/components/ComboDestino";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { modoEliminacion, resumirUsoDestino, type ModoEliminacion, type UsoDestino } from "@/lib/producto/usoDestino";
 import { eliminarDestino, usoDestino } from "./actions";
 
@@ -29,6 +30,7 @@ export function EliminarDestinoBtn({
   const [err, setErr] = useState("");
   const [uso, setUso] = useState<Uso>({ estado: "cargando" });
   const [pending, start] = useTransition();
+  useEscapeCerrar(open, () => setOpen(false), pending); // Escape = Cancelar (deshabilitado mientras elimina)
   // Cada revisión invalida la anterior: una respuesta tardía nunca pisa la vigente.
   const revision = useRef(0);
 

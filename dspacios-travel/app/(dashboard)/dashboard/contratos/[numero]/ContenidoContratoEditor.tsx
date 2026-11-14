@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda } from "@/lib/utils";
 import { totalVisibleContratoItems, valorVisibleContratoItem } from "@/lib/contrato/valorContratoItem";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import {
   guardarItemsContrato, guardarHotelesContrato, guardarVuelosContrato,
   guardarServiciosContrato, sincronizarPrecioVenta,
@@ -25,6 +26,7 @@ const selCls = "w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text
 const lblCls = "mb-1 block text-[11px] font-medium text-gray-500";
 
 type Props = {
+  identidad: IdentidadContrato;
   numero: string;
   moneda: string;
   precioVenta: number;
@@ -44,7 +46,7 @@ type Seccion = "items" | "hoteles" | "vuelos" | "servicios";
 // contratos migrados del importador de histórico, que solo traen cabecera,
 // abonos y cuentas por pagar: sin esto no había forma de completarles hoteles,
 // vuelos, ítems ni servicios. Sirve igual para corregir cualquier contrato.
-export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuentoNeto = null, items, hoteles, vuelos, servicios }: Props) {
+export function ContenidoContratoEditor({ identidad, numero, moneda, precioVenta, descuentoNeto = null, items, hoteles, vuelos, servicios }: Props) {
   const router = useRouter();
   const [abierto, setAbierto] = useState(false);
   const [seccion, setSeccion] = useState<Seccion>("items");
@@ -74,11 +76,15 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuento
   // rechazar.
   const hayLineaTotal = fItems.some((it) => it.modoPrecio === "total");
 
-  function correr(fn: () => Promise<{ ok: true } | { ok: false; error: string }>, exito: string) {
-    setMsg(""); setOk("");
+  // NETO reemitido por debajo del margen mínimo: igual que al crear el contrato, se ofrece la aprobación EXPLÍCITA (la base exige el rol).
+  const [avisoMargen, setAvisoMargen] = useState("");
+
+  function correr(fn: () => Promise<{ ok: true } | { ok: false; error: string; margenInsuficiente?: true }>, exito: string) {
+    setMsg(""); setOk(""); setAvisoMargen("");
     start(async () => {
       const r = await fn();
       if (r.ok) { setOk(exito); router.refresh(); }
+      else if (r.margenInsuficiente) setAvisoMargen(r.error);
       else setMsg(r.error);
     });
   }
@@ -199,7 +205,7 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuento
                 mueve plata ya registrada, así que tiene que ser una decisión tuya.
                 <div className="mt-2">
                   <Button variant="outline" disabled={pending}
-                    onClick={() => correr(() => sincronizarPrecioVenta(numero), "Precio de venta actualizado.")}>
+                    onClick={() => correr(() => sincronizarPrecioVenta(numero, identidad), "Precio de venta actualizado.")}>
                     Igualar el precio de venta a {formatMoneda(totalItems, moneda)}
                   </Button>
                 </div>
@@ -208,9 +214,20 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuento
           </div>
 
           <Button disabled={pending || hayLineaTotal} style={{ backgroundColor: "var(--brand-primary)" }}
-            onClick={() => correr(() => guardarItemsContrato(numero, fItems), "Ítems guardados.")}>
+            onClick={() => correr(() => guardarItemsContrato(numero, fItems, identidad), "Ítems guardados.")}>
             {pending ? "Guardando…" : "Guardar ítems"}
           </Button>
+          {avisoMargen && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {avisoMargen} No se cambió nada.
+              <div className="mt-2">
+                <Button variant="outline" disabled={pending}
+                  onClick={() => correr(() => guardarItemsContrato(numero, fItems, identidad, true), "Ítems guardados con margen aprobado.")}>
+                  Aprobar margen bajo y guardar
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -238,7 +255,7 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuento
             + Agregar hotel
           </button>
           <Button disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}
-            onClick={() => correr(() => guardarHotelesContrato(numero, fHoteles), "Hoteles guardados.")}>
+            onClick={() => correr(() => guardarHotelesContrato(numero, fHoteles, identidad), "Hoteles guardados.")}>
             {pending ? "Guardando…" : "Guardar hoteles"}
           </Button>
         </div>
@@ -277,7 +294,7 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuento
             + Agregar tramo
           </button>
           <Button disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}
-            onClick={() => correr(() => guardarVuelosContrato(numero, fVuelos), "Vuelos guardados.")}>
+            onClick={() => correr(() => guardarVuelosContrato(numero, fVuelos, identidad), "Vuelos guardados.")}>
             {pending ? "Guardando…" : "Guardar vuelos"}
           </Button>
         </div>
@@ -311,7 +328,7 @@ export function ContenidoContratoEditor({ numero, moneda, precioVenta, descuento
             + Agregar servicio
           </button>
           <Button disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}
-            onClick={() => correr(() => guardarServiciosContrato(numero, fServicios), "Servicios guardados.")}>
+            onClick={() => correr(() => guardarServiciosContrato(numero, fServicios, identidad), "Servicios guardados.")}>
             {pending ? "Guardando…" : "Guardar servicios"}
           </Button>
         </div>

@@ -14,6 +14,7 @@ import { ACOMODACION_UNICA, OPCIONES_REF, MAX_OPCIONES, nombrePaqueteItem, type 
 import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, type EdicionPresentacion, type OpcionEditable } from "@/components/cotizacion/PresentacionComparativaEditor";
 import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
+import { acuerdoComision, participacionAliado, validarBnc } from "@/lib/cotizacion/acuerdoComision";
 
 type Asesor = { nombre: string | null; email: string };
 type Aliado = { id: number; nombre: string; tipo: string | null };
@@ -59,6 +60,10 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   // Recobro: mayor valor cobrado (oculto al cliente). Distribución según canal.
   const [recobro, setRecobro] = useState("0");
   const [recobroAliado, setRecobroAliado] = useState("0");
+  // #97: participación del aliado en el recobro por VALOR o por PORCENTAJE (el importe final es lo que cuenta), y BNC explícita (vacío ≠ 0).
+  const [modoPart, setModoPart] = useState<"valor" | "pct">("valor");
+  const [pctPart, setPctPart] = useState("");
+  const [bnc, setBnc] = useState("");
   const [plazo, setPlazo] = useState("");
   const [vigencia, setVigencia] = useState(vigenciaInicial(hoy, null, 3));
   const [observaciones, setObservaciones] = useState("");
@@ -110,7 +115,16 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   });
 
   const esB2B = tipoAsesor !== "interno";
-  const recobroAliadoN = esB2B ? Math.min(Math.max(Number(recobroAliado) || 0, 0), recobroN) : 0;
+  const recobroAliadoN = !esB2B ? 0
+    : participacionAliado(recobroN, modoPart === "pct" ? { modo: "pct", pct: (Number(pctPart) || 0) / 100 } : { modo: "valor", valor: Number(recobroAliado) || 0 });
+  // En modo porcentaje el importe se redondea a la unidad: se avisa para que nunca se ajuste en silencio.
+  const brutoPct = esB2B && modoPart === "pct" ? recobroN * ((Number(pctPart) || 0) / 100) : null;
+  const pctRedondeado = brutoPct != null && Math.abs(brutoPct - recobroAliadoN) > 1e-6;
+  // Base comisionable (vista previa, sin %): total − BNC − (recobro completo solo si el aliado recibe algo de él).
+  const bncValida = validarBnc(bnc, totalCotizacion);
+  const baseComisionable = esB2B && bncValida.ok
+    ? acuerdoComision({ total: totalCotizacion, bnc: bncValida.bnc, recobroTotal: recobroN, participacion: recobroAliadoN, pct: 0 }).base
+    : null;
   const recobroEmpresaN = recobroN - recobroAliadoN;
 
   // Cliente final = 100% empresa. Al pasar a B2B, sugiere el % de la config.
@@ -160,11 +174,18 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       });
       return;
     }
+    // #97: dinámica B2B → aliado del catálogo (id) y BNC escrita expresamente. El servidor lo vuelve a exigir.
+    if (tipoAsesor !== "interno") {
+      if (aliadoId == null) { setErr("Elige la agencia o el freelance del catálogo de la lista (no se admite texto libre)."); return; }
+      if (!bncValida.ok) { setErr(bncValida.error); return; }
+    }
     start(async () => {
       const r = await crearCotizacionManual({
         cliente: cli, destino, fechaIda, fechaRegreso, pax: Number(pax) || 0, moneda,
         ninos: nNinos, tarifaNino: valorNino,
         recobro: recobroN, recobroAliado: recobroAliadoN,
+        aliadoId: tipoAsesor === "interno" ? null : aliadoId,
+        bnc: tipoAsesor !== "interno" && bncValida.ok ? bncValida.bnc : null,
         tipoAsesor,
         asesorInterno: tipoAsesor === "interno" ? asesorInterno : "",
         agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
@@ -376,7 +397,17 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
                   <button type="button" onClick={() => setRecobroAliado(String(Math.round(recobroN * pctAliadoB2B)))}
                     className="text-[11px] font-medium text-[#1D7C9A] hover:underline">Sugerir {Math.round(pctAliadoB2B * 100)}%</button>
                 </div>
-                <Input type="number" min={0} max={recobroN} value={recobroAliado} onChange={(e) => setRecobroAliado(e.target.value)} />
+                <div className="mb-1 flex gap-3 text-[11px] text-gray-600">
+                  <label className="flex items-center gap-1"><input type="radio" name="modoPart" checked={modoPart === "valor"} onChange={() => setModoPart("valor")} /> Valor</label>
+                  <label className="flex items-center gap-1"><input type="radio" name="modoPart" checked={modoPart === "pct"} onChange={() => setModoPart("pct")} /> Porcentaje</label>
+                </div>
+                {modoPart === "valor" ? (
+                  <Input type="number" min={0} max={recobroN} value={recobroAliado} onChange={(e) => setRecobroAliado(e.target.value)} />
+                ) : (
+                  <Input type="number" min={0} max={100} step="any" placeholder="% del recobro" value={pctPart} onChange={(e) => setPctPart(e.target.value)} />
+                )}
+                <p className="mt-1 text-[11px] text-gray-500">Importe final al aliado: <b>{fmt(recobroAliadoN)}</b>{recobroAliadoN > 0 ? " (el recobro completo sale de la base de su comisión)" : " (sin participación: el recobro permanece en la base)"}
+                  {pctRedondeado && brutoPct != null && <span className="block text-amber-700">El porcentaje equivale a {brutoPct.toFixed(2)} y se redondea a {fmt(recobroAliadoN)}.</span>}</p>
               </div>
               <div>
                 <label className={lbl}>Para la empresa</label>
@@ -390,6 +421,32 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
           )}
         </div>
       </section>
+
+      {/* #97: acuerdo de comisión del aliado (solo dinámica B2B; la comparativa sigue su propio flujo) */}
+      {esB2B && !comparativa && (
+        <section className="rounded-xl border border-gray-200 bg-white p-5">
+          <h2 className="mb-1 text-sm font-semibold text-gray-700">Comisión del aliado</h2>
+          <p className="mb-3 text-xs text-gray-400">
+            El aliado se toma del catálogo y su porcentaje queda fijado al guardar (no se edita aquí). Indica la base no comisionable: escribe 0 si no hay.
+          </p>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div>
+              <label className={lbl}>Base no comisionable (BNC) *</label>
+              <Input type="number" min={0} placeholder="0 si no hay" value={bnc} onChange={(e) => setBnc(e.target.value)} />
+              {!bncValida.ok && bnc !== "" && <p className="mt-1 text-[11px] text-red-600">{bncValida.error}</p>}
+            </div>
+            <div>
+              <label className={lbl}>Base comisionable</label>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold tabular-nums text-gray-700">
+                {baseComisionable == null ? "—" : fmt(baseComisionable)}
+              </div>
+            </div>
+            <div className="text-xs text-gray-500">
+              Aliado: <b>{aliadoId == null ? "elige uno de la lista" : aliadoNombre}</b>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Total por opción (comparativa): sin total global */}
       {comparativa && (

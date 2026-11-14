@@ -15,6 +15,7 @@
 // Depende de la entrega A (documento NETO: lib/contrato/presentacionValores.ts,
 // netoContrato.server.ts; lib/finanzas/netoB2B.ts).
 import { usarBD, type Fila } from "./support/fechaNegocioArnes.ts";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
@@ -82,6 +83,24 @@ function rpcNeto(ref: { bd?: BD; antes?: Fila }, opciones: { falla?: string } = 
     return 501;
   };
 }
+// Espejo en memoria de `registrar_comision_b2b_reserva` (205) para PVP: recalcula (base = PVP − BNC, % del aliado), exige modalidad y no duplica.
+// La versión real (permisos, tenant, ventana financiera, carrera) se prueba contra Postgres: test_97_comision_pvp.sql y contratoManualNeto206.pg.ts.
+function registrarComisionEnMemoria(ref: { bd?: BD }) {
+  return (args: Record<string, unknown>) => {
+    const bd = ref.bd!;
+    const v = bd.filas("ventas").find((x) => x.numero_contrato === args.p_numero)!;
+    if (bd.filas("aliados_b2b").some((f) => f.numero_contrato === v.numero_contrato)) throw new Error("ya tiene comisión B2B");
+    const base = Math.max(0, Number(v.precio_venta) - Number(v.impuesto));
+    const com = Math.round(base * ALIADO.pct_comision);
+    if (Math.abs(com - Number(v.comision_b2b ?? -1e6)) > 1) throw new Error("no coincide con la calculada");
+    bd.filas("aliados_b2b").push({
+      id: 502, numero_contrato: v.numero_contrato, tenant: v.tenant, aliado: ALIADO.nombre, nit: ALIADO.nit, tipo_aliado: "agencia",
+      aliado_id: args.p_aliado_id, precio_venta: v.precio_venta, base_comision: base, base_explicita: true, pct_comision: ALIADO.pct_comision,
+      recobro_total: 0, pct_recobro_aliado: 0, estado: "pendiente", descontada_en_precio: false,
+    });
+    return 502;
+  };
+}
 function revertir(ref: { bd?: BD }, falla?: string) {
   return (args: Record<string, unknown>) => {
     if (falla) throw new Error(falla);
@@ -112,7 +131,7 @@ function financieroEnMemoria(ref: { bd?: BD }) {
 }
 function montarBD(rpcs: Record<string, (a: Record<string, unknown>) => unknown> = {}, ref: { bd?: BD } = {}) {
   const bd = usarBD({ aliados: [ALIADO], usuarios: [YO], parametros_tributarios: [] },
-    { registrar_financiero_contrato: financieroEnMemoria(ref), ...rpcs });
+    { registrar_financiero_contrato: financieroEnMemoria(ref), registrar_comision_b2b_reserva: registrarComisionEnMemoria(ref), ...rpcs });
   ref.bd = bd;
   return bd;
 }
@@ -141,7 +160,7 @@ test("NETO: nace PVP 'Por definir', el RPC atómico lo pasa a NETO con su comisi
   assert.equal(llamadas(bd, "revertir_contrato_incompleto").length, 0);
 });
 
-test("PVP manual: igual que #38 — sin RPC, sin modalidad, comisión 'Por definir'", async () => {
+test("PVP manual (#97): sin RPC de NETO; modalidad comisionable y UNA comisión pendiente del aliado", async () => {
   const ref: { bd?: BD } = {};
   const bd = montarBD({ aplicar_neto_contrato_manual: rpcNeto(ref) }, ref);
   const r = await crearContrato(contrato({ modoCompra: "pvp" }));
@@ -149,9 +168,12 @@ test("PVP manual: igual que #38 — sin RPC, sin modalidad, comisión 'Por defin
   assert.equal(llamadas(bd, "aplicar_neto_contrato_manual").length, 0);
   const [v] = bd.filas("ventas");
   assert.equal(v.precio_venta, 2_000_000);
-  assert.equal(v.modo_compra ?? null, null);
-  assert.equal(v.comision_estado ?? null, null);
-  assert.equal(bd.filas("aliados_b2b").length, 0);
+  assert.equal(v.modo_compra, "comisionable");
+  assert.equal(v.comision_estado, "pendiente");
+  assert.equal(v.comision_b2b, 160_000);
+  assert.equal(bd.filas("aliados_b2b").length, 1);
+  assert.equal(bd.filas("aliados_b2b")[0].aliado_id, 7);
+  assert.equal(llamadas(bd, "registrar_comision_b2b_reserva").length, 1);
   // Sin modoCompra (formulario viejo): mismo resultado.
   const r2 = await crearContrato(contrato());
   assert.equal(r2.ok, true);
@@ -235,7 +257,7 @@ test("documento: total y saldo del total exigible; ni el PVP ni la comisión apa
   const { bd, numero, v } = await contratoNeto();
   const neto = await netoTotalExigibleDeContrato(numero);
   assert.equal(neto, 1_840_000);
-  const html = renderToStaticMarkup(createElement(ContratoDocumento, {
+  const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
     venta: v, pasajeros: [], hoteles: [], vuelos: [], items: bd.filas("contrato_items"), totalPagado: 0, netoTotalExigible: neto,
   } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
   assert.ok(html.includes(`Total del contrato ${$(1_840_000)}`));

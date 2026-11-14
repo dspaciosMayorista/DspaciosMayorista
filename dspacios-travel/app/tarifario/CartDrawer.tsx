@@ -15,6 +15,7 @@ import { crearContadorAddonsNonce } from "@/lib/cart/addonsNonce";
 import { resumenHabitacionesBernalo } from "@/lib/cart/resumenHabitacionBernalo";
 import { estanciaDeHotel, lineaEstancia } from "@/lib/cart/estanciaCarrito";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 
 const MENSAJE_SIN_REFERENCIA_ADDONS =
   "Ninguno de tus hoteles tiene destino, fechas y viajeros completos todavía — no se puede precargar la búsqueda de servicios. " +
@@ -63,6 +64,7 @@ function ServiciosDelHotel({ hotel, servicios, onQuitar }: { hotel: HotelCartIte
 
 export function CartDrawer({ checkoutHabilitado = false, fotosPorHotel = {} }: { checkoutHabilitado?: boolean; fotosPorHotel?: Record<number, string> }) {
   const { items, remove, totales, count, drawerOpen, openDrawer, closeDrawer, setAddonsIntent, modoComparativa } = useCart();
+  useEscapeCerrar(drawerOpen, closeDrawer); // Escape = «Cerrar»
   const router = useRouter();
   // Resuelve la foto ACTUAL del hotel por id (los ítems viejos del carrito pueden
   // no traer fotoUrl si se agregaron antes de subir la portada).

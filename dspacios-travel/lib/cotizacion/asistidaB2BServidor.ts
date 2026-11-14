@@ -2,16 +2,17 @@ import type { createClient } from "@/lib/supabase/server";
 import type { ModoCompra } from "@/lib/reservar/comisionReserva";
 import {
   autorizarActorAsistenciaB2B, compararAliadoConCongelado, compararIdentidadAliadoConCongelada, evaluarAliadoAsistencia, resolverPctB2B,
-  type AliadoAsistencia, type EntradaAsistencia, type OrigenPctB2B, type PlanB2BCotizacion, type RolAsistenciaB2B, type TipoAliadoB2B,
+  type AliadoAsistencia, type EntradaAsistencia, type OrigenPctB2B, type PlanB2BCotizacion, type RolActorPlan, type RolAsistenciaB2B, type TipoAliadoB2B,
 } from "@/lib/cotizacion/asistidaB2B";
 import { fiscalDeFilaAliado, nombreQuienElabora, type FiscalAliado } from "@/lib/cotizacion/identidadB2B";
+import { pctParticipacionDeParametro, type ResultadoRecobro } from "@/lib/cotizacion/recobroCarrito";
 
 // #102 — Resolución EN SERVIDOR de quién asiste y para quién. Todo sale de la sesión autenticada + `usuarios` + el catálogo
 // `aliados`: del navegador solo llega la ELECCIÓN (id de aliado y modalidad). Se lee con el cliente de SESIÓN (la RLS sigue siendo
 // una segunda barrera) — no hace falta service-role: los cinco roles autorizados leen `aliados` y `parametros_tributarios`.
 type Sb = Awaited<ReturnType<typeof createClient>>;
 
-export type ActorAsistencia = { id: string; email: string | null; rol: RolAsistenciaB2B; superadmin: boolean; nombre: string | null };
+export type ActorAsistencia = { id: string; email: string | null; rol: RolActorPlan; superadmin: boolean; nombre: string | null };
 /** `fiscal`: identidad del aliado TAL COMO ESTÁ en el catálogo (nunca texto del navegador); es el cliente comercial de una venta NETO. */
 export type AliadoResuelto = AliadoAsistencia & { pct: number; pctOrigen: OrigenPctB2B; fiscal: FiscalAliado };
 export type ContextoAsistenciaB2B = { actor: ActorAsistencia; aliado: AliadoResuelto; modo: ModoCompra; vistos?: EntradaAsistencia["vistos"] };
@@ -102,4 +103,43 @@ export async function verificarAliadoVivoParaConversion(sb: Sb, plan: PlanB2BCot
   const ident = compararIdentidadAliadoConCongelada(plan, { nombre: al.aliado.fiscal.nombre, documento: al.aliado.fiscal.documento, tipoDocumento: al.aliado.fiscal.tipoDocumento });
   if (!ident.ok) return ident;
   return { ok: true, aliado: al.aliado };
+}
+
+// ── #14-A · Aliado directo en el carrito ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Un aliado B2B logueado que manda su carrito conserva SU identidad, SU modalidad y SU comisión aunque no haya recobro: el servidor deriva todo de la sesión
+// (`usuarios.aliado_id`, o el de su agencia titular → catálogo `aliados`) y sella el mismo plan congelado de la venta asistida (origen «aliado_directo»). Del navegador solo llega la
+// modalidad elegida. El catálogo y los parámetros se leen con la llave de servicio (el aliado no lee `aliados` por RLS). Sin ficha vinculada: NO hay plan (flujo de siempre).
+export type ResultadoAliadoDirecto = { ok: true; contexto: ContextoAsistenciaB2B | null } | { ok: false; error: string };
+
+export async function resolverAliadoDirecto(sb: Sb, catalogo: Sb, modo: ModoCompra | undefined): Promise<ResultadoAliadoDirecto> {
+  const { data: { user }, error: errUser } = await sb.auth.getUser();
+  if (errUser || !user) return { ok: true, contexto: null };
+  const { data: perfil, error: errPerfil } = await sb.from("usuarios").select("rol, activo, aliado_id, agencia_id, email, nombre").eq("id", user.id).maybeSingle();
+  if (errPerfil) return { ok: false, error: ERROR_SESION };
+  if (!perfil || perfil.activo !== true || (perfil.rol !== "agencia" && perfil.rol !== "freelance")) return { ok: true, contexto: null };
+  let aliadoId: number | null = typeof perfil.aliado_id === "number" ? perfil.aliado_id : null;
+  if (aliadoId == null && perfil.agencia_id) {
+    const { data: titular, error: errTit } = await sb.from("usuarios").select("aliado_id, activo").eq("id", perfil.agencia_id).maybeSingle();
+    if (errTit) return { ok: false, error: ERROR_SESION };
+    if (titular?.activo === true && typeof titular.aliado_id === "number") aliadoId = titular.aliado_id;
+  }
+  if (aliadoId == null) return { ok: true, contexto: null }; // sin ficha vinculada: flujo de siempre (sin plan ni recobro)
+  const al = await resolverAliadoAsistencia(catalogo, aliadoId);
+  if (!al.ok) return { ok: false, error: al.error };
+  if (al.aliado.tipo !== perfil.rol) return { ok: false, error: "Tu cuenta no coincide con el tipo del aliado vinculado (agencia o freelance). Contacta a D'spacios Travel." };
+  return {
+    ok: true,
+    contexto: {
+      actor: { id: user.id, email: perfil.email ?? user.email ?? null, rol: perfil.rol as RolActorPlan, superadmin: false, nombre: nombreQuienElabora(perfil.nombre, null) },
+      aliado: al.aliado,
+      modo: modo ?? "comisionable",
+    },
+  };
+}
+
+/** % de distribución del recobro con el aliado directo: parámetro `recobro_pct_aliado_b2b`, leído y validado en servidor (sin constante de respaldo). */
+export async function leerPctParticipacionParametro(catalogo: Sb): Promise<ResultadoRecobro<number>> {
+  const { data, error } = await catalogo.from("parametros_tributarios").select("valor").eq("parametro", "recobro_pct_aliado_b2b").maybeSingle();
+  if (error) return { ok: false, error: "No se pudo leer la distribución del recobro con el aliado. Intenta de nuevo en unos minutos." };
+  return pctParticipacionDeParametro(data?.valor);
 }

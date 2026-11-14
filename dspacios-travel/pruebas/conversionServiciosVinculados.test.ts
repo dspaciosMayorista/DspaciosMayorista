@@ -130,7 +130,7 @@ describe("cableado — la conversión y su vista previa usan estas mismas funcio
   test("valida vínculo y pasajeros ANTES de la primera escritura (createAdminClient)", () => {
     const iVinc = cuerpo.indexOf("resolverVinculosCotizacion(tours, itemsCrudos)");
     const iPax = cuerpo.indexOf("validarPasajerosServiciosVinculados({");
-    const iAdmin = cuerpo.indexOf("const admin = createAdminClient();");
+    const iAdmin = cuerpo.indexOf("let admin = createAdminClient();");
     assert.ok(iVinc > 0 && iPax > iVinc && iAdmin > iPax, `${iVinc} ${iPax} ${iAdmin}`);
     assert.match(cuerpo, /if \(!vVinculos\.ok\) return \{ ok: false, error: vVinculos\.error \};/);
     assert.match(cuerpo, /if \(errPasajerosVinculados\) return \{ ok: false, error: errPasajerosVinculados \};/);

@@ -93,6 +93,25 @@ export function tipoProveedorCxpServicio(categoria: CategoriaServicio): "asisten
   return "otro";
 }
 
+// Columna de `ventas` donde va el costo NETO de un servicio, derivada del MISMO tipo que su CxP: la asistencia médica en
+// `costo_asistencia`; tours/traslados y «otro» en `costo_receptivo` (como siempre: `otros_costos` también recibe costos
+// manuales que no son servicios y no se pisa desde aquí). Antes TODO servicio iba a `costo_receptivo` aunque su CxP
+// dijera `asistencia`: el contrato mostraba la asistencia como costo receptivo. La cobertura de CxP (cxpCobertura.ts) mide
+// las columnas de servicio como una sola bolsa, así que repartir el costo no cambia el total cubierto.
+export type ColumnaCostoServicio = "costo_receptivo" | "costo_asistencia";
+export function columnaCostoServicio(tipoCxp: string | null | undefined): ColumnaCostoServicio {
+  return tipoCxp === "asistencia" ? "costo_asistencia" : "costo_receptivo";
+}
+/** Suma costos de servicio por columna: `{ costo_receptivo, costo_asistencia }` (ceros si no hay). */
+export function costosServicioPorColumna(filas: readonly { tipoCxp: string | null | undefined; costo: number }[]): Record<ColumnaCostoServicio, number> {
+  const out: Record<ColumnaCostoServicio, number> = { costo_receptivo: 0, costo_asistencia: 0 };
+  for (const f of filas) {
+    const v = Number(f.costo);
+    if (Number.isFinite(v) && v > 0) out[columnaCostoServicio(f.tipoCxp)] += v;
+  }
+  return out;
+}
+
 // Costo NETO total (lo que se le debe al proveedor) de un servicio, dado su
 // modo de cobro YA validado + los datos crudos de tarifa + el pax REAL de la
 // reserva. Misma fórmula que usa `calcularPrecioConModoYMarkup`

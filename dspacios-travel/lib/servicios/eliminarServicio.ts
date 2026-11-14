@@ -2,13 +2,13 @@
 // La protección real es de la base (trigger `linea_enlazada_protegida`: el ON DELETE SET NULL de contrato_servicios.servicio_id choca con él, código 42501); aquí solo se
 // traduce ese error técnico a un texto claro. Puro: se importa directo desde `node --test`.
 export const MENSAJE_SERVICIO_CON_OBLIGACIONES =
-  "Este servicio ya tiene obligaciones asociadas (líneas de contrato con su cuenta por pagar) y no puede eliminarse.";
+  "Este servicio ya tiene obligaciones asociadas (cuentas por pagar, u obligaciones previstas de contratos pendientes) y no puede eliminarse.";
 
 type ErrorBD = { code?: string | null; message?: string | null } | null | undefined;
 
-/** ¿El error es el rechazo de la base por una línea de contrato con cuenta por pagar enlazada? (no confunde un 42501 de RLS con este caso). */
+/** ¿El error es el rechazo de la base por obligaciones del servicio: línea con CxP enlazada (265) u obligación prevista (292)? (no confunde un 42501 de RLS con este caso). */
 export function esRechazoServicioConObligaciones(e: ErrorBD): boolean {
-  return e?.code === "42501" && /cuenta por pagar enlazada/i.test(e.message ?? "");
+  return e?.code === "42501" && /cuenta por pagar enlazada|obligaci[oó]n(es)? prevista/i.test(e.message ?? "");
 }
 
 export const MENSAJE_SERVICIO_PUBLICADO =

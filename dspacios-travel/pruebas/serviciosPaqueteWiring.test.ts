@@ -304,15 +304,24 @@ describe("R294-4 · CxP de servicios: se estampa `servicio_id` (llave de reconci
 });
 
 describe("R294-5 · los costos de servicio cuadran con las CxP creadas", () => {
-  test("reservarDesdeTarifarioInterno escribe costo_receptivo UNA vez, con opcionales + incluidos", () => {
+  test("reservarDesdeTarifarioInterno escribe cada columna de servicio UNA vez, con opcionales + incluidos, repartida por el tipo de su CxP (#75)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "async function calcularFinancieroReserva(p: {");
-    const escrituras = cuerpo.match(/costo_receptivo = costoServiciosTotal/g) ?? [];
-    assert.equal(escrituras.length, 1, "debe haber exactamente una escritura de costo_receptivo");
-    assert.match(cuerpo, /costoServiciosTotal \+= s\.costoNeto/, "el costo del incluido debe entrar a la columna");
+    assert.equal((cuerpo.match(/costosContrato\.costo_receptivo = porColumna\.costo_receptivo/g) ?? []).length, 1, "una escritura de costo_receptivo");
+    assert.equal((cuerpo.match(/costosContrato\.costo_asistencia = porColumna\.costo_asistencia/g) ?? []).length, 1, "una escritura de costo_asistencia");
+    assert.match(cuerpo, /const porColumna = costosServicioPorColumna\(costosServicios\)/);
+    assert.match(cuerpo, /costosServicios\.push\(\{ tipoCxp: tipoProveedorCxpServicio\(categoria\), costo: costoServ \}\)/, "el opcional entra con el tipo de su CxP");
+    assert.match(cuerpo, /costosServicios\.push\(\{ tipoCxp: tipoProveedorCxpServicio\(s\.categoria\), costo: s\.costoNeto \}\)/, "el incluido entra con el tipo de su CxP");
+    assert.doesNotMatch(cuerpo, /costoServiciosTotal/, "ya no hay una sola bolsa escrita como costo_receptivo");
   });
-  test("convertirCotizacionCarrito deriva costo_receptivo de las CxP que va a insertar", () => {
+  test("convertirCotizacionCarrito deriva sus columnas de servicio de las CxP que va a insertar, por su tipo (#75)", () => {
     const cuerpo = cuerpoFuncion(reservarActions, "export async function convertirCotizacionCarrito(");
-    assert.match(cuerpo, /costoServiciosCarrito[\s\S]{0,200}servicio_id != null/);
+    assert.match(cuerpo, /serviciosCarrito = costosServicioPorColumna\(cxp\.filter\(\(r\) => r\.servicio_id != null\)\.map\(\(r\) => \(\{ tipoCxp: r\.tipo_proveedor/);
+    assert.match(cuerpo, /costosGrupo\.costo_asistencia = serviciosCarrito\.costo_asistencia/);
+  });
+  test("actualizarServiciosContrato escribe las dos columnas de servicio desde el conjunto editado (#75)", () => {
+    const cuerpo = cuerpoFuncion(contratosActions, "export async function actualizarServiciosContrato(");
+    assert.match(cuerpo, /\.\.\.costosServicioPorColumna\(objetivo\.map\(\(o\) => \(\{ tipoCxp: o\.tipoProveedor, costo: o\.costoNeto \}\)\)\)/);
+    assert.doesNotMatch(cuerpo, /costo_receptivo: costoReceptivo/);
   });
 });
 
@@ -320,12 +329,13 @@ describe("R294-6 · actualizarServiciosContrato: valida ANTES de escribir (fallo
   const cuerpo = cuerpoFuncion(contratosActions, "export async function actualizarServiciosContrato(");
   test("el rechazo por CxP con pagos ocurre ANTES de tocar ítems, precio o CxP", () => {
     const idxBloqueo = cuerpo.indexOf("plan.bloqueados.length");
-    const idxBorradoItems = cuerpo.indexOf('from("contrato_items").delete()');
-    const idxUpdatePrecio = cuerpo.indexOf("precio_venta: nuevoPrecio");
+    // 288 (#75): ítems, precio, resumen y obligaciones se aplican en UNA transacción (RPC); antes de ella no se escribe nada.
+    const idxAplicar = cuerpo.indexOf('rpc("pendiente_aplicar_servicios"');
     assert.ok(idxBloqueo > -1, "no existe el candado de CxP con movimientos");
-    assert.ok(idxBorradoItems > -1 && idxUpdatePrecio > -1);
-    assert.ok(idxBloqueo < idxBorradoItems, "se borran ítems antes de validar el plan de CxP");
-    assert.ok(idxBloqueo < idxUpdatePrecio, "se cambia el precio antes de validar el plan de CxP");
+    assert.ok(idxAplicar > -1, "la aplicación debe ser UNA llamada atómica");
+    assert.ok(idxBloqueo < idxAplicar, "se aplica antes de validar el plan de CxP");
+    assert.equal(cuerpo.indexOf('from("contrato_items").delete()'), -1, "no borra ítems por separado");
+    assert.equal(cuerpo.indexOf("precio_venta: nuevoPrecio }).eq"), -1, "no actualiza el precio por separado");
   });
   test("reconcilia por servicio_id (nunca por nombre) y respeta las filas sin servicio_id", () => {
     assert.match(cuerpo, /planReconciliacionCxpServicios\(/);

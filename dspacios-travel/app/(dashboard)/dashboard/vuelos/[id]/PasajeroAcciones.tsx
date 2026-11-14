@@ -9,6 +9,8 @@ import { nuevaOperacionId, type ModoMover } from "@/lib/vuelos/operaciones";
 import { validarRetencion } from "@/lib/vuelos/retencion";
 import { AlertTriangle, ArrowRightLeft, Check, Info, UserRound } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 
 type Pasajero = PasajeroSillaInput;
 /**
@@ -20,7 +22,8 @@ type RecordOpt = {
   /** Misma fecha de ida y de regreso que este record (D3-c). */
   mismasFechas: boolean;
 };
-type CandidatoResponsable = { sillaId: number; nombre: string };
+/** `identidad`: la del contrato de la silla de ese adulto, leída por la página en la misma consulta de las sillas. */
+type CandidatoResponsable = { sillaId: number; nombre: string; identidad: IdentidadContrato };
 
 const inp = "w-full rounded border border-gray-300 px-2 py-1 text-sm";
 
@@ -35,6 +38,7 @@ export function PasajeroAcciones({
   libre,
   contratoOrganico,
   contratoVisto,
+  identidad,
 }: {
   sillaId: number;
   bloqueoId: number;
@@ -67,6 +71,8 @@ export function PasajeroAcciones({
    * sobre otro contrato (migración 201).
    */
   contratoVisto: ContratoVistoSilla;
+  /** Identidad del contrato de ESTA silla (orgánico o por referencia manual) tal como la leyó la página; {} si no tiene contrato. Se reenvía sin recalcular. */
+  identidad: IdentidadContrato;
 }) {
   const [modo, setModo] = useState<null | "editar" | "mover">(null);
   const [form, setForm] = useState<Pasajero>(inicial);
@@ -84,6 +90,7 @@ export function PasajeroAcciones({
   const [responsableId, setResponsableId] = useState<number | "">("");
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  useEscapeCerrar(modo !== null, () => setModo(null), pending); // Escape = Cancelar; no mientras se guarda o se mueve
 
   const set = (k: keyof Pasajero, val: string) => setForm((f) => ({ ...f, [k]: val }));
 
@@ -141,7 +148,7 @@ export function PasajeroAcciones({
           tipoDoc: form.tipo_doc,
           numeroDoc: form.numero_doc,
           fechaNacimiento: form.nacimiento,
-        });
+        }, candidatosResponsable.find((c) => c.sillaId === Number(responsableId))?.identidad ?? {}); // el infante queda en el contrato del adulto responsable elegido
         if (r.ok) { setModo(null); setResponsableId(""); }
         else setErr(r.error);
       });
@@ -155,7 +162,7 @@ export function PasajeroAcciones({
       if (motivo) { setErr(motivo); return; }
     }
     start(async () => {
-      const r = await editarPasajeroSilla(sillaId, bloqueoId, form, contratoVisto);
+      const r = await editarPasajeroSilla(sillaId, bloqueoId, form, contratoVisto, identidad);
       if (r.ok) setModo(null);
       else setErr(r.error);
     });
@@ -174,7 +181,7 @@ export function PasajeroAcciones({
     start(async () => {
       const r = await moverPasajeroSilla(sillaId, bloqueoId, Number(destino), {
         modo: modoMover, aceptaTarifaDistinta: aceptaTarifa, motivo, operacionId,
-      });
+      }, identidad);
       if (r.ok) {
         setMovido({ movidas: r.movidas, repetida: r.repetida, contrato: r.contrato, avisoRecord: r.avisoRecordContrato, avisoTarifa: r.avisoTarifaDistinta, tramos: r.tramosActualizados });
       } else {
@@ -195,7 +202,7 @@ export function PasajeroAcciones({
           description="La silla queda disponible y pierde la referencia del contrato, también la manual. El contrato en sí no se modifica."
           confirmLabel="Borrar pasajero"
           destructive
-          onConfirm={() => borrarPasajeroSilla(sillaId, bloqueoId, contratoVisto.updated_at)}
+          onConfirm={() => borrarPasajeroSilla(sillaId, bloqueoId, contratoVisto.updated_at, identidad)}
           trigger={<button type="button" disabled={pending} className="text-red-500 hover:underline disabled:opacity-50">Borrar</button>}
         />
       </div>

@@ -7,6 +7,10 @@ import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { numeroVisible } from "@/lib/tenant";
 import { resolverContextoPortal, cargarConjuntoPortal, linkPagoPortal } from "@/lib/portal/b2bPortalServidor";
 import { carteraDe, partirCartera } from "@/lib/portal/b2bPortal";
+import { SoportesPago, type ContratoSoportes } from "@/components/portal/SoportesPago";
+import { soportesVigentes } from "@/lib/soportes/servidor";
+import { identidadDe } from "@/lib/contrato/identidad";
+import { maxBytesSoporte, formatoMaximo } from "@/lib/soportes/archivo";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +18,7 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
   const ctx = await resolverContextoPortal();
   if (ctx.estado !== "ok") return <PortalGate ctx={ctx} />;
   const { vista } = await searchParams;
-  const actual = vista === "pagos" ? "pagos" : "saldo";
+  const actual = vista === "pagos" ? "pagos" : vista === "soportes" ? "soportes" : "saldo";
 
   const [conjunto, linkPago] = await Promise.all([cargarConjuntoPortal(ctx, { abonos: true }), linkPagoPortal()]);
   const cartera = carteraDe(conjunto.ventas, conjunto.abonos);
@@ -22,12 +26,32 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
   const porContrato = new Map(cartera.map((f) => [f.numero_contrato, f]));
   const abonosOrdenados = [...conjunto.abonos].sort((a, b) => String(b.fecha_abono ?? "").localeCompare(String(a.fecha_abono ?? "")) || b.id - a.id);
 
+  // Soportes de pago (#86): solo contratos PROPIOS (participar por comisión no es propiedad) y solo se leen al abrir esa pestaña.
+  let contratosSoportes: ContratoSoportes[] = [];
+  let soportesCompletos = true;
+  const maxSoporte = maxBytesSoporte(process.env.SOPORTES_MAX_BYTES);
+  if (actual === "soportes") {
+    const propios = conjunto.ventas.filter((v) => v.relacion === "propio");
+    // contrato_uid viene en la MISMA consulta que trajo los contratos, abonos y saldos de esta pantalla (cargarConjuntoPortal), no de una consulta posterior por número.
+    const s = await soportesVigentes(propios.map((v) => v.numero_contrato));
+    soportesCompletos = s.completa;
+    const abonosPor = new Map<string, number>();
+    for (const a of conjunto.abonos) abonosPor.set(a.numero_contrato, (abonosPor.get(a.numero_contrato) ?? 0) + 1);
+    contratosSoportes = propios
+      .map((v) => ({
+        numero: v.numero_contrato, cliente: (v as { cliente?: string | null }).cliente ?? null,
+        abonos: abonosPor.get(v.numero_contrato) ?? 0, soportes: s.filas.filter((x) => x.numero_contrato === v.numero_contrato),
+        identidad: identidadDe(v.numero_contrato, (v as { contrato_uid?: string | null }).contrato_uid),
+      }))
+      .filter((c) => c.abonos > 0 || c.soportes.length > 0);
+  }
+
   return (
     <PortalShell nombre={ctx.nombre} rol={ctx.rol} cta={<BotonTarifario />} activa="cartera" mostrarAgentes={ctx.esTitularAgencia} linkPago={linkPago}>
       <Titulo apoyo={<>Valor, pagos y saldo de tus contratos, en la moneda de cobro de cada uno.</>}>Cartera</Titulo>
       <SubPestanas
         base="/portal/b2b/cartera" actual={actual} etiqueta="Vista de cartera"
-        items={[{ id: "saldo", label: "Con saldo", cuenta: conSaldo.length }, { id: "pagos", label: "Pagos", cuenta: pagos.length }]}
+        items={[{ id: "saldo", label: "Con saldo", cuenta: conSaldo.length }, { id: "pagos", label: "Pagos", cuenta: pagos.length }, { id: "soportes", label: "Soportes de pago" }]}
       />
       {conjunto.historicoIncompleto && <AvisoHistoricoIncompleto />}
       {!conjunto.abonosCompletos && (
@@ -36,7 +60,10 @@ export default async function PortalCartera({ searchParams }: { searchParams: Pr
         </Aviso>
       )}
 
-      {actual === "saldo" ? (
+      {actual === "soportes" ? (
+        !soportesCompletos || !conjunto.abonosCompletos ? <Vacio>No pudimos leer todos tus soportes y pagos. Intenta más tarde.</Vacio>
+          : <SoportesPago contratos={contratosSoportes} maximo={maxSoporte} maximoTexto={formatoMaximo(maxSoporte)} />
+      ) : actual === "saldo" ? (
         conSaldo.length === 0 ? <Vacio>No tienes contratos con saldo pendiente.</Vacio> : (
           <TablaScroll etiqueta="Contratos con saldo" ancho="min-w-[860px]" apilar>
             <thead>

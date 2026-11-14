@@ -6,6 +6,7 @@
 //   · cada opción con su total, sin total global; vuelos/servicios bajo su opción y sin importe propio;
 //   · ni costos, ni proveedores, ni plataformas, ni comisión/NETO en el documento.
 import { test } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -43,7 +44,7 @@ function armar(sobre: Partial<EntradaComparativaManual> = {}) {
   return { opciones: r.datos.opciones, grupos: agruparPorHotel(vistas), resumenes };
 }
 const html = (grupos: ReturnType<typeof armar>["grupos"], resumenes: Record<string, ResumenHotelUI>, vencida = false, madre = MADRE) =>
-  renderToStaticMarkup(h(ComparativaHoja, { madre, grupos, resumenes, vencida, identidad: null }));
+  renderToStaticMarkup(h(ComparativaHoja, { madre, grupos, resumenes, vencida, identidad: AGENCIA_PRUEBA }));
 const cuenta = (s: string, t: string) => s.split(t).length - 1;
 const COP = (n: number) => new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(n);
 
@@ -152,15 +153,20 @@ test("encabezado: marca, código, emisión y vigencia; vencida avisa; textos lar
   assert.doesNotMatch(s, /Datos de pago|cuenta corriente|CLÁUSULA|Bancolombia/i);
 });
 
-test("identidad: la de la agencia acreditada; Minorista sin dato propio nunca hereda el RNT de Mayorista", () => {
+test("identidad (#49): cada hoja imprime SOLO la identidad de su agencia; sin identidad no hay hoja y nunca se hereda la constante de otra agencia", () => {
   const { grupos, resumenes } = armar();
-  const min = renderToStaticMarkup(h(ComparativaHoja, { madre: { ...MADRE, tenant: "minorista" }, grupos, resumenes, vencida: false, identidad: null }));
-  assert.doesNotMatch(min, /RNT|NIT|147090|901.654/);
-  const propia = renderToStaticMarkup(h(ComparativaHoja, { madre: { ...MADRE, tenant: "minorista" }, grupos, resumenes, vencida: false, identidad: { razon_social: "Minorista SAS", nit: "800.1", rnt: "55555", correo: "m@x.test" } }));
-  assert.match(propia, /RNT 55555/); assert.match(propia, /Minorista SAS · NIT 800.1 · RNT 55555/);
-  assert.doesNotMatch(propia, /147090/);
-  const may = renderToStaticMarkup(h(ComparativaHoja, { madre: MADRE, grupos, resumenes, vencida: false, identidad: null }));
-  assert.match(may, /RNT 147090/);
+  const hoja = (tenant: string, identidad: unknown) => renderToStaticMarkup(h(ComparativaHoja, { madre: { ...MADRE, tenant }, grupos, resumenes, vencida: false, identidad } as never));
+  // Sin identidad acreditada (ausente o sin RNT): error explícito en AMBAS agencias, nunca un documento con el RNT de la otra.
+  for (const tenant of ["mayorista", "minorista"]) {
+    for (const identidad of [null, { razon_social: "X", nit: "1", rnt: null }, { razon_social: "X", nit: "1", rnt: "" }, { razon_social: "X", nit: "1", rnt: "  " }]) {
+      assert.throws(() => hoja(tenant, identidad), /No se pudo acreditar la identidad/, `${tenant} ${JSON.stringify(identidad)}`);
+    }
+  }
+  const min = hoja("minorista", { razon_social: "Minorista SAS", nit: "800.1", rnt: "55555", correo: "m@x.test" });
+  assert.match(min, /RNT 55555/); assert.match(min, /Minorista SAS · NIT 800.1 · RNT 55555/);
+  const may = hoja("mayorista", { razon_social: "Mayorista SAS", nit: "800.2", rnt: "77777", correo: "may@x.test" });
+  assert.match(may, /Mayorista SAS · NIT 800.2 · RNT 77777/);
+  for (const t of [min, may]) assert.doesNotMatch(t, /147090|901\.?654/);
 });
 
 test("opción NETO con líneas de menores a PVP: no se muestran como tarifa y se explica el límite (sin la palabra NETO)", () => {

@@ -1,5 +1,6 @@
 "use server";
 
+import { type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { registrarAbono, actualizarAbono, anularAbono, type ResultadoAbono } from "../contratos/actions";
 
@@ -11,13 +12,14 @@ export async function registrarAbonoCartera(
   valor: number,
   formaPago: string,
   referencia: string,
-  trm?: number,   // TRM del día (contratos en USD)
-  fecha?: string, // fecha del abono (por defecto hoy)
-  confirmarExcedente?: boolean, // pago adicional intencional sobre un contrato ya cubierto
-  operacionId?: string,         // idempotencia del registro (una por intento de formulario)
+  trm: number | undefined,   // TRM del día (contratos en USD)
+  fecha: string | undefined, // fecha del abono (por defecto hoy)
+  confirmarExcedente: boolean | undefined, // pago adicional intencional sobre un contrato ya cubierto
+  operacionId: string | undefined,         // idempotencia del registro (una por intento de formulario)
+  identidad: IdentidadContrato,
 ): Promise<ResultadoAbono> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
-  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm, fecha, confirmarExcedente, operacionId);
+  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm, fecha, confirmarExcedente, operacionId, identidad);
   if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };
@@ -28,16 +30,17 @@ export async function registrarAbonoCartera(
 export async function actualizarAbonoCartera(
   id: number,
   numeroContrato: string,
-  input: { valor: number; fecha: string; formaPago: string; referencia: string; trmInput?: number }
+  input: { valor: number; fecha: string; formaPago: string; referencia: string; trmInput?: number },
+  identidad: IdentidadContrato
 ): Promise<{ ok: boolean; error?: string }> {
-  const r = await actualizarAbono(id, numeroContrato, input);
+  const r = await actualizarAbono(id, numeroContrato, input, identidad);
   if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };
 }
 
-export async function anularAbonoCartera(id: number, numeroContrato: string, motivo: string): Promise<{ ok: boolean; error?: string }> {
-  const r = await anularAbono(id, numeroContrato, motivo);
+export async function anularAbonoCartera(id: number, numeroContrato: string, motivo: string, identidad: IdentidadContrato): Promise<{ ok: boolean; error?: string }> {
+  const r = await anularAbono(id, numeroContrato, motivo, identidad);
   if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };

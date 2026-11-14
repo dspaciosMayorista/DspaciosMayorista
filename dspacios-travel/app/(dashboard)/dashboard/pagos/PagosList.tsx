@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { registrarPagoProveedor, pagarSaldoExacto, deshacerUltimoPago, asignarProveedorCuentaPorPagar, configurarFacturaProveedor } from "./actions";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { copMaximoPagable, pagoSaldoExacto } from "@/lib/finanzas/guardaSaldoCxp";
@@ -15,6 +16,8 @@ import { copMaximoPagable, pagoSaldoExacto } from "@/lib/finanzas/guardaSaldoCxp
 export type PagoRow = {
   id: number;
   numero_contrato: string;
+  /** Identidad del contrato tal como la leyó la página (misma consulta); se reenvía a cada acción. */
+  identidad: IdentidadContrato;
   proveedor: string | null;
   tipo_proveedor: string | null;
   servicio: string | null;
@@ -278,7 +281,7 @@ function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalo
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       {/* Asignar / cambiar proveedor (ancho completo) */}
       <div className="lg:col-span-2">
-        <AsignarProveedor id={row.id} actual={row.proveedor} catalogo={catalogo} />
+        <AsignarProveedor id={row.id} identidad={row.identidad} actual={row.proveedor} catalogo={catalogo} />
       </div>
       {/* Factura del proveedor: IRT / Costo + base gravable (ancho completo) */}
       <div className="lg:col-span-2">
@@ -380,9 +383,9 @@ function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalo
             Esta cuenta está totalmente pagada.
           </p>
         ) : (
-          <PagoInline id={row.id} saldo={row.saldo} moneda={row.moneda} puedeDeshacer={row.pagos.length > 0} />
+          <PagoInline id={row.id} identidad={row.identidad} saldo={row.saldo} moneda={row.moneda} puedeDeshacer={row.pagos.length > 0} />
         )}
-        {row.pagos.length > 0 && row.saldo <= 0 && <Deshacer id={row.id} />}
+        {row.pagos.length > 0 && row.saldo <= 0 && <Deshacer id={row.id} identidad={row.identidad} />}
       </div>
     </div>
   );
@@ -402,7 +405,7 @@ function FacturaProveedor({ row, ivaPct }: { row: PagoRow; ivaPct: number }) {
   function guardar() {
     setError(null); setOk(false);
     startTransition(async () => {
-      const res = await configurarFacturaProveedor({ id: row.id, clasificacion: clasif, baseGravable: baseNum });
+      const res = await configurarFacturaProveedor({ id: row.id, clasificacion: clasif, baseGravable: baseNum }, row.identidad);
       if (!res.ok) setError(res.error); else setOk(true);
     });
   }
@@ -446,7 +449,7 @@ function FacturaProveedor({ row, ivaPct }: { row: PagoRow; ivaPct: number }) {
   );
 }
 
-function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string | null; catalogo: string[] }) {
+function AsignarProveedor({ id, identidad, actual, catalogo }: { identidad: IdentidadContrato; id: number; actual: string | null; catalogo: string[] }) {
   const [sel, setSel] = useState(actual ?? "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -457,7 +460,7 @@ function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string
     setError(null);
     if (!sel) { setError("Elige un proveedor."); return; }
     startTransition(async () => {
-      const res = await asignarProveedorCuentaPorPagar(id, sel);
+      const res = await asignarProveedorCuentaPorPagar(id, sel, identidad);
       if (!res.ok) setError(res.error);
     });
   }
@@ -485,11 +488,13 @@ function AsignarProveedor({ id, actual, catalogo }: { id: number; actual: string
 
 function PagoInline({
   id,
+  identidad,
   saldo,
   moneda,
   puedeDeshacer,
 }: {
   id: number;
+  identidad: IdentidadContrato;
   saldo: number;
   moneda: string;
   puedeDeshacer: boolean;
@@ -518,7 +523,7 @@ function PagoInline({
       return;
     }
     startTransition(async () => {
-      const res = await registrarPagoProveedor(id, v, fecha, esUSD ? Number(trm) : undefined);
+      const res = await registrarPagoProveedor(id, v, fecha, esUSD ? Number(trm) : undefined, identidad);
       if (!res.ok) {
         setError(res.error);
         return;
@@ -596,7 +601,7 @@ function PagoInline({
             Saldo total ({formatMoneda(saldo, moneda)})
           </button>
         )}
-        {puedeDeshacer && <Deshacer id={id} />}
+        {puedeDeshacer && <Deshacer id={id} identidad={identidad} />}
       </div>
       {exacto && (
         <div className="space-y-2 rounded-md border border-[#1D7C9A]/30 bg-[#1D7C9A]/5 p-3 text-sm text-gray-700">
@@ -611,7 +616,7 @@ function PagoInline({
                 const { cop } = exacto;
                 setError(null);
                 startTransition(async () => {
-                  const res = await pagarSaldoExacto(id, cop, fecha);
+                  const res = await pagarSaldoExacto(id, cop, fecha, identidad);
                   if (!res.ok) {
                     setError(res.error);
                     return;
@@ -641,13 +646,13 @@ function PagoInline({
   );
 }
 
-function Deshacer({ id }: { id: number }) {
+function Deshacer({ id, identidad }: { id: number; identidad: IdentidadContrato }) {
   const [pending, startTransition] = useTransition();
   return (
     <button
       type="button"
       disabled={pending}
-      onClick={() => startTransition(async () => void (await deshacerUltimoPago(id)))}
+      onClick={() => startTransition(async () => void (await deshacerUltimoPago(id, identidad)))}
       className="text-xs font-medium text-red-500 hover:underline disabled:opacity-50"
     >
       {pending ? "…" : "Deshacer último pago"}

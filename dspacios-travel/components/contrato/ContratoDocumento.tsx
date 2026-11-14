@@ -1,4 +1,5 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
+import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
 import { ETIQUETA_AJUSTE_CLIENTE, esLineaAjusteRedondeo } from "@/lib/reservar/solicitudHotel";
 import { EstanciaContratoBloque, type EstanciaContratoVista } from "@/components/contrato/EstanciaContratoBloque";
 import {
@@ -11,13 +12,14 @@ import {
   COPYRIGHT_PREFIJO,
   POWERED_BY,
 } from "@/lib/contrato/plantilla";
-import { formatMoneda, formatFechaLarga, calcularEdad } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, formatHora24, calcularEdad } from "@/lib/utils";
+import { AvisoItinerariosVuelos } from "@/components/cotizacion/AvisoItinerariosVuelos";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tarifaPaquete, vincularAdicionales, type SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { valorVisibleContratoItem, totalVisibleContratoItems } from "@/lib/contrato/valorContratoItem";
 import { presentacionValoresContrato } from "@/lib/contrato/presentacionValores";
 import { valoresNetosDocumento, tarifaIndividualSegura } from "@/lib/contrato/valoresNetosDocumento";
-import { hayServicioManual, tituloItemPaquete, tituloPaqueteEditado, tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
+import { hayServicioManual, tituloPaqueteEditado, tituloPaqueteTuristico } from "@/lib/contrato/paqueteTuristicoDocumento";
 import type { ComposicionBernaloDocumento, HabitacionBernaloDocumento } from "@/lib/reservar/alojamientoBernaloDocumento";
 import type {
   VentaDocumento,
@@ -97,8 +99,8 @@ type Props = {
   codigo?: string;
   vigenciaHasta?: string | null;
   // Identidad fiscal de la agencia dueña del contrato (tabla `agencias`,
-  // una fila por tenant). Si no se pasa (páginas viejas sin actualizar),
-  // cae a la EMPRESA fija (mayorista) — ver abajo.
+  // una fila por tenant). OBLIGATORIA en la práctica (#49): sin fila o sin
+  // razón social/NIT/RNT el documento falla; no hay fallback a `EMPRESA`.
   agencia?: Agencia | null;
   // Condiciones PERMANENTES del contrato (migración 164, Commit 6), YA
   // resueltas por `lib/contrato/condicionesContrato.ts` — el MISMO resolver
@@ -255,8 +257,9 @@ export function ContratoDocumento({
   const unificarPaquete = !resumen && esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
   const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
   const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
-  // Cotización normal con reparto por pasajero: el Ítem es «Paquete Turístico {Destino}» (o el texto editado), nunca el hotel, la categoría ni los servicios.
-  const tituloItemResumen = tituloPaqueteEditado(tituloPaquete) ?? tituloItemPaquete(ventaTexto.destino);
+  // Cotización normal con reparto por pasajero: el Ítem es el texto editado o, por unidad, «Paquete Turístico {nombre comercial}» (#52; sin nombre, el destino).
+  // Nunca el hotel, la categoría ni los servicios: categoría y régimen siguen en «Servicio / Plan».
+  const tituloEditadoResumen = tituloPaqueteEditado(tituloPaquete);
   // Cada línea adicional se vincula con el snapshot congelado (a cuántos pasajeros cubre y, en NETO, su parte del plan B2B). Sin vínculo seguro NO se infiere nada
   // (ni de «venta.pax» ni del texto de la línea): se muestra el total agregado y se explica.
   const adLineas = unificarPaquete ? [...lineasVuelo, ...servicioItems] : [];
@@ -294,19 +297,20 @@ export function ContratoDocumento({
   const MARCA = MARCA_POR_TENANT[tenant];
   const PRIMARY = MARCA.primary;
   const TITULO = MARCA.titulo;
-  // Identidad fiscal: la de `agencias` (tenant real) si llegó por prop; si no,
-  // la constante fija de siempre (documentos viejos sin actualizar a esta prop).
+  // Identidad fiscal (#49): SOLO la fila `agencias` del tenant del contrato. Sin fallback a `EMPRESA` (es la identidad de MINORISTA): fila ausente o
+  // razón social/NIT/RNT vacíos → error explícito, el documento no se genera. Correo y cuenta son opcionales y se omiten si faltan.
+  const idAgencia = identidadAgencia(agencia, tenant);
   const empresa = {
-    razonSocial: agencia?.razon_social ?? EMPRESA.razonSocial,
-    nit: agencia?.nit ?? EMPRESA.nit,
-    rnt: agencia?.rnt ?? EMPRESA.rnt,
+    razonSocial: idAgencia.razonSocial,
+    nit: idAgencia.nit,
+    rnt: idAgencia.rnt,
     sitio: EMPRESA.sitio,
-    correo: agencia?.correo ?? EMPRESA.correo,
+    correo: idAgencia.correo,
     cuentaBancaria: {
-      banco: agencia?.banco ?? EMPRESA.cuentaBancaria.banco,
-      tipo: agencia?.tipo_cuenta ?? EMPRESA.cuentaBancaria.tipo,
-      numero: agencia?.numero_cuenta ?? EMPRESA.cuentaBancaria.numero,
-      titular: agencia?.razon_social ?? EMPRESA.cuentaBancaria.titular,
+      banco: idAgencia.banco,
+      tipo: idAgencia.tipoCuenta,
+      numero: idAgencia.numeroCuenta,
+      titular: idAgencia.razonSocial,
     },
   };
 
@@ -368,7 +372,7 @@ export function ContratoDocumento({
         </div>
         <div className="text-right text-xs opacity-90">
           <div>{empresa.sitio}</div>
-          <div>{empresa.correo}</div>
+          {empresa.correo && <div>{empresa.correo}</div>}
           <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
@@ -396,6 +400,7 @@ export function ContratoDocumento({
         return (
           <div className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-semibold text-amber-700 md:px-8">
             ⏳ COTIZACIÓN PENDIENTE — sujeta a disponibilidad y confirmación. No constituye reserva en firme hasta su confirmación.
+            <span className="mt-0.5 block font-normal">Las condiciones e instrucciones de pago de este documento son las que rigen para confirmar la reserva; mientras esté pendiente no hay obligaciones exigibles.</span>
           </div>
         );
       })()}
@@ -483,13 +488,13 @@ export function ContratoDocumento({
                       <div className="mt-1 text-xs text-gray-500">
                         Ida: {formatFechaLarga(v.fecha_salida)}
                         {mostrarHorario && v.vuelo_ida ? ` · vuelo ${v.vuelo_ida}` : ""}
-                        {mostrarHorario && v.hora_salida_ida ? ` · ${v.hora_salida_ida}${v.hora_llegada_ida ? `–${v.hora_llegada_ida}` : ""}` : ""}
+                        {mostrarHorario && formatHora24(v.hora_salida_ida) ? ` · ${formatHora24(v.hora_salida_ida)}${formatHora24(v.hora_llegada_ida) ? `–${formatHora24(v.hora_llegada_ida)}` : ""}` : ""}
                       </div>
                       {(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg) && (
                         <div className="text-xs text-gray-500">
                           Regreso: {formatFechaLarga(v.fecha_regreso)}
                           {mostrarHorario && v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
-                          {mostrarHorario && v.hora_salida_reg ? ` · ${v.hora_salida_reg}${v.hora_llegada_reg ? `–${v.hora_llegada_reg}` : ""}` : ""}
+                          {mostrarHorario && formatHora24(v.hora_salida_reg) ? ` · ${formatHora24(v.hora_salida_reg)}${formatHora24(v.hora_llegada_reg) ? `–${formatHora24(v.hora_llegada_reg)}` : ""}` : ""}
                         </div>
                       )}
                     </>
@@ -497,8 +502,8 @@ export function ContratoDocumento({
                     <div className="mt-1 text-xs text-gray-500">
                       {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
                       {mostrarHorario && v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
-                      {mostrarHorario && v.hora_salida
-                        ? (manual ? ` · salida ${v.hora_salida} (hora local)` : ` · ${v.hora_salida}${v.hora_llegada ? `–${v.hora_llegada}` : ""}`)
+                      {mostrarHorario && formatHora24(v.hora_salida)
+                        ? (manual ? ` · salida ${formatHora24(v.hora_salida)} (hora local)` : ` · ${formatHora24(v.hora_salida)}${formatHora24(v.hora_llegada) ? `–${formatHora24(v.hora_llegada)}` : ""}`)
                         : ""}
                     </div>
                   )}
@@ -511,6 +516,8 @@ export function ContratoDocumento({
                 {avisosVuelosManuales.map((a) => `Vuelos sin reserva confirmada: ${a}.`).join(" ")}
               </p>
             )}
+            {/* Una sola vez al pie de la sección y solo en cotización (el contrato no muestra horarios). */}
+            {esCotizacion && <AvisoItinerariosVuelos />}
           </section>
         )}
 
@@ -702,7 +709,7 @@ export function ContratoDocumento({
               $0) parecía un dato real y no lo es. Se separa en una fila
               agregada limpia — el detalle por habitación va aparte, debajo
               (sección "Detalle por habitación", regla F.32-34). */}
-          {resumen && <ResumenPreciosCliente resumen={resumen} titulo={tituloItemResumen} />}
+          {resumen && <ResumenPreciosCliente resumen={resumen} tituloEditado={tituloEditadoResumen} destino={ventaTexto.destino ?? null} />}
           {alojItemsTotal.length > 0 && !filaPaquete && !resumen && (
             <div className="mb-3 space-y-2">
               {alojItemsTotal.map((it) => (
@@ -1056,11 +1063,15 @@ export function ContratoDocumento({
 
           <div className="mt-6 rounded-lg bg-gray-50 p-3 text-[11px]">
             <div className="font-semibold text-gray-700">Datos de pago</div>
-            <div>
-              {empresa.cuentaBancaria.banco} — {empresa.cuentaBancaria.tipo}{" "}
-              {empresa.cuentaBancaria.numero}
-            </div>
-            <div>A nombre de {empresa.cuentaBancaria.titular}</div>
+            {empresa.cuentaBancaria.numero && (
+              <>
+                <div>
+                  {[empresa.cuentaBancaria.banco, empresa.cuentaBancaria.tipo].filter(Boolean).join(" — ")}{" "}
+                  {empresa.cuentaBancaria.numero}
+                </div>
+                <div>A nombre de {empresa.cuentaBancaria.titular}</div>
+              </>
+            )}
             <div className="mt-1">
               {empresa.razonSocial} · NIT {empresa.nit} · RNT {empresa.rnt}
             </div>

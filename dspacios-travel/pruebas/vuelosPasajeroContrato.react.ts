@@ -51,7 +51,7 @@ after(() => dom.window.close());
 
 test("con pasajero y sin contrato ofrece asignar manual, pero no retirar el cupo", async () => {
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "disponible", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "disponible", libre: false, version: "V1", identidad: {},
   }));
   assert.ok(boton("+ Contrato manual"));
   assert.equal(boton("retirar cupo"), undefined);
@@ -59,24 +59,24 @@ test("con pasajero y sin contrato ofrece asignar manual, pero no retirar el cupo
 
 test("al quitar el contrato manual con pasajero reaparece la asignacion", async () => {
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-7", estado: "confirmada", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-7", estado: "confirmada", libre: false, version: "V1", identidad: {},
   }));
   await click(boton("quitar")!);
   await click(boton("Quitar contrato")!);
-  assert.deepEqual(quitados, [[7, 3, "V1", null]], "sin pasajero: queda disponible, sin plazo");
+  assert.deepEqual(quitados, [[7, 3, "V1", null, {}]], "sin pasajero: queda disponible, sin plazo");
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "disponible", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "disponible", libre: false, version: "V1", identidad: {},
   }));
   assert.ok(boton("+ Contrato manual"));
 });
 
 test("un estado no vendible o con contrato no ofrece cambios impropios", async () => {
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "devuelta", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "devuelta", libre: false, version: "V1", identidad: {},
   }));
   assert.equal(boton("+ Contrato manual"), undefined);
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "", estado: "disponible", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "", estado: "disponible", libre: false, version: "V1", identidad: {},
   }));
   assert.equal(boton("+ Contrato manual"), undefined, "una referencia manual vacia sigue ocupando la columna");
   await render(h(SillaEstado, { sillaId: 7, bloqueoId: 3, estado: "disponible", sinContrato: true }));
@@ -93,9 +93,12 @@ test("un estado no vendible o con contrato no ofrece cambios impropios", async (
 test("retención en plazo sin contrato: ofrece asignar y manda la versión vista; si la silla cambió muestra el rechazo", async () => {
   const asignados: unknown[][] = [];
   let respuesta: { ok: boolean; error?: string } = { ok: true };
-  __setImpls({ asignarContratoManual: async (...args: unknown[]) => { asignados.push(args); return respuesta; } });
+  __setImpls({
+    asignarContratoManual: async (...args: unknown[]) => { asignados.push(args); return respuesta; },
+    resolverContratoManual: async () => ({ ok: true, externa: true }),
+  });
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "en_plazo", libre: false, version: "2026-10-03T15:00:00.5+00:00",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "en_plazo", libre: false, version: "2026-10-03T15:00:00.5+00:00", identidad: {},
   }));
   assert.equal(boton("retirar cupo"), undefined, "una retención no se retira como cupo libre");
   const escribir = async (valor: string) => {
@@ -107,23 +110,25 @@ test("retención en plazo sin contrato: ofrece asignar y manda la versión vista
   };
   await click(boton("+ Contrato manual")!);
   await escribir("EXT-9");
-  await click(boton("OK")!);
-  assert.deepEqual(asignados, [[7, "EXT-9", 3, "2026-10-03T15:00:00.5+00:00"]]);
+  await click(boton("Verificar")!);
+  await click(boton("Confirmar y asignar")!);
+  assert.deepEqual(asignados, [[7, "EXT-9", 3, "2026-10-03T15:00:00.5+00:00", {}]]);
   respuesta = { ok: false, error: "La silla 7 cambió desde que la viste (otro usuario la editó, asignó o liberó). Recarga la página; no se asignó nada." };
   await click(boton("+ Contrato manual")!);
   await escribir("EXT-10");
-  await click(boton("OK")!);
+  await click(boton("Verificar")!);
+  await click(boton("Confirmar y asignar")!);
   assert.match(container.textContent ?? "", /cambió desde que la viste/);
 });
 
 test("retención VENCIDA: no ofrece asignar contrato; pide actualizar el plazo (la liberación sigue siendo manual)", async () => {
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "en_plazo", libre: false, version: "V1", vencida: true,
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "en_plazo", libre: false, version: "V1", identidad: {}, vencida: true,
   }));
   assert.equal(boton("+ Contrato manual"), undefined, "sin botón de asignar sobre una retención vencida");
   assert.match(container.textContent ?? "", /Plazo vencido: actualízalo para asignar contrato/);
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "en_plazo", libre: false, version: "V1", vencida: false,
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "en_plazo", libre: false, version: "V1", identidad: {}, vencida: false,
   }));
   assert.ok(boton("+ Contrato manual"), "con plazo vigente (hoy incluido) sí se ofrece");
 });
@@ -140,7 +145,7 @@ async function escribirEn(selector: string, valor: string) {
 
 test("quitar contrato manual con pasajero: pide el plazo, no acepta vacío ni pasado, y propone el guardado si sigue vigente", async () => {
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-7", estado: "confirmada", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-7", estado: "confirmada", libre: false, version: "V1", identidad: {},
     pasajero: true, plazo: "2026-09-30", hoy: "2026-10-03",
   }));
   await click(boton("quitar")!);
@@ -155,10 +160,10 @@ test("quitar contrato manual con pasajero: pide el plazo, no acepta vacío ni pa
   assert.deepEqual(quitados, [], "con plazo vacío o pasado no llama a la base");
   await escribirEn('input[aria-label="Fecha de plazo"]', "03/10/2026");
   await click(boton("Quitar y retener")!);
-  assert.deepEqual(quitados, [[7, 3, "V1", "2026-10-03"]], "el día de hoy es válido");
+  assert.deepEqual(quitados, [[7, 3, "V1", "2026-10-03", {}]], "el día de hoy es válido");
 
   await render(h(SillaContrato, {
-    sillaId: 8, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-8", estado: "confirmada", libre: false, version: "V2",
+    sillaId: 8, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-8", estado: "confirmada", libre: false, version: "V2", identidad: {},
     pasajero: true, plazo: "2026-10-20", hoy: "2026-10-03",
   }));
   await click(boton("quitar")!);
@@ -168,34 +173,64 @@ test("quitar contrato manual con pasajero: pide el plazo, no acepta vacío ni pa
 test("editar contrato manual: reemplaza la referencia con la versión vista; vacío no llama; el rechazo se muestra", async () => {
   const editados: unknown[][] = [];
   let respuesta: { ok: boolean; error?: string } = { ok: true };
-  __setImpls({ editarContratoManual: async (...args: unknown[]) => { editados.push(args); return respuesta; } });
+  __setImpls({
+    editarContratoManual: async (...args: unknown[]) => { editados.push(args); return respuesta; },
+    resolverContratoManual: async () => ({ ok: true, externa: true }),
+  });
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-7", estado: "confirmada", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: "EXT-7", estado: "confirmada", libre: false, version: "V1", identidad: {},
     pasajero: true, plazo: null, hoy: "2026-10-03",
   }));
   await click(boton("editar")!);
   const input = container.querySelector('input[aria-label="Nuevo número de contrato manual"]') as HTMLInputElement;
   assert.equal(input.value, "EXT-7", "parte de la referencia actual");
   await escribirEn('input[aria-label="Nuevo número de contrato manual"]', "  ");
-  await click(boton("Guardar")!);
+  await click(boton("Verificar")!);
   assert.deepEqual(editados, []);
   assert.match(container.textContent ?? "", /Escribe el número de contrato manual/);
   await escribirEn('input[aria-label="Nuevo número de contrato manual"]', "EXT-77");
-  await click(boton("Guardar")!);
-  assert.deepEqual(editados, [[7, "EXT-77", 3, "V1"]]);
-  assert.equal(boton("Guardar"), undefined, "al guardar se cierra el editor");
+  await click(boton("Verificar")!);
+  assert.deepEqual(editados, [], "verificar no escribe nada");
+  await click(boton("Confirmar y guardar")!);
+  assert.deepEqual(editados, [[7, "EXT-77", 3, "V1", {}]]);
+  assert.equal(boton("Confirmar y guardar"), undefined, "al guardar se cierra el editor");
   respuesta = { ok: false, error: "La silla 7 cambió desde que la viste (otro usuario la editó, asignó o liberó). Recarga la página; no se cambió nada." };
   await click(boton("editar")!);
   await escribirEn('input[aria-label="Nuevo número de contrato manual"]', "EXT-78");
-  await click(boton("Guardar")!);
+  await click(boton("Verificar")!);
+  await click(boton("Confirmar y guardar")!);
   assert.match(container.textContent ?? "", /cambió desde que la viste/);
 });
 
 test("un contrato generado por la aplicación no se edita ni se quita desde la celda", async () => {
   await render(h(SillaContrato, {
-    sillaId: 7, bloqueoId: 3, numeroContrato: "00-0451", contratoManual: null, estado: "confirmada", libre: false, version: "V1",
+    sillaId: 7, bloqueoId: 3, numeroContrato: "00-0451", contratoManual: null, estado: "confirmada", libre: false, version: "V1", identidad: {},
   }));
   assert.equal(boton("editar"), undefined);
   assert.equal(boton("quitar"), undefined);
   assert.ok(container.querySelector('a[href="/dashboard/contratos/00-0451"]'));
+});
+
+test("asignar contrato manual (#75): verificar muestra el contrato destino y el envío definitivo lleva su uid; no se envía sin verificar", async () => {
+  const UID = "11111111-2222-4333-8444-555555555555";
+  const asignados: unknown[][] = [];
+  __setImpls({
+    asignarContratoManual: async (...args: unknown[]) => { asignados.push(args); return { ok: true }; },
+    resolverContratoManual: async () => ({ ok: true, externa: false, numero: "00-0541", cliente: "ANA PEREZ", uid: UID }),
+  });
+  await render(h(SillaContrato, {
+    sillaId: 7, bloqueoId: 3, numeroContrato: null, contratoManual: null, estado: "disponible", libre: true, version: "V1", identidad: {},
+  }));
+  await click(boton("+ Contrato manual")!);
+  await escribirEn('input[placeholder="N.º contrato"]', "00-0541");
+  await click(boton("Verificar")!);
+  assert.deepEqual(asignados, [], "verificar no asigna");
+  assert.match(container.textContent ?? "", /Contrato 00-0541 · ANA PEREZ/);
+  // Si la persona cambia la referencia después de verificar, la confirmación se invalida.
+  await escribirEn('input[placeholder="N.º contrato"]', "00-0542");
+  assert.equal(boton("Confirmar y asignar"), undefined);
+  await escribirEn('input[placeholder="N.º contrato"]', "00-0541");
+  await click(boton("Verificar")!);
+  await click(boton("Confirmar y asignar")!);
+  assert.deepEqual(asignados, [[7, "00-0541", 3, "V1", { "00-0541": UID }]]);
 });

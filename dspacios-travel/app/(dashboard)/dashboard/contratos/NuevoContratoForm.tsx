@@ -156,7 +156,7 @@ export function NuevoContratoForm({
   const [tipoVenta, setTipoVenta] = useState<"interno" | "agencia" | "freelance">("interno");
   const [aliadoId, setAliadoId] = useState<number | "">("");
   // #30 (entrega B): cómo compra el aliado B2B. PVP = paga el total y su
-  // comisión queda "Por definir" (como dejó #38); NETO = paga PVP − su
+  // comisión se registra sola con el % del aliado (#97; negociado: "Por definir"); NETO = paga PVP − su
   // comisión, ya descontada (la calcula el servidor; aquí solo se muestra).
   const [modoCompra, setModoCompra] = useState<"pvp" | "neto">("pvp");
   // Resultado de la última vista previa con la combinación que lo produjo: un
@@ -292,7 +292,7 @@ export function NuevoContratoForm({
     setHoteles(
       pk.paquete_hoteles.map((h) => ({
         nombre: h.nombre, categoria: "", proveedor: "", ciudad: h.ciudad ?? "", alimentacion: h.alimentacion ?? "",
-        acomodacion: "", detalleAcomodacion: h.acomodacion_detalle ?? "", fechaIngreso: "", fechaSalida: "",
+        acomodacion: "", detalleAcomodacion: h.acomodacion_detalle ?? "", fechaIngreso: fechaSalida, fechaSalida: fechaRegreso,
       }))
     );
     const precioDoble = pk.paquete_precios.find((x) => x.acomodacion === "doble")?.precio
@@ -496,7 +496,7 @@ export function NuevoContratoForm({
             <div className="flex flex-wrap gap-4 text-sm">
               <label className="flex items-center gap-2">
                 <input type="radio" name="modoCompra" checked={modoCompra === "pvp"} onChange={() => setModoCompra("pvp")} />
-                PVP: paga el total; su comisión se liquida aparte (queda por definir)
+                PVP: paga el total; la comisión del aliado se registra sola con su porcentaje del catálogo (en paquetes negociados queda por definir)
               </label>
               <label className="flex items-center gap-2">
                 <input type="radio" name="modoCompra" checked={modoCompra === "neto"} onChange={() => setModoCompra("neto")} />
@@ -628,7 +628,8 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setVuelos((a) => [...a, { aerolinea: "", record: "", direccion: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", compraIdx: comprasAereas.length ? 0 : null }])
+              // #16: el tramo nuevo parte de la fecha de salida del viaje (editable).
+              setVuelos((a) => [...a, { aerolinea: "", record: "", direccion: "", origenCodigo: "", origenCiudad: "", destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: fechaSalida, horaSalida: "", horaLlegada: "", servicios: "", compraIdx: comprasAereas.length ? 0 : null }])
             }
           >
             + Agregar tramo
@@ -703,7 +704,7 @@ export function NuevoContratoForm({
                 onClick={() =>
                   setVuelos((a) => [
                     ...a,
-                    { aerolinea: v.aerolinea, record: v.record, direccion: "regreso", origenCodigo: v.destinoCodigo, origenCiudad: v.destinoCiudad, destinoCodigo: v.origenCodigo, destinoCiudad: v.origenCiudad, numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", compraIdx: v.compraIdx ?? null },
+                    { aerolinea: v.aerolinea, record: v.record, direccion: "regreso", origenCodigo: v.destinoCodigo, origenCiudad: v.destinoCiudad, destinoCodigo: v.origenCodigo, destinoCiudad: v.origenCiudad, numeroVuelo: "", fecha: fechaRegreso, horaSalida: "", horaLlegada: "", servicios: "", compraIdx: v.compraIdx ?? null },
                   ])
                 }
               >
@@ -780,7 +781,8 @@ export function NuevoContratoForm({
             type="button"
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
-              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: "", fechaSalida: "", costo: 0 }])
+              // #16: el hotel nuevo parte del rango del viaje (editable); cambiar el viaje después no pisa lo ya escrito.
+              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: fechaSalida, fechaSalida: fechaRegreso, costo: 0 }])
             }
           >
             + Agregar hotel

@@ -21,6 +21,7 @@ import {
   toggleSeccionVisible,
 } from "../actions";
 import { SeccionForm } from "./SeccionForm";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 
 type Datos = Record<string, unknown>;
 
@@ -68,6 +69,7 @@ export function LienzoVivo({
   const [vista, setVista] = useState<"escritorio" | "movil">("escritorio");
   const [estado, setEstado] = useState<"" | "guardando" | "guardado" | "error">("");
   const [, start] = useTransition();
+  useEscapeCerrar(campos !== null, () => setCampos(null), estado === "guardando"); // Escape = «Cerrar»; no mientras se guarda
   const guardadoRef = useRef(pagina.secciones.map((s) => s.id).join(","));
   const timers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
 

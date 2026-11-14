@@ -4,6 +4,7 @@
 // cotizar): grupos de pasajeros con precio completo por persona y subtotal, el total y NINGÚN importe por servicio. Si el resumen no coincide con el acuerdo
 // (modalidad, moneda, total) el documento no lo usa. #17 (vuelos en cotización vs contrato) se conserva al final.
 import { test, describe } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement, type ComponentType } from "react";
 
@@ -39,8 +40,8 @@ const resumenDe = (cubreVuelo: string[], cubreTour: string[], opts: { modalidad?
 };
 
 function render(items: unknown[], extra: Record<string, unknown> = {}, v: Record<string, unknown> = {}) {
-  const props = { venta: { ...venta, ...v }, pasajeros: [], hoteles: HOTELES, vuelos: [], items, totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null, ...extra };
-  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props));
+  const props = { venta: { ...venta, ...v }, pasajeros: [], hoteles: HOTELES, vuelos: [], items, totalPagado: 0, agencia: AGENCIA_PRUEBA, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible: null, ...extra };
+  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA }));
 }
 const texto = (items: unknown[], extra: Record<string, unknown> = {}, v: Record<string, unknown> = {}) =>
   render(items, extra, v).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
@@ -50,7 +51,8 @@ const tiene = (t: string, frag: string) => plano(t).includes(plano(frag));
 const veces = (t: string, frag: string) => plano(t).split(plano(frag)).length - 1;
 
 // Estructura de siempre de «Valores y Pagos»: Ítem · Adultos · Niños · Tarifa Adulto · Tarifa Niño · Valor total. Una fila por grupo (mismo tipo, tarifa y servicios).
-const ITEM = "Paquete Turístico CARTAGENA";
+// #52: el fixture trae nombre comercial («Cartagena Esencial»): el Ítem es «Paquete Turístico {nombre}».
+const ITEM = "Paquete Turístico Cartagena Esencial";
 const filasDe = (html: string) => [...html.matchAll(/<tr[^>]*data-testid="resumen-(?:grupo|ajuste)"[^>]*>(.*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").replace(/&nbsp;| /g, " ").trim()));
 const encabezados = (html: string) => [...(html.match(/<thead[^>]*>([\s\S]*?)<\/thead>/)?.[1] ?? "").matchAll(/<th[^>]*>(.*?)<\/th>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").trim());
 const monto = (n: number, m = "COP") => formatMoneda(n, m).replace(/\s+/g, "");
@@ -76,12 +78,23 @@ describe("#94 · cotización del carrito con resumen: estructura de siempre, una
     assert.deepEqual(filas.map((f) => [f[1], f[3], f[5]]), [["1", monto(1_000_000), monto(1_000_000)], ["1", monto(900_000), monto(900_000)], ["1", monto(400_000), monto(400_000)]]);
     assert.equal(new Set(filas.map((f) => f[0])).size, 1, "el mismo Ítem en todas las filas");
   });
-  test("el Ítem es «Paquete Turístico {Destino}» o el texto editado; nunca el hotel, la categoría ni los servicios", () => {
+  test("el Ítem es «Paquete Turístico {nombre comercial}» (#52) o el texto editado; nunca el hotel, la categoría ni los servicios", () => {
     const h = texto(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) });
-    assert.match(h, /Paquete Turístico CARTAGENA/);
+    assert.match(h, /Paquete Turístico Cartagena Esencial/);
     const filas = filasDe(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]) }));
     for (const f of filas) assert.doesNotMatch(f[0], /Hotel|Almirante|Estándar|PC|Vuelo|Tour|Alojamiento/);
     const editado = filasDe(render(items, { resumenPrecios: resumenDe(["a1", "a2"], ["a2", "a3"]), tituloPaquete: "Escapada Caribe 2030" }));
+    assert.ok(editado.every((f) => f[0] === "Escapada Caribe 2030"));
+  });
+  test("#52: con nombre comercial del paquete el Ítem es «Paquete Turístico {nombre}»; el texto editado sigue mandando", () => {
+    const conNombre = resumenDe(["a1", "a2"], ["a2", "a3"]);
+    conNombre.unidades[0].paquete = { id: 7, nombre: "Cartagena Puente Festivo" };
+    const filas = filasDe(render(items, { resumenPrecios: conNombre }));
+    assert.ok(filas.length > 0 && filas.every((f) => f[0] === "Paquete Turístico Cartagena Puente Festivo"), JSON.stringify(filas.map((f) => f[0])));
+    for (const f of filas) assert.doesNotMatch(f[0], /Hotel|Almirante|Estándar|PC|Vuelo|Tour/);
+    // Categoría y régimen permanecen en «Servicio / Plan».
+    assert.ok(tiene(texto(items, { resumenPrecios: conNombre }), "Estándar · PC"));
+    const editado = filasDe(render(items, { resumenPrecios: conNombre, tituloPaquete: "Escapada Caribe 2030" }));
     assert.ok(editado.every((f) => f[0] === "Escapada Caribe 2030"));
   });
   test("ningún servicio lleva su propio importe ni su descripción en la tabla de valores", () => {

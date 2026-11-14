@@ -1,5 +1,6 @@
 import "server-only";
 
+import { parseIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { postearAsientoCxP } from "@/lib/contabilidad/asientos";
@@ -24,9 +25,14 @@ import { fechaNegocio } from "@/lib/fechaNegocio";
 // (p. ej. "solo el aéreo" porque el costo neto del hotel salió 0). El proveedor
 // del hotel/aéreo se jala del contrato; los demás quedan para que contabilidad
 // los asigne. El hotel se crea aunque el costo sea 0 (queda pendiente de valor).
-export async function asegurarCuentasPorPagar(numeroContrato: string): Promise<{ ok: boolean; creadas: number; error?: string; requiereRevision?: boolean }> {
+export async function asegurarCuentasPorPagar(numeroContrato: string, identidad: IdentidadContrato): Promise<{ ok: boolean; creadas: number; error?: string; requiereRevision?: boolean }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, creadas: 0 };
-  const admin = createAdminClient();
+  const admin = createAdminClient(parseIdentidad(identidad));
+  // 288 (#75, D1): mientras el contrato está PENDIENTE no se crean CxP (las obligaciones nacen al confirmar; lo previsto vive en contrato_obligaciones_previstas).
+  {
+    const { data: est } = await admin.from("ventas").select("estado").eq("numero_contrato", numeroContrato).maybeSingle();
+    if ((est as { estado?: string } | null)?.estado === "pendiente") return { ok: true, creadas: 0 };
+  }
 
   const [{ data: existentes, error: errExistentes }, { data: v, error: errVenta }, { data: ch }, { data: cv }, { data: provs }] = await Promise.all([
     // `valor_total` además del tipo: la cobertura de servicios se mide en

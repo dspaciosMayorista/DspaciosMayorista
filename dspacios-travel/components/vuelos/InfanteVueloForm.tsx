@@ -15,6 +15,8 @@ import { Baby } from "lucide-react";
 import { calcularEdad } from "@/lib/utils";
 import { esInfantePorEdad, validarInfanteVueloInput, type InfanteVueloInput } from "@/lib/vuelos/infanteVuelo";
 import { guardarInfanteVuelo } from "@/app/(dashboard)/dashboard/vuelos/actions";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 
 const inp = "w-full rounded border border-gray-300 px-2 py-1 text-sm";
 
@@ -25,6 +27,7 @@ export function InfanteVueloForm({
   modo,
   inicial,
   trigger,
+  identidad,
 }: {
   bloqueoId: number;
   /** Silla REAL del adulto responsable en este bloqueo — nunca un numero_contrato/responsable_id sueltos (el server los resuelve desde aquí). */
@@ -36,6 +39,8 @@ export function InfanteVueloForm({
   inicial?: { id: number; nombreCompleto: string; tipoDoc: string; numeroDoc: string; fechaNacimiento: string };
   /** Contenido del botón/enlace que abre el formulario — por defecto uno genérico según el modo. */
   trigger?: React.ReactNode;
+  /** Identidad del contrato de la silla del adulto responsable, tal como la leyó la página ({} si la silla no tiene contrato). Se reenvía sin recalcular. */
+  identidad: IdentidadContrato;
 }) {
   const vacio: InfanteVueloInput = { nombreCompleto: "", tipoDoc: "RC", numeroDoc: "", fechaNacimiento: "" };
   const [abierto, setAbierto] = useState(false);
@@ -46,6 +51,7 @@ export function InfanteVueloForm({
   );
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
+  useEscapeCerrar(abierto, () => setAbierto(false), pending); // Escape = Cancelar; no mientras se guarda
 
   const set = (k: keyof InfanteVueloInput, val: string) => setForm((f) => ({ ...f, [k]: val }));
 
@@ -78,7 +84,7 @@ export function InfanteVueloForm({
     if (aviso) { setErr(aviso); return; }
     setErr("");
     start(async () => {
-      const r = await guardarInfanteVuelo(bloqueoId, sillaResponsableId, modo === "editar" && inicial ? inicial.id : null, form);
+      const r = await guardarInfanteVuelo(bloqueoId, sillaResponsableId, modo === "editar" && inicial ? inicial.id : null, form, identidad);
       if (r.ok) setAbierto(false);
       else setErr(r.error);
     });

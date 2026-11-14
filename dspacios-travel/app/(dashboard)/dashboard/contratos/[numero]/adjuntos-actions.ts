@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { eliminarArchivoYFila, type ResultadoOp } from "@/lib/adjuntos/operaciones";
 
@@ -10,8 +11,8 @@ const BUCKET = "contratos";
 // El cliente sube el archivo al bucket privado y aquí se registra la fila.
 export async function registrarAdjunto(input: {
   numeroContrato: string; tipo: string; nombre: string; path: string; sizeBytes: number;
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("nombre").eq("id", user.id).single() : { data: null };
 
@@ -23,14 +24,15 @@ export async function registrarAdjunto(input: {
     size_bytes: input.sizeBytes || null,
     subido_por: perfil?.nombre ?? null,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${input.numeroContrato}`);
   return { ok: true };
 }
 
 // URL firmada temporal para descargar un adjunto del bucket privado.
+// identidad:n/a — solo firma una URL de lectura, no escribe tablas de contrato
 export async function urlFirmadaAdjunto(path: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lectura
   const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 120);
   if (error || !data) return { ok: false, error: error?.message ?? "No se pudo generar el enlace." };
   return { ok: true, url: data.signedUrl };
@@ -46,8 +48,8 @@ export async function urlFirmadaAdjunto(path: string): Promise<{ ok: true; url: 
 // lo referenciara: invisible e imborrable desde la interfaz. La orquestación (y
 // el porqué del orden) está en `lib/adjuntos/operaciones.ts`, que es puro y
 // tiene pruebas.
-export async function eliminarAdjunto(id: number): Promise<Result> {
-  const sb = await createClient();
+export async function eliminarAdjunto(id: number, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const r = await eliminarArchivoYFila(
     {
       buscarFila: async (idFila) =>

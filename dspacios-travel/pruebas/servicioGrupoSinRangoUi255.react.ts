@@ -81,7 +81,7 @@ describe("ReservaForm (256): servicio opcional con disponibilidad parcial por fe
 
 describe("ServiciosContratoEditor: estimado de un servicio por grupo", () => {
   test("5 pax y el rango llega a 4: aviso, sin precio aproximado, no se puede marcar", async () => {
-    const m = await montar(h(ServiciosContratoEditor, { numero: "00-0001", pax: 5, serviciosDisp: [TOUR, TOUR_COBERTURA], seleccionInicial: [] }));
+    const m = await montar(h(ServiciosContratoEditor, { identidad: {}, numero: "00-0001", pax: 5, serviciosDisp: [TOUR, TOUR_COBERTURA], seleccionInicial: [] }));
     desmontar = m.desmontar;
     const sin = fila(m.contenedor, "Tour grupal");
     assert.match(txt(sin), /Sin precio para 5 pasajeros/);
@@ -91,7 +91,7 @@ describe("ServiciosContratoEditor: estimado de un servicio por grupo", () => {
   });
 
   test("un servicio ya marcado que quedó sin rango: se puede desmarcar, avisa y NO deja guardar con él marcado", async () => {
-    const m = await montar(h(ServiciosContratoEditor, { numero: "00-0001", pax: 5, serviciosDisp: [TOUR], seleccionInicial: [7] }));
+    const m = await montar(h(ServiciosContratoEditor, { identidad: {}, numero: "00-0001", pax: 5, serviciosDisp: [TOUR], seleccionInicial: [7] }));
     desmontar = m.desmontar;
     const boton = [...m.contenedor.querySelectorAll("button")].find((b) => /Guardar servicios/.test(txt(b))) as HTMLButtonElement;
     assert.equal(boton.disabled, true, "guardar queda bloqueado mientras siga marcado");

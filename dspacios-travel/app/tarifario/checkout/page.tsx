@@ -2,7 +2,7 @@
 
 import { hayHoraPendiente, MENSAJE_HORA_PENDIENTE } from "@/lib/cart/horaPendiente";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
-import { Suspense, lazy, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatMoneda } from "@/lib/utils";
@@ -15,6 +15,10 @@ import { UserCheck } from "lucide-react";
 import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, type EdicionPresentacion, type OpcionEditable } from "@/components/cotizacion/PresentacionComparativaEditor";
 import type { PresentacionComparativa } from "@/lib/cotizacion/comparativa";
 import { ROTULO_ALCANCE_VENTA } from "@/lib/calc/servicioAlcance";
+import { getContextoRecobroCarrito, type ContextoRecobroCarrito } from "./actions";
+import { RecobroPanel, type EstadoRecobro, type ModoCapturaRecobro } from "./RecobroPanel";
+import { recobroDesdeFormulario, type RecobroParaEnviar } from "@/lib/cotizacion/recobroEntradaUI";
+import { coordinacionDisponible, crearContextoEnvio, enviarConClave, nuevaCompra, type ContextoEnvio } from "@/lib/cotizacion/claveEnvio";
 import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarPresentacionComparativa, type PresentacionPrevia, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
 import { ServicioManualPanel } from "./ServicioManualPanel";
@@ -71,6 +75,19 @@ export default function CheckoutPage() {
   // el envío: sin tipo, la persona queda como ficha provisional en el CRM.
   const [c, setC] = useState({ nombres: "", apellidos: "", tipoDoc: "", numeroDoc: "", telefono: "", email: "" });
   const [pending, start] = useTransition();
+  // Cerrojo de envío: dos clics en el mismo instante (antes de que React deshabilite el botón) no mandan dos solicitudes. Se libera al terminar la acción, con éxito o con error.
+  const enviando = useRef(false);
+  // #14-A: la misma intención de envío ya generó su cotización (otra pestaña o un reintento): se muestra la existente, nunca se crea otra.
+  const [yaGenerada, setYaGenerada] = useState<{ codigo: string; url: string; mensaje: string } | null>(null);
+  // El contenido exacto del último envío «ya generado»: si el usuario declara que es OTRA compra, este formulario (solo este) pasa a una identidad nueva.
+  const ultimoEnvio = useRef<unknown>(null);
+  const almacenEnvio = () => { try { return window.localStorage; } catch { return null; } };
+  // Identidad de la intención de ESTE formulario abierto: se crea al abrir (su hora decide qué identidad le toca si otra pestaña pide después «Es otra compra») y conserva lo que fije.
+  const envioCtx = useRef<ContextoEnvio | null>(null);
+  // Sin almacén que funcione o sin Web Locks NO se puede garantizar la protección entre pestañas: la interfaz lo dice (la protección dentro de esta página —doble clic, reintentos— se mantiene).
+  const [sinCoordinacion, setSinCoordinacion] = useState(false);
+  useEffect(() => { envioCtx.current = crearContextoEnvio(almacenEnvio(), () => crypto.randomUUID()); setSinCoordinacion(!coordinacionDisponible(almacenEnvio())); }, []);
+  const contextoEnvio = () => (envioCtx.current ??= crearContextoEnvio(almacenEnvio(), () => crypto.randomUUID()));
   const [err, setErr] = useState("");
   // Ítem único «Paquete Turístico …» de la cotización con servicio manual: se propone solo y el asesor puede editar el texto (nunca los valores).
   const primerHotel = hotelItems[0];
@@ -130,6 +147,21 @@ export default function CheckoutPage() {
   useEffect(() => {
     getContextoAsistenciaB2B().then(setAsist).catch(() => {});
   }, []);
+  // #14-A — Recobro. El formulario solo CAPTURA cifras; quién puede capturar, la participación del aliado directo y todo lo demás lo decide el servidor al crear.
+  const [recobro, setRecobro] = useState<EstadoRecobro>({ recobroTxt: "", partModo: "valor", partTxt: "" });
+  const [ctxRec, setCtxRec] = useState<ContextoRecobroCarrito | null>(null);
+  useEffect(() => {
+    if (!esB2B) { setCtxRec(null); return; }
+    let vigente = true;
+    getContextoRecobroCarrito().then((r) => { if (vigente) setCtxRec(r); }).catch(() => { if (vigente) setCtxRec({ tipo: "error", error: "No se pudo cargar la configuración del recobro." }); });
+    return () => { vigente = false; };
+  }, [esB2B]);
+  // El texto se aplica al cálculo del servidor (vista previa) 600 ms después de dejar de escribir: una solicitud por pausa, no por tecla.
+  const [recobroAplicado, setRecobroAplicado] = useState<EstadoRecobro>(recobro);
+  useEffect(() => {
+    const t = setTimeout(() => setRecobroAplicado(recobro), 600);
+    return () => clearTimeout(t);
+  }, [recobro]);
   // #64/#102: también en la comparativa; allí cada opción liquida SUS términos (no hay total ni comisión global).
   const puedeAsistir = asist?.puede === true && !esB2B;
   // #64: el vuelo manual también lo agrega el personal interno a una comparativa (común a todas las opciones).
@@ -146,6 +178,18 @@ export default function CheckoutPage() {
   const coincidencias = opcionesAliado.filter((o) => normNombre(o.etiqueta) === normNombre(aliadoTxt));
   const aliadoElegido = coincidencias.length === 1 ? coincidencias[0].a : null;
   const asistenciaB2B = puedeAsistir && canal === "b2b";
+  // #14-A: quién ve el campo de recobro. Hoteles por persona en cotización normal; NETO del aliado directo NO captura recobro; el servidor lo vuelve a autorizar.
+  const apto = !vista.crear && !vista.continuar && hotelItems.length > 0 && bernaloItems.length === 0;
+  const modoRecobro: ModoCapturaRecobro | null = !apto ? null
+    : puedeAsistir && canal === "b2c" ? "cliente_final"
+      : asistenciaB2B && aliadoElegido ? "asistida"
+        : esB2B && modo === "comisionable" && ctxRec?.tipo === "aliado_directo" ? "aliado_directo"
+          : null;
+  const leerRecobro = (e: EstadoRecobro) => (modoRecobro ? recobroDesdeFormulario({ ...e, pideDistribucion: modoRecobro === "asistida" }) : ({ ok: true, recobro: null } as const));
+  const recobroForm = leerRecobro(recobro);
+  const recobroPrevia = leerRecobro(recobroAplicado);
+  const recobroPendiente = modoRecobro != null && JSON.stringify(recobro) !== JSON.stringify(recobroAplicado);
+  const aliadoDirectoConRecobro = modoRecobro === "aliado_directo" && recobroPrevia.ok && !!recobroPrevia.recobro;
   // Presentación de la comisión: la del aliado logueado o, en venta asistida, la del aliado elegido (el servidor la recalcula y la congela).
   const hayB2B = esB2B || asistenciaB2B;
   const modoVista: "comisionable" | "neta" = asistenciaB2B ? modoAsist : modo;
@@ -178,8 +222,10 @@ export default function CheckoutPage() {
   const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
   // Entrada que se manda al servidor (la misma para la solicitud normal y para la comparativa).
-  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[], cobertura?: ReturnType<typeof useCoberturaNormal>["cobertura"]) {
+  function armarEntrada(itemsNormalizados: { it: HotelCartItemPersona; edadesMenores: number[] }[], cobertura?: ReturnType<typeof useCoberturaNormal>["cobertura"], recobroEnvio?: RecobroParaEnviar | null) {
     return {
+        // #14-A: SOLO las cifras del recobro (y, en venta asistida, su distribución). El aliado directo nunca manda distribución; el servidor la toma del parámetro.
+        ...(recobroEnvio ? { recobro: recobroEnvio } : {}),
         // #94: pasajeros cubiertos por cada servicio (solo cotización normal con un hotel). El servidor la valida contra lo liquidado.
         ...(cobertura ? { cobertura } : {}),
         items: [
@@ -336,8 +382,9 @@ export default function CheckoutPage() {
       ...manualItems.map((m, indice) => ({ id: m.id, nombre: m.nombre, pax: m.pax, tipo: "manual" as const, indice, ligado: false })),
     ],
   });
-  const normPrevia = asistenciaB2B && aliadoElegido ? normalizarCarrito() : null;
-  const entradaPrevia = normPrevia?.ok ? armarEntrada(normPrevia.itemsNormalizados) : null;
+  const previaAplica = (asistenciaB2B && !!aliadoElegido) || aliadoDirectoConRecobro;
+  const normPrevia = previaAplica ? normalizarCarrito() : null;
+  const entradaPrevia = normPrevia?.ok && recobroPrevia.ok ? armarEntrada(normPrevia.itemsNormalizados, null, recobroPrevia.recobro) : null;
   const clavePrevia = entradaPrevia ? JSON.stringify({ ...entradaPrevia, cliente: null }) : null;
   const [previa, setPrevia] = useState<{ clave: string; r: PrevisualizacionB2B } | null>(null);
   const [previaCmp, setPreviaCmp] = useState<{ clave: string; r: PrevisualizacionComparativaB2B } | null>(null);
@@ -358,12 +405,12 @@ export default function CheckoutPage() {
   }, [clavePrevia]);
   const actual = vista.crear ? previaCmp : previa;
   const estadoPrevia: "no_aplica" | "calculando" | "ok" | "error" =
-    !asistenciaB2B || !aliadoElegido ? "no_aplica"
+    !previaAplica ? "no_aplica"
       : normPrevia && !normPrevia.ok ? "error"
         : actual?.clave !== clavePrevia ? "calculando" : actual?.r.ok ? "ok" : "error";
   const errorPrevia = normPrevia && !normPrevia.ok ? normPrevia.error : actual?.r.ok === false ? actual.r.error : "";
   // Sin desglose del servidor no se confirma una venta B2B: evita generar con cifras que no se vieron.
-  const sinDesglose = estadoPrevia === "calculando" || estadoPrevia === "error";
+  const sinDesglose = estadoPrevia === "calculando" || estadoPrevia === "error" || (previaAplica && recobroPendiente);
 
   function enviar() {
     setErr("");
@@ -374,6 +421,7 @@ export default function CheckoutPage() {
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
     if (asistenciaB2B && !aliadoElegido) { setErr("Elige un aliado de la lista (agencia o freelance) de la venta B2B."); return; }
+    if (!recobroForm.ok) { setErr(recobroForm.error); return; }
 
     // Carritos guardados en el navegador ANTES de pedir la edad de cada menor
     // no traen `edadesMenores`: sin menores declarados se normaliza a `[]`
@@ -385,15 +433,30 @@ export default function CheckoutPage() {
     if (!norm.ok) { setErr(norm.error); return; }
     const itemsNormalizados = norm.itemsNormalizados;
     if (activoCob && cob.bloqueo) { setErr(cob.bloqueo); return; }
+    if (enviando.current) return;
+    enviando.current = true;
 
     start(async () => {
-      const entrada = armarEntrada(itemsNormalizados, activoCob ? cob.cobertura : null);
+      try {
+      const entrada = armarEntrada(itemsNormalizados, activoCob ? cob.cobertura : null, recobroForm.ok ? recobroForm.recobro : null);
       if (asistenciaB2B && entrada.asistencia && previa?.clave === clavePrevia && previa.r.ok) {
         const { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } = previa.r.terminos;
         entrada.asistencia = { ...entrada.asistencia, vistos: { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } } as typeof entrada.asistencia;
       }
-      const r = await crearSolicitudReserva(entrada);
+      // El aliado directo que vio la liquidación con recobro manda lo que vio: el servidor la compara con lo que liquida AL GENERAR (si cambió el porcentaje o el precio, no crea nada y muestra la nueva).
+      let envio: typeof entrada & { vistos?: unknown } = entrada;
+      if (aliadoDirectoConRecobro && previa?.clave === clavePrevia && previa.r.ok) {
+        const { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } = previa.r.terminos;
+        envio = { ...entrada, vistos: { pvp, impuesto, base, pct, pct_origen, comision, total_exigible, modo_compra, moneda } };
+      }
+      // Clave de ESTA intención de envío: dos pestañas con el mismo carrito y los mismos datos comparten la clave y el servidor solo crea UNA cotización.
+      // La clave NO se borra al generar: una pestaña antigua que envía después reconoce la intención cumplida («ya generada»). Una compra igual a la anterior se declara con el botón «Es otra compra».
+      ultimoEnvio.current = envio;
+      setYaGenerada(null);
+      // Clave ya usada por OTRO usuario u OTRO contenido (p. ej. otra cuenta en el mismo navegador): no es esta intención; `enviarConClave` pasa a una identidad nueva y reintenta (hasta 3 envíos).
+      const r = await enviarConClave(envio, contextoEnvio(), (claveEnvio) => crearSolicitudReserva({ ...envio, claveEnvio }), (x) => "tipo" in x && x.tipo === "clave_en_uso");
       if (r.ok) { setRes(r); clear(); }
+      else if ("tipo" in r && r.tipo === "envio_duplicado") { setYaGenerada({ codigo: r.cotizacion.codigo, url: r.cotizacion.url, mensaje: r.error }); }
       else if (esTerminosCambiaron(r)) {
         if (clavePrevia) setPrevia({ clave: clavePrevia, r: { ok: true, terminos: r.terminos } });
         setAvisoTerminos(r.error);
@@ -402,7 +465,7 @@ export default function CheckoutPage() {
       // permite a TypeScript angostar `r` a `ResultadoPrecioActualizadoBernalo`
       // aquí y al resto (`{ok:false, error:string}`) en el `else` final — la
       // única variante con esa clave es "precio_actualizado" (regla B.10).
-      else if ("tipo" in r) {
+      else if ("tipo" in r && r.tipo === "precio_actualizado") {
         // Cierre 3F-4A #1: se corrige EXACTAMENTE el ítem que cambió
         // (`r.itemId`, el mismo `id` del carrito) — nunca el primero que
         // coincida por paqueteId+hotelId, que podría ser un ítem distinto
@@ -414,6 +477,7 @@ export default function CheckoutPage() {
       } else {
         setErr(r.error);
       }
+      } finally { enviando.current = false; }
     });
   }
 
@@ -571,6 +635,12 @@ export default function CheckoutPage() {
                     <span style={{ color: "var(--brand-success)" }}>{formatMoneda(comision, baseComision.moneda)}</span>
                   </div>
                 )}
+                {/* Sin recobro el aliado ve una ESTIMACIÓN local: se rotula como tal. Con recobro la liquidación la calcula el servidor y se muestra más abajo. */}
+                {verComision && baseComision && !aliadoDirectoConRecobro && (
+                  <p className="text-[11px] text-gray-400" data-testid="estimacion-aliado">
+                    Estimación sobre el total del carrito, sin descontar el impuesto no comisionable. La liquidación exacta la calcula D&apos;spacios Travel al generar la cotización.
+                  </p>
+                )}
               </div>
             </section>
 
@@ -656,6 +726,27 @@ export default function CheckoutPage() {
             )}
             {asist && !asist.puede && "error" in asist && (
               <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{asist.error}</p>
+            )}
+
+            {/* #14-A — Recobro (solo cifras; el servidor decide quién puede y qué participación corresponde). */}
+            {modoRecobro && (
+              <RecobroPanel modo={modoRecobro} estado={recobro} onChange={setRecobro} moneda={baseComision?.moneda ?? null}
+                pctParticipacion={ctxRec?.tipo === "aliado_directo" ? ctxRec.pctParticipacion : null} error={recobroForm.ok ? null : recobroForm.error} />
+            )}
+            {esB2B && ctxRec?.tipo === "error" && modo === "comisionable" && (
+              <p role="alert" data-testid="recobro-ctx-error" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">No se puede ofrecer el recobro: {ctxRec.error}</p>
+            )}
+            {aliadoDirectoConRecobro && !vista.crear && (
+              <div className="space-y-2" data-testid="terminos-aliado-directo">
+                {estadoPrevia === "calculando" && <p role="status" className="text-xs text-gray-500" data-testid="previa-calculando">Calculando la liquidación con el servidor…</p>}
+                {avisoTerminos && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="terminos-cambiaron">{avisoTerminos} La liquidación de abajo ya está actualizada.</p>}
+                {estadoPrevia === "ok" && previa?.r.ok && <TerminosB2BAsistido plan={previa.r.terminos} previa />}
+                {estadoPrevia === "error" && (
+                  <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800" data-testid="previa-error">
+                    Todavía no se puede liquidar con el recobro: {errorPrevia} Mientras tanto no se puede generar la cotización.
+                  </p>
+                )}
+              </div>
             )}
 
             {/* Modalidad B2B */}
@@ -763,6 +854,21 @@ export default function CheckoutPage() {
               )}
               {ctx?.error && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{ctx.error}</p>}
               {hayHoraPendiente(items) && <p role="alert" data-testid="hora-pendiente" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{MENSAJE_HORA_PENDIENTE}</p>}
+              {sinCoordinacion && (
+                <p role="note" data-testid="sin-proteccion-pestanas" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Este navegador no permite coordinar varias pestañas: no envíes esta solicitud desde dos pestañas a la vez. Si un envío se interrumpe, revisa tus cotizaciones antes de intentarlo de nuevo.
+                </p>
+              )}
+              {yaGenerada && (
+                <p role="status" data-testid="envio-duplicado" className="mt-3 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800">
+                  {yaGenerada.mensaje}{" "}
+                  {yaGenerada.url && <a href={yaGenerada.url} target="_blank" rel="noopener noreferrer" className="font-semibold underline">Ver la cotización {yaGenerada.codigo}</a>}
+                  {" "}
+                  <button type="button" data-testid="otra-compra" onClick={async () => { await nuevaCompra(ultimoEnvio.current, contextoEnvio()); setYaGenerada(null); }} className="font-semibold underline">
+                    Es otra compra: permitir generar una nueva
+                  </button>
+                </p>
+              )}
               {err && <p role="alert" data-testid="error-checkout" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{err}</p>}
               <button type="button" onClick={vista.crear ? enviarComparativa : enviar} disabled={pending || !!ctx?.error || sinDesglose || hayHoraPendiente(items)}
                 className="mt-4 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: "var(--brand-primary)" }}>

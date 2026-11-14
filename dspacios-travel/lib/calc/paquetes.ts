@@ -15,6 +15,13 @@
 // hotel, cada noche usa la tarifa de la temporada en que cae esa fecha.
 
 import { fechaNegocio } from "../fechaNegocio.ts";
+import { claveNeto, diaSemanaNoche, gruposActivos, grupoQueCubre, type GrupoDias } from "./gruposDias.ts";
+import { decidirNivel, type CandidatoNivel } from "./empatesPrioridad.ts";
+import { registrarConflictoEmpate } from "./registroConflictos.ts";
+import {
+  netoConRegla, netoHabitacionConDescuento, nocheABonificar, normDias, normCombinacion, type CombinacionPromo, normReglas, esReglaNocheGratis, esUnidadMonto,
+  type ReglaNocheGratis, type ReglaPromo, type UnidadMonto,
+} from "./promocionesGrupo.ts";
 
 const MS_DIA = 86_400_000;
 
@@ -40,7 +47,50 @@ export interface TemporadaRango {
   // 'promo_noche_gratis', min_noches se reinterpreta como "noches mínimas de la
   // ESTADÍA para que la promo aplique" (no es un mínimo de noches para vender).
   regimen_restringido?: string | null;
+  // #43/#60: id de la vigencia (cuando el cargador lo lee) y sus grupos de días ACTIVOS.
+  // Sin grupos activos (todo el dato actual: la 293 los obliga a estar inactivos) la
+  // vigencia se resuelve exactamente como antes.
+  id?: number | null;
+  grupos?: GrupoDias[];
+  // #43/#60 entrega 4 (migración 300). Todo nulo/ausente = promoción existente: sin cambios.
+  promo_base_id?: number | null;           // promoción por noche con reglas, vinculada a esta base
+  descuento_unidad?: UnidadMonto | null;   // monto fijo: unidad elegida (null = «unidad anterior»)
+  noche_gratis_regla?: ReglaNocheGratis | null; // null = promedio heredado
+  dias_promo?: number[] | null;            // noche gratis: días bonificables; persona/estadía: días de entrada (null = todos)
+  reglas?: ReglaPromo[];                   // reglas por grupo de la base
+  // #43/#60 entrega 5 (301): acumulación y orden frente a EBB / Long Stay. 'pendiente' = promoción nueva sin
+  // configurar donde coincide: NO se vende (el motor la ignora). null/ausente = sin coincidencias registradas.
+  combinacion?: CombinacionPromo | null;
 }
+
+/** Contexto de una liquidación que las promociones necesitan (entrega 4). Sin él, las promociones
+ * nuevas por noche no aplican y las existentes vinculadas a una base con grupos tampoco. */
+export interface ContextoPromoNoche {
+  /** `tarifa_hotel.temporada_base` por clave (ver `basesPromoDeFilas`). */
+  basePromoPorClave?: Record<string, string | null | undefined>;
+  /** Acomodación que se liquida (sencilla/doble/triple/multiple/nino/nino2/infante). */
+  acomodacion?: string;
+  /** Noches de la estadía (mínimo de noches de una promoción con reglas). */
+  numNoches?: number;
+  /** Ocupantes TARIFADOS de una habitación de esta acomodación (configuración del hotel, `pax_tarifa`).
+   * Necesario para el descuento por habitación; sin él ese descuento no aplica (nunca se supone 1/2/3/4). */
+  ocupantes?: number;
+}
+
+const tipoDe = (t: TemporadaRango) => t.tipo ?? "tarifa";
+/** Promoción por noche con reglas por grupo (nueva): vinculada a una base, sin fila propia. */
+export function esPromoConReglas(t: TemporadaRango): boolean {
+  const tipo = tipoDe(t);
+  if (t.promo_base_id == null) return false;
+  return tipo === "descuento_pct" || (tipo === "descuento_monto" && (t.descuento_unidad === "persona_noche" || t.descuento_unidad === "habitacion_noche"));
+}
+/** Promoción que se resuelve a nivel de ESTADÍA: «N noches, 1 gratis» y monto por persona/estadía. */
+export function esPromoEstadia(t: TemporadaRango): boolean {
+  const tipo = tipoDe(t);
+  return tipo === "promo_noche_gratis" || (tipo === "descuento_monto" && t.descuento_unidad === "persona_estadia");
+}
+/** Entradas que compiten por el PRECIO de una noche como hasta hoy (bases y promociones con fila). */
+const porNoche = (t: TemporadaRango) => !esPromoEstadia(t) && !esPromoConReglas(t);
 
 /** Fecha de hoy (yyyy-mm-dd) en zona horaria Colombia, para la vigencia de compra. */
 export function hoyISO(): string {
@@ -105,7 +155,8 @@ function compraVigente(t: TemporadaRango, hoy: string): boolean {
  */
 function entradasNoche(t0: number, temporadas: TemporadaRango[], hoy: string, regimen?: string): TemporadaRango[] {
   return temporadas
-    .filter((t) => cubreFecha(t, t0) && compraVigente(t, hoy) && (t.regimen_restringido == null || t.regimen_restringido === regimen))
+    .filter((t) => cubreFecha(t, t0) && compraVigente(t, hoy) && (t.regimen_restringido == null || t.regimen_restringido === regimen)
+      && t.combinacion?.estado !== "pendiente") // entrega 5: promoción nueva sin configurar donde coincide: no se vende
     .sort((a, b) => (b.prioridad ?? 1) - (a.prioridad ?? 1));
 }
 
@@ -177,8 +228,19 @@ export function toTemporadaRango(t: {
   tipo?: string | null; descuento_valor?: number | null;
   rangos?: unknown; blackouts?: unknown; min_noches?: number | null;
   regimen_restringido?: string | null;
+  id?: number | null;
+  hotel_temporada_grupos?: unknown;
+  promo_base_id?: number | null;
+  descuento_unidad?: string | null;
+  noche_gratis_regla?: string | null;
+  dias_promo?: unknown;
+  hotel_promocion_reglas?: unknown;
+  hotel_promocion_combinacion?: unknown;
 }): TemporadaRango {
+  const grupos = gruposActivos(t.hotel_temporada_grupos);
   return {
+    ...(t.id != null ? { id: t.id } : {}),
+    ...(grupos.length ? { grupos } : {}),
     nombre: t.nombre,
     fecha_inicio: t.fecha_inicio,
     fecha_fin: t.fecha_fin,
@@ -191,6 +253,12 @@ export function toTemporadaRango(t: {
     blackouts: normRangos(t.blackouts),
     min_noches: t.min_noches ?? 1,
     regimen_restringido: t.regimen_restringido ?? null,
+    ...(t.promo_base_id != null ? { promo_base_id: Number(t.promo_base_id) } : {}),
+    ...(esUnidadMonto(t.descuento_unidad) ? { descuento_unidad: t.descuento_unidad } : {}),
+    ...(esReglaNocheGratis(t.noche_gratis_regla) ? { noche_gratis_regla: t.noche_gratis_regla } : {}),
+    ...(normDias(t.dias_promo) ? { dias_promo: normDias(t.dias_promo) } : {}),
+    ...(normReglas(t.hotel_promocion_reglas).length ? { reglas: normReglas(t.hotel_promocion_reglas) } : {}),
+    ...(normCombinacion(t.hotel_promocion_combinacion) ? { combinacion: normCombinacion(t.hotel_promocion_combinacion) } : {}),
   };
 }
 
@@ -203,7 +271,12 @@ export function minNochesAplicable(temporadas: TemporadaRango[], fechaIda: strin
   const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
   // 'promo_noche_gratis' no participa: su min_noches significa otra cosa (ver
   // promoNocheGratisFactor), no un mínimo de noches para poder vender.
-  const top = entradasNoche(t0, temporadas, hoy).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis")[0];
+  // #43/#60: una vigencia con grupos activos que no cubre el día de la entrada no aplica a
+  // esa noche (§3.1), así que tampoco fija su mínimo. Sin grupos, igual que antes.
+  // Entrega 4: las promociones de estadía y las de reglas tampoco (no fijan cuánto se vende).
+  const top = entradasNoche(t0, temporadas, hoy)
+    .filter(porNoche)
+    .filter((t) => !gruposDe(t).length || grupoQueCubre(gruposDe(t), t0) != null)[0];
   return Math.max(1, top?.min_noches ?? 1);
 }
 
@@ -302,7 +375,9 @@ export function resolverNetoNocheDetallado(
   // detalle `precioFinalAutoritativo` del resultado (trazabilidad/auditoría,
   // persistido en `tarifario_resultado`, nunca usado para el cálculo).
   // `undefined`/set vacío → `precioFinalAutoritativo` sale `false` siempre.
-  precioFinalTemporadas?: ReadonlySet<string>
+  precioFinalTemporadas?: ReadonlySet<string>,
+  // #43/#60 entrega 4: vínculo de las filas de promoción, acomodación y noches (ver ContextoPromoNoche).
+  ctx?: ContextoPromoNoche
 ): {
   neto: number;
   /** Nombre de la fila de `tarifa_hotel` que aportó el NETO — SIEMPRE la
@@ -325,26 +400,156 @@ export function resolverNetoNocheDetallado(
    * `tarifa_hotel.precio_final_autoritativo` (migración 179) — detalle
    * técnico de trazabilidad, NUNCA usar para decidir "es promoción" en UI. */
   precioFinalAutoritativo: boolean;
+  /** #43/#60: grupo de días que aportó el neto (`null` = tarifa de todos los días). */
+  grupoGanador: string | null;
+  /** Entrega 4: descuento por habitación aplicado esta noche a UNA habitación (importe exacto, sin
+   * dividir) y el neto exacto de esa habitación. Solo cuando ganó una regla «por habitación y noche». */
+  habitacion?: { neto: number; descuento: number };
 } | null {
-  // 'promo_noche_gratis' no es un precio por noche (ver promoNocheGratisFactor):
-  // se excluye de la resolución por-noche para que nunca "gane" un slot aquí.
-  const ents = entradasNoche(t0, temporadas, hoy, regimen).filter((t) => (t.tipo ?? "tarifa") !== "promo_noche_gratis");
-  for (const entry of ents) {
-    const neto = netoPorTemporada[entry.nombre];
-    // Sin fila materializada para ESTE combo → esta vigencia no puede
-    // aportar un precio (ni recalculado, ni de ningún tipo) — se ignora y se
-    // sigue bajando por prioridad a la siguiente candidata.
-    if (neto == null) continue;
-    const esPromocion = (entry.tipo ?? "tarifa") !== "tarifa";
+  // 'promo_noche_gratis' y el monto por persona/estadía no son un precio por noche (se resuelven
+  // sobre la estadía); las promociones con reglas no tienen fila propia: ninguna «gana» un slot aquí.
+  const todas = entradasNoche(t0, temporadas, hoy, regimen);
+  const ents = todas.filter(porNoche);
+  const basePromo = ctx?.basePromoPorClave;
+  // Una promoción existente cuya fila se calculó desde una base CON grupos está en el alcance con
+  // grupos (X.3.1): solo puede actuar cuando su base gana la noche (abajo), nunca por el recorrido
+  // de siempre. Sin el vínculo (cargador sin `basePromoPorClave`) no se puede saber: se conserva.
+  const conGrupos = new Set(temporadas.filter((t) => gruposDe(t).length > 0).map((t) => t.nombre.trim()));
+  const vinculoAConGrupos = (t: TemporadaRango) =>
+    tipoDe(t) !== "tarifa" && conGrupos.has((basePromo?.[t.nombre] ?? "").trim());
+  const legado = resolverPorNiveles(conGrupos.size ? ents.filter((t) => !vinculoAConGrupos(t)) : ents, t0, netoPorTemporada, regimen);
+  if (typeof legado !== "object" || legado == null) return null;
+
+  // N1 (§4.1): primero la BASE de la noche (solo vigencias 'tarifa', mismas reglas de cobertura,
+  // disponibilidad y empates); después, solo una promoción vinculada a ESA base puede aplicar.
+  const baseR = tipoDe(legado.entry) === "tarifa" ? legado : resolverPorNiveles(ents.filter((t) => tipoDe(t) === "tarifa"), t0, netoPorTemporada, regimen);
+  // Una base con grupos cubre la noche sin poder venderla (sin tarifa o empatada): ninguna
+  // promoción la rescata, tampoco una sin vínculo (O.1.2, X.3.5). Solo ocurre con grupos activos.
+  if (baseR === "no_vende" || baseR === "empate") return null;
+  const base = baseR;
+  const conReglas = base && base.entry.id != null
+    ? todas.filter((t) => esPromoConReglas(t) && t.promo_base_id === base.entry.id)
+    : [];
+  const baseConGrupos = base != null && base.grupo != null;
+  if (!base || (!baseConGrupos && conReglas.length === 0)) return armar(legado);
+
+  type Cand = { entry: TemporadaRango; neto: number; clave: string; reglas: boolean; hab?: { neto: number; descuento: number } };
+  const cands: Cand[] = [];
+  const prioBase = base.entry.prioridad ?? 1;
+  if (baseConGrupos) {
+    // Promociones existentes (fila propia) calculadas desde ESTA base (por nombre, `temporada_base`).
+    for (const t of ents) {
+      if (tipoDe(t) === "tarifa" || (t.prioridad ?? 1) < prioBase) continue;
+      const neto = netoPorTemporada[t.nombre];
+      if (neto == null || (basePromo?.[t.nombre] ?? "").trim() !== base.entry.nombre.trim()) continue;
+      cands.push({ entry: t, neto, clave: t.nombre, reglas: false });
+    }
+  } else if (legado !== base) {
+    cands.push({ entry: legado.entry, neto: legado.neto, clave: legado.clave, reglas: false }); // promoción que hoy ya ganaba
+  }
+  const dia = diaSemanaNoche(t0);
+  for (const t of conReglas) {
+    if ((t.prioridad ?? 1) < prioBase) continue; // menor que su base: no aplica (X.3.3)
+    if ((ctx?.numNoches ?? 1) < (t.min_noches ?? 1)) continue;
+    const regla = t.reglas?.find((r) => r.grupo_id === base.grupo);
+    if (!regla || (regla.dias && !regla.dias.includes(dia))) continue; // grupo o día sin regla: conserva la base
+    const neto = netoConRegla(tipoDe(t) as "descuento_pct" | "descuento_monto", t.descuento_unidad, regla.valor, base.neto, ctx?.acomodacion, ctx?.ocupantes);
+    if (neto == null) continue; // monto mayor que su unidad: no aplica ni cuenta (§T.4)
+    const hab = t.descuento_unidad === "habitacion_noche"
+      ? { neto: netoHabitacionConDescuento(regla.valor, base.neto, ctx?.acomodacion, ctx?.ocupantes) as number, descuento: regla.valor }
+      : undefined;
+    cands.push({ entry: t, neto, clave: t.nombre, reglas: true, ...(hab ? { hab } : {}) });
+  }
+  if (!cands.length) return armar(base);
+  const top = Math.max(...cands.map((c) => c.entry.prioridad ?? 1));
+  const arriba = cands.filter((c) => (c.entry.prioridad ?? 1) === top);
+  if (top === prioBase || arriba.length > 1) { // empate con su base o entre promociones (N4, X.3.3/X.3.4)
+    registrarEmpate(top === prioBase ? [base.entry, ...arriba.map((c) => c.entry)] : arriba.map((c) => c.entry), top, t0, regimen);
+    return null;
+  }
+  const c = arriba[0];
+  return {
+    neto: c.neto,
+    // Con reglas el precio sale de la fila de la BASE (edad y condiciones se leen de ella).
+    temporadaTarifa: c.reglas ? base.entry.nombre : c.entry.nombre,
+    temporadaGanadora: c.entry.nombre,
+    esPromocion: true,
+    precioFinalAutoritativo: !c.reglas && !!precioFinalTemporadas?.has(c.clave),
+    grupoGanador: c.reglas ? base.grupo : null,
+    ...(c.hab ? { habitacion: c.hab } : {}),
+  };
+
+  function armar(v: { entry: TemporadaRango; clave: string; neto: number; grupo: string | null }) {
+    const esPromocion = tipoDe(v.entry) !== "tarifa";
     return {
-      neto,
-      temporadaTarifa: entry.nombre,
-      temporadaGanadora: entry.nombre,
+      neto: v.neto,
+      temporadaTarifa: v.entry.nombre,
+      temporadaGanadora: v.entry.nombre,
       esPromocion,
-      precioFinalAutoritativo: esPromocion && !!precioFinalTemporadas?.has(entry.nombre),
+      precioFinalAutoritativo: esPromocion && !!precioFinalTemporadas?.has(v.clave),
+      grupoGanador: v.grupo,
     };
   }
+}
+
+/** Recorrido por NIVELES de prioridad (la lista ya viene ordenada de mayor a menor, estable en el
+ * orden de lectura). Sin grupos activos, `decidirNivel` elige la primera con precio del nivel y, si
+ * ninguna tiene, se baja al siguiente: idéntico al recorrido anterior (una vigencia sin fila
+ * materializada para ESTE combo no aporta precio y se sigue bajando). */
+function resolverPorNiveles(
+  ents: TemporadaRango[], t0: number, netoPorTemporada: Record<string, number | null | undefined>, regimen?: string,
+): { entry: TemporadaRango; clave: string; neto: number; grupo: string | null } | "no_vende" | "empate" | null {
+  for (let i = 0; i < ents.length; ) {
+    const prioridad = ents[i].prioridad ?? 1;
+    const nivel: CandidatoNivel<{ entry: TemporadaRango; clave: string; neto: number | null; grupo: string | null }>[] = [];
+    for (; i < ents.length && (ents[i].prioridad ?? 1) === prioridad; i++) nivel.push(candidatoNoche(ents[i], t0, netoPorTemporada));
+    const d = decidirNivel(nivel);
+    if (d.tipo === "sigue") continue;
+    if (d.tipo === "no_vende") return "no_vende";  // §3.2: el grupo cubre la noche sin tarifa: no se rescata
+    if (d.tipo === "empate") {                     // §3.7 (N4): no se elige ninguna y se registra el motivo
+      registrarEmpate(d.empatadas.map((c) => c.valor.entry), prioridad, t0, regimen);
+      return "empate";
+    }
+    const v = d.candidato.valor;
+    return { ...v, neto: v.neto as number };
+  }
   return null;
+}
+
+/** Los grupos de días son de las vigencias 'tarifa'. Las promociones por grupo (entrega 4) no
+ * tienen grupos propios: sus reglas apuntan a los grupos de su base (`esPromoConReglas`). */
+function gruposDe(t: TemporadaRango): GrupoDias[] {
+  return (t.tipo ?? "tarifa") === "tarifa" && t.grupos?.length ? t.grupos : [];
+}
+
+function candidatoNoche(entry: TemporadaRango, t0: number, netoPorTemporada: Record<string, number | null | undefined>) {
+  const grupos = gruposDe(entry);
+  if (!grupos.length) {
+    const neto = netoPorTemporada[entry.nombre] ?? null;
+    return { valor: { entry, clave: entry.nombre, neto, grupo: null }, conGrupos: false, estado: neto == null ? "sin_precio" : "precio" } as const;
+  }
+  const g = grupoQueCubre(grupos, t0);
+  if (!g) return { valor: { entry, clave: entry.nombre, neto: null, grupo: null }, conGrupos: true, estado: "no_cubre" } as const; // §3.1
+  const clave = claveNeto(entry.nombre, g.id);
+  const neto = netoPorTemporada[clave] ?? null;
+  return { valor: { entry, clave, neto, grupo: g.id }, conGrupos: true, estado: neto == null ? "sin_precio" : "precio" } as const;
+}
+
+function fechaDeNoche(t0: number): string {
+  const d = new Date(t0 + 12 * 3_600_000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function registrarEmpate(empatadas: TemporadaRango[], prioridad: number, t0: number, regimen?: string): void {
+  // Las vigencias se identifican por id (único en todo el sistema, distingue hoteles) cuando el
+  // cargador lo trae; si no, por nombre. Orden fijo: el registro no depende del orden de lectura.
+  const ids = empatadas.map((t) => (t.id != null ? `#${t.id}` : t.nombre)).sort();
+  registrarConflictoEmpate({
+    vigencias: empatadas.map((t) => t.nombre).sort(),
+    prioridad,
+    fecha: fechaDeNoche(t0),
+    clave: `${ids.join(",")}|${regimen ?? ""}`,
+  });
 }
 
 export function netoNoche(
@@ -353,9 +558,10 @@ export function netoNoche(
   netoPorTemporada: Record<string, number | null | undefined>,
   hoy: string,
   regimen?: string,
-  precioFinalTemporadas?: ReadonlySet<string>
+  precioFinalTemporadas?: ReadonlySet<string>,
+  ctx?: ContextoPromoNoche
 ): number | null {
-  const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, regimen, precioFinalTemporadas);
+  const r = resolverNetoNocheDetallado(t0, temporadas, netoPorTemporada, hoy, regimen, precioFinalTemporadas, ctx);
   return r ? r.neto : null;
 }
 
@@ -374,11 +580,10 @@ export function netoNoche(
  * la agregación de `ProcedenciaNoche` (`esPromocion: true` — es una promo —,
  * `precioFinalAutoritativo: false` — no aporta una fila de neto propia, solo
  * descuenta el total ya liquidado) para que ningún llamador tenga que
- * reconstruirla ni pueda hacerlo distinto. Única fuente de verdad: TODOS los
- * liquidadores (`liquidarHotelNoches`/`liquidarHotelNochesConTemporadas`/
- * `liquidarHotelMasBarato`/`liquidarHotelMasBaratoConTemporada`) llaman a
- * ESTA función — nunca reimplementan el criterio de selección — así que
- * cálculo y procedencia nunca pueden divergir. `null` = no aplica ninguna
+ * reconstruirla ni pueda hacerlo distinto. Desde la entrega 4 los liquidadores
+ * usan `resolverPromoEstadia`, que para estas mismas promociones (sin regla)
+ * da exactamente este factor; esta función queda como lectura del legado.
+ * `null` = no aplica ninguna
  * promo "N noches, 1 gratis" (estadía de 1 noche, sin vigencia que la cubra,
  * o ninguna cumple `min_noches`).
  */
@@ -417,14 +622,72 @@ export function promoNocheGratisFactor(
 }
 
 /**
- * Liquida el costo neto del hotel para una estadía, sumando noche por noche.
- * `netoPorTemporada` mapea nombre-de-temporada → neto de la acomodación elegida.
- * `hoy` (yyyy-mm-dd) evalúa la vigencia de compra; por defecto, hoy en Colombia.
- * `regimen` filtra vigencias restringidas a un solo régimen (ver `regimen_restringido`)
- * y también gobierna si aplica una promo "N noches, 1 gratis" (`promoNocheGratisFactor`).
- * Devuelve `null` si alguna noche no tiene tarifa aplicable.
+ * #43/#60 entrega 4 — promoción de ESTADÍA, sobre las noches YA valoradas (base o promoción por
+ * noche, §P.3): la primera, por prioridad, entre las que cubren la noche de entrada (compra y
+ * régimen incluidos) y APLICAN a esta estadía. Una sola por estadía (no se acumulan entre sí;
+ * la acumulación nueva es la entrega 5).
+ *  · «N noches, 1 gratis» sin regla (todas las existentes): promedio heredado, `total × (N−1)/N`,
+ *    idéntico a `resolverNocheGratisDetallado`.
+ *  · Con regla: se resta UNA noche (más barata, más cara o última) entre las PERMITIDAS; «última»
+ *    con su día no permitido o sin noche permitida ⇒ no aplica (Y.1.2).
+ *  · Monto por persona/estadía: una vez, si el día de entrada está permitido y no supera el total
+ *    de la estadía de la persona (igual ⇒ 0; §T.1, Y.1.3).
+ * `total` lo pasa el llamador tal como lo calculaba (así el legado da exactamente el mismo número).
  */
-export function liquidarHotelNoches(args: {
+export function resolverPromoEstadia(
+  temporadas: TemporadaRango[],
+  fechaIda: string,
+  precios: readonly number[],
+  total: number,
+  hoy: string = hoyISO(),
+  regimen?: string,
+): { total: number; procedencia: ProcedenciaNoche; ajuste: AjusteEstadia } | null {
+  const n = precios.length;
+  const t0 = new Date(`${fechaIda}T00:00:00`).getTime();
+  if (n <= 0 || Number.isNaN(t0)) return null;
+  for (const t of entradasNoche(t0, temporadas, hoy, regimen)) {
+    if (!esPromoEstadia(t) || n < (t.min_noches ?? 1)) continue;
+    let nuevo: number;
+    let ajuste: AjusteEstadia;
+    if (tipoDe(t) === "promo_noche_gratis") {
+      if (n <= 1) continue;
+      if (!t.noche_gratis_regla) { nuevo = total * ((n - 1) / n); ajuste = { tipo: "factor", factor: (n - 1) / n }; }
+      else {
+        const dias = precios.map((_, i) => diaSemanaNoche(t0 + i * MS_DIA));
+        const i = nocheABonificar(precios, dias, t.noche_gratis_regla, t.dias_promo ?? null);
+        if (i == null) continue;
+        nuevo = total - precios[i];
+        ajuste = { tipo: "noche", indice: i };
+      }
+    } else {
+      if (t.dias_promo && !t.dias_promo.includes(diaSemanaNoche(t0))) continue;
+      const d = Number(t.descuento_valor);
+      if (!(d > 0) || d > total) continue;
+      nuevo = total - d;
+      ajuste = { tipo: "monto_persona", monto: d };
+    }
+    return { total: nuevo, procedencia: { temporadaGanadora: t.nombre, esPromocion: true, precioFinalAutoritativo: false }, ajuste };
+  }
+  return null;
+}
+
+/** Qué hizo la promoción de estadía, para aplicarlo igual al total de UNA habitación (reparto exacto). */
+export type AjusteEstadia =
+  | { tipo: "factor"; factor: number }
+  | { tipo: "noche"; indice: number }
+  | { tipo: "monto_persona"; monto: number };
+
+/** Entrega 5: promociones que aplicaron en la estadía (de la procedencia del liquidador), con su combinación. */
+export function promosAplicadas(procedencia: readonly ProcedenciaNoche[], temporadas: readonly TemporadaRango[]): { nombre: string; combinacion: CombinacionPromo | null }[] {
+  const nombres = [...new Set(procedencia.filter((p) => p.esPromocion).map((p) => p.temporadaGanadora))];
+  return nombres.map((n) => ({ nombre: n, combinacion: temporadas.find((t) => t.nombre === n && tipoDe(t) !== "tarifa")?.combinacion ?? null }));
+}
+/** Entrega 5: solo las vigencias base (sin ninguna promoción) — el neto «sin la promoción» cuando una regla prevalece. */
+export const soloBases = (temporadas: readonly TemporadaRango[]): TemporadaRango[] => temporadas.filter((t) => tipoDe(t) === "tarifa");
+
+/** Argumentos comunes de los liquidadores. `basePromoPorClave`, `acomodacion` y `ocupantes` (entrega 4)
+ * los pasan los cargadores; sin ellos las promociones nuevas por noche (y por habitación) no aplican. */
+export type ArgsLiquidar = {
   fechaIda: string;
   numNoches: number;
   temporadas: TemporadaRango[];
@@ -432,19 +695,22 @@ export function liquidarHotelNoches(args: {
   hoy?: string;
   regimen?: string;
   precioFinalTemporadas?: ReadonlySet<string>;
-}): number | null {
-  if (args.numNoches <= 0) return null;
-  const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
-  if (Number.isNaN(base)) return null;
-  const hoy = args.hoy ?? hoyISO();
-  let total = 0;
-  for (let n = 0; n < args.numNoches; n++) {
-    const neto = netoNoche(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas);
-    if (neto == null) return null;
-    total += neto;
-  }
-  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
-  return nocheGratis ? total * nocheGratis.factor : total;
+  basePromoPorClave?: Record<string, string | null | undefined>;
+  acomodacion?: string;
+  /** Ocupantes tarifados de una habitación de `acomodacion` (configuración del hotel). */
+  ocupantes?: number;
+};
+
+/**
+ * Liquida el costo neto del hotel para una estadía, sumando noche por noche.
+ * `netoPorTemporada` mapea nombre-de-temporada → neto de la acomodación elegida.
+ * `hoy` (yyyy-mm-dd) evalúa la vigencia de compra; por defecto, hoy en Colombia.
+ * `regimen` filtra vigencias restringidas a un solo régimen (ver `regimen_restringido`)
+ * y también gobierna si aplica una promo "N noches, 1 gratis" (`promoNocheGratisFactor`).
+ * Devuelve `null` si alguna noche no tiene tarifa aplicable.
+ */
+export function liquidarHotelNoches(args: ArgsLiquidar): number | null {
+  return liquidarHotelNochesConTemporadas(args)?.total ?? null;
 }
 
 /** Identidad de la vigencia que ganó UNA noche — temporada, si es promoción
@@ -505,44 +771,51 @@ function deduplicarProcedencia(entradas: ProcedenciaNoche[]): ProcedenciaNoche[]
  *    una, trae varios — nunca se elige arbitrariamente una sola.
  * Devuelve `null` en los mismos casos que `liquidarHotelNoches`.
  */
-export function liquidarHotelNochesConTemporadas(args: {
-  fechaIda: string;
-  numNoches: number;
-  temporadas: TemporadaRango[];
-  netoPorTemporada: Record<string, number | null | undefined>;
-  hoy?: string;
-  regimen?: string;
-  precioFinalTemporadas?: ReadonlySet<string>;
-}): {
+export function liquidarHotelNochesConTemporadas(args: ArgsLiquidar): {
   total: number;
   temporadasTarifa: string[];
   procedencia: ProcedenciaNoche[];
+  /** Entrega 4 (reparto exacto, T.3): solo si alguna noche llevó un descuento por habitación. `total` = neto
+   * EXACTO de UNA habitación en toda la estadía (sin pasar por la tarifa por persona) y `descuento` = lo que
+   * se le descontó; el `total` por persona de arriba es solo `habitacion.total / ocupantes` (presentación). */
+  habitacion?: { ocupantes: number; total: number; descuento: number };
 } | null {
   if (args.numNoches <= 0) return null;
   const base = new Date(`${args.fechaIda}T00:00:00`).getTime();
   if (Number.isNaN(base)) return null;
   const hoy = args.hoy ?? hoyISO();
+  const ctx: ContextoPromoNoche = { basePromoPorClave: args.basePromoPorClave, acomodacion: args.acomodacion, numNoches: args.numNoches, ocupantes: args.ocupantes };
   let total = 0;
+  const precios: number[] = [];
+  const occ = args.ocupantes ?? 0;
+  const preciosHab: number[] = [];
+  let descuentoHab = 0;
   const vistas = new Set<string>();
   const procedenciaCruda: ProcedenciaNoche[] = [];
   for (let n = 0; n < args.numNoches; n++) {
-    const r = resolverNetoNocheDetallado(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas);
+    const r = resolverNetoNocheDetallado(base + n * MS_DIA, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas, ctx);
     if (r == null) return null;
     total += r.neto;
+    precios.push(r.neto);
+    preciosHab.push(r.habitacion ? r.habitacion.neto : r.neto * occ);
+    if (r.habitacion) descuentoHab += r.habitacion.descuento;
     vistas.add(r.temporadaTarifa);
     procedenciaCruda.push({ temporadaGanadora: r.temporadaGanadora, esPromocion: r.esPromocion, precioFinalAutoritativo: r.precioFinalAutoritativo });
   }
-  // "N noches, 1 gratis" no aporta neto propio (descuenta el total ya
-  // liquidado noche por noche), pero SÍ es procedencia real de la estadía —
-  // sin esto, una estadía toda en tarifa base con noche gratis se mostraría
-  // como "Tarifa base" ocultando que una noche completa salió gratis.
-  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.fechaIda, args.numNoches, hoy, args.regimen);
-  if (nocheGratis) procedenciaCruda.push(nocheGratis.procedencia);
-  return {
-    total: nocheGratis ? total * nocheGratis.factor : total,
-    temporadasTarifa: Array.from(vistas),
-    procedencia: deduplicarProcedencia(procedenciaCruda),
-  };
+  // La promoción de estadía no aporta neto propio (descuenta el total ya liquidado noche por
+  // noche), pero SÍ es procedencia real de la estadía — sin esto, una estadía toda en tarifa base
+  // con noche gratis se mostraría como "Tarifa base" ocultando que una noche salió gratis.
+  const estadia = resolverPromoEstadia(args.temporadas, args.fechaIda, precios, total, hoy, args.regimen);
+  if (estadia) procedenciaCruda.push(estadia.procedencia);
+  const comun = { temporadasTarifa: Array.from(vistas), procedencia: deduplicarProcedencia(procedenciaCruda) };
+  // Sin descuento por habitación: exactamente el cálculo de siempre (mismo número, sin reordenar sumas).
+  if (descuentoHab === 0) return { total: estadia ? estadia.total : total, ...comun };
+  let hab = preciosHab.reduce((a, b) => a + b, 0);
+  if (estadia) {
+    const aj = estadia.ajuste;
+    hab = aj.tipo === "factor" ? hab * aj.factor : aj.tipo === "noche" ? hab - preciosHab[aj.indice] : hab - aj.monto * occ;
+  }
+  return { total: hab / occ, ...comun, habitacion: { ocupantes: occ, total: hab, descuento: descuentoHab } };
 }
 
 /**
@@ -562,6 +835,9 @@ type ArgsMasBarato = {
   hoy?: string;
   regimen?: string;
   precioFinalTemporadas?: ReadonlySet<string>;
+  basePromoPorClave?: Record<string, string | null | undefined>;
+  acomodacion?: string;
+  ocupantes?: number;
 };
 
 /**
@@ -574,13 +850,18 @@ type ArgsMasBarato = {
  */
 function buscarNocheMasBarata(args: ArgsMasBarato): NonNullable<ReturnType<typeof resolverNetoNocheDetallado>> | null {
   if (args.numNoches <= 0) return null;
+  // #43/#60: «noche más barata × noches» no es una estadía vendible cuando los precios
+  // cambian por día de la semana. Mientras no exista el «Desde» por estadía real (entrega 6),
+  // un hotel con grupos activos NO publica un «desde» aproximado: falla cerrado.
+  if (args.temporadas.some((t) => gruposDe(t).length > 0)) return null;
   const lo = new Date(`${args.desde}T00:00:00`).getTime();
   const hi = new Date(`${args.hasta}T00:00:00`).getTime();
   if (Number.isNaN(lo) || Number.isNaN(hi) || hi < lo) return null;
   const hoy = args.hoy ?? hoyISO();
   let mejor: NonNullable<ReturnType<typeof resolverNetoNocheDetallado>> | null = null;
+  const ctx: ContextoPromoNoche = { basePromoPorClave: args.basePromoPorClave, acomodacion: args.acomodacion, numNoches: args.numNoches, ocupantes: args.ocupantes };
   for (let t0 = lo; t0 <= hi; t0 += MS_DIA) {
-    const r = resolverNetoNocheDetallado(t0, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas);
+    const r = resolverNetoNocheDetallado(t0, args.temporadas, args.netoPorTemporada, hoy, args.regimen, args.precioFinalTemporadas, ctx);
     if (r != null && (mejor == null || r.neto < mejor.neto)) mejor = r;
   }
   return mejor;
@@ -595,14 +876,7 @@ function buscarNocheMasBarata(args: ArgsMasBarato): NonNullable<ReturnType<typeo
  * fecha real. Devuelve `null` si ninguna noche de la ventana tiene tarifa.
  */
 export function liquidarHotelMasBarato(args: ArgsMasBarato): number | null {
-  const mejor = buscarNocheMasBarata(args);
-  if (mejor == null) return null;
-  const hoy = args.hoy ?? hoyISO();
-  // Ancla la promo "N noches, 1 gratis" a `desde` (fecha de entrada de la
-  // ventana): es el precio "desde" publicado, se re-liquida real al reservar.
-  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.desde, args.numNoches, hoy, args.regimen);
-  const factor = nocheGratis ? nocheGratis.factor : 1;
-  return mejor.neto * args.numNoches * factor;
+  return liquidarHotelMasBaratoConTemporada(args)?.total ?? null;
 }
 
 /**
@@ -634,14 +908,16 @@ export function liquidarHotelMasBaratoConTemporada(args: ArgsMasBarato): {
   const mejor = buscarNocheMasBarata(args);
   if (mejor == null) return null;
   const hoy = args.hoy ?? hoyISO();
-  const nocheGratis = resolverNocheGratisDetallado(args.temporadas, args.desde, args.numNoches, hoy, args.regimen);
-  const factor = nocheGratis ? nocheGratis.factor : 1;
+  // La promoción de estadía se ancla a `desde` (entrada de la ventana) sobre N noches iguales a la
+  // más barata: es el «desde» publicado (sin grupos); se re-liquida real al reservar.
+  const total = mejor.neto * args.numNoches;
+  const estadia = resolverPromoEstadia(args.temporadas, args.desde, Array(args.numNoches).fill(mejor.neto), total, hoy, args.regimen);
   const procedenciaCruda: ProcedenciaNoche[] = [
     { temporadaGanadora: mejor.temporadaGanadora, esPromocion: mejor.esPromocion, precioFinalAutoritativo: mejor.precioFinalAutoritativo },
   ];
-  if (nocheGratis) procedenciaCruda.push(nocheGratis.procedencia);
+  if (estadia) procedenciaCruda.push(estadia.procedencia);
   return {
-    total: mejor.neto * args.numNoches * factor,
+    total: estadia ? estadia.total : total,
     procedencia: deduplicarProcedencia(procedenciaCruda),
   };
 }

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { identidadDe } from "@/lib/contrato/identidad";
 import Link from "next/link";
 import { miRol, ROLES_EDITOR_VUELOS_CONTRATO } from "@/lib/roles";
 import { formatFechaLarga } from "@/lib/utils";
@@ -39,6 +40,8 @@ export default async function EditorVuelosContratoPage({ params }: { params: Pro
       sb.from("contrato_vuelos_editor").select("*").eq("numero_contrato", numero).order("orden", { ascending: true }),
       sb.from("contrato_vuelo_control_cambios").select("id, detalle, nota, registrado_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
     ]);
+  // Identidad del contrato (#75): viene en la MISMA fila de ventas_vuelo_sistema que los datos que muestra la pantalla (migración 285), nunca de otra consulta.
+  const identidad = identidadDe(resumen?.numero_contrato, resumen?.contrato_uid);
 
   // Fallo real de la consulta (red/RLS/timeout) — NUNCA se confunde con
   // "el contrato no existe o no tengo permiso" (defecto pedido explícitamente:
@@ -92,11 +95,11 @@ export default async function EditorVuelosContratoPage({ params }: { params: Pro
       </div>
 
       <div className="mt-5">
-        <ControlEmisionForm numeroContrato={numero} estadoEmisionInicial={resumen.estado_emision} />
+        <ControlEmisionForm numeroContrato={numero} estadoEmisionInicial={resumen.estado_emision} identidad={identidad} />
       </div>
 
       <div className="mt-5">
-        <TramosEditor numeroContrato={numero} tramosIniciales={tramos ?? []} />
+        <TramosEditor numeroContrato={numero} tramosIniciales={tramos ?? []} identidad={identidad} />
       </div>
 
       <section className="mt-5 rounded-xl border border-gray-200 bg-white p-4">

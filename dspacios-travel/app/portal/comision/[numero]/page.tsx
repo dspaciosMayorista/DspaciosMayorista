@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { PrintButton } from "@/components/contrato/PrintButton";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMonedaDocumento, formatFechaLarga } from "@/lib/utils";
 import { pesosEnLetras } from "@/lib/utils/numeroALetras";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { agenciaDe } from "@/lib/tenant.server";
@@ -90,8 +90,8 @@ export default async function CuentaCobroPage({ params, searchParams }: Props) {
 
           <div className="mt-3 text-center">
             <p className="text-xs text-gray-500">DEBE LA SUMA DE</p>
-            <p className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</p>
-            <p className="text-xs text-gray-500">({pesosEnLetras(montoComision, moneda === "USD" ? "USD" : "COP")})</p>
+            <p className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMonedaDocumento(montoComision, moneda)}</p>
+            <p className="text-xs text-gray-500">({pesosEnLetras(montoComision, moneda === "USD" ? "USD" : "COP", true)})</p>
           </div>
 
           <div className="mt-3 text-xs text-gray-700">
@@ -103,24 +103,24 @@ export default async function CuentaCobroPage({ params, searchParams }: Props) {
           <table className="mt-3 w-full border-collapse text-xs">
             <tbody>
               <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Fecha de viaje</td><td className="py-1 text-right">{formatFechaLarga(r.fechaSalida)}</td></tr>
-              <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Total PVP</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.pvp, moneda)}</td></tr>
+              <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Total PVP</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.pvp, moneda)}</td></tr>
               {detalle.baseComisionable != null && (
-                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Base comisionable</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.baseComisionable, moneda)}</td></tr>
+                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Base comisionable</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.baseComisionable, moneda)}</td></tr>
               )}
               <tr className="border-b border-gray-100">
-                <td className="py-1 text-gray-500">{detalle.esPctEfectivo ? "% comisión (efectivo)" : "% comisión"}</td>
+                <td className="py-1 text-gray-500">{detalle.esPctPactado ? "% comisión (pactado)" : detalle.esPctEfectivo ? "% comisión (efectivo)" : "% comisión"}</td>
                 <td className="py-1 text-right tabular-nums">{(detalle.pctComision * 100).toFixed(2)}%</td>
               </tr>
               {detalle.comisionBase != null && (
-                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Comisión</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.comisionBase, moneda)}</td></tr>
+                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Comisión</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.comisionBase, moneda)}</td></tr>
               )}
               {detalle.recobroAliado != null && detalle.recobroAliado > 0 && (
-                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Recobro</td><td className="py-1 text-right tabular-nums">{formatMoneda(detalle.recobroAliado, moneda)}</td></tr>
+                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Recobro</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.recobroAliado, moneda)}</td></tr>
               )}
               {detalle.aplicaRetencion && detalle.retencion != null && detalle.retencion > 0 && (
                 <tr className="border-b border-gray-100">
                   <td className="py-1 text-gray-500">Retención en la fuente ({((detalle.pctRetencion ?? 0) * 100).toFixed(1)}%)</td>
-                  <td className="py-1 text-right tabular-nums text-red-600">− {formatMoneda(detalle.retencion, moneda)}</td>
+                  <td className="py-1 text-right tabular-nums text-red-600">− {formatMonedaDocumento(detalle.retencion, moneda)}</td>
                 </tr>
               )}
             </tbody>
@@ -128,7 +128,7 @@ export default async function CuentaCobroPage({ params, searchParams }: Props) {
 
           <div className="mt-2 flex items-center justify-between rounded-lg bg-[rgba(18,5,115,0.06)] px-3 py-2">
             <span className="text-xs font-semibold text-gray-700">Total a cobrar</span>
-            <span className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(montoComision, moneda)}</span>
+            <span className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMonedaDocumento(montoComision, moneda)}</span>
           </div>
 
           {/* ── Declaración de retención (Art. 383 E.T.) ─────────────── */}

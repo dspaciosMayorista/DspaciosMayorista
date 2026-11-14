@@ -13,6 +13,8 @@
 // El navegador solo ELIGE (aliado + modalidad). Nada de lo que mande —canal, porcentaje, base, total— es autoridad.
 import { pctComisionAliado } from "@/lib/finanzas/comisionB2B";
 import { planComisionReserva, type ModoCompra, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
+import { acuerdosPorContrato } from "@/lib/cotizacion/recobroCarrito";
+import { aCentavos } from "@/lib/cotizacion/netoHija";
 
 /**
  * Roles que pueden ASISTIR una venta B2B (lista explícita, decisión del dueño). No se deriva de ROLES_INTERNOS: `control_vuelo`
@@ -29,7 +31,20 @@ export type TipoAliadoB2B = "agencia" | "freelance";
 export type OrigenPctB2B = "aliado" | "general" | "defecto";
 
 /** Una unidad cotizada (hotel/bloqueo o servicio) con lo que aporta al PVP y al impuesto no comisionable. */
-export type LineaB2B = { clave: string; pvp: number; impuesto: number };
+export type LineaB2B = {
+  clave: string;
+  /** PVP de la unidad tal como lo liquida el tarifario (SIN recobro). */
+  pvp: number;
+  impuesto: number;
+  /** #14-A: parte del recobro del carrito que cae en esta unidad (dentro de la tarifa de adulto; reparto por igual entre adultos). Ausente = 0. */
+  recobro?: number;
+};
+
+/** #14-A: recobro sellado en el plan. `participacion` es el IMPORTE FINAL (entero de moneda) ya resuelto en el servidor; `pct_participacion`/`origen_participacion` solo documentan de dónde salió. */
+export type RecobroPlan = { total: number; participacion: number; pct_participacion: number | null; origen_participacion: "formulario" | "parametro" };
+/** Quién selló el plan: personal interno (venta asistida) o el propio aliado (carrito del aliado directo, derivado de su sesión). */
+export type OrigenPlanB2B = "asistida" | "aliado_directo";
+export type RolActorPlan = RolAsistenciaB2B | "agencia" | "freelance";
 
 export type PlanB2BCotizacion = {
   version: 1;
@@ -57,8 +72,12 @@ export type PlanB2BCotizacion = {
   total_exigible: number;
   /** Una línea por unidad (`item-N` / `tour-N`): permite comparar por grupo cuando se convierte "1 contrato por destino". */
   lineas: LineaB2B[];
-  /** Empleado que asistió (autor interno). El beneficiario es SIEMPRE el aliado. */
-  asistido_por: { id: string; email: string | null; rol: RolAsistenciaB2B };
+  /** Empleado que asistió (autor interno) o, en el carrito del aliado directo, el propio aliado. El beneficiario es SIEMPRE el aliado. */
+  asistido_por: { id: string; email: string | null; rol: RolActorPlan };
+  /** Ausente = venta asistida (formato anterior). */
+  origen?: OrigenPlanB2B;
+  /** Ausente = sin recobro: toda la liquidación es la de siempre. */
+  recobro?: RecobroPlan;
   congelado_en: string;
 };
 
@@ -112,6 +131,16 @@ function leerVistos(v: unknown): TerminosVistos | null {
   if (v.pct_origen !== "aliado" && v.pct_origen !== "general" && v.pct_origen !== "defecto") return null;
   for (const k of ["pvp", "impuesto", "base", "pct", "comision", "total_exigible"] as const) if (!finito(v[k])) return null;
   return { modo_compra: v.modo_compra, moneda: v.moneda, pct_origen: v.pct_origen, pvp: v.pvp as number, impuesto: v.impuesto as number, base: v.base as number, pct: v.pct as number, comision: v.comision as number, total_exigible: v.total_exigible as number };
+}
+
+/**
+ * #14-A: el aliado directo no manda `asistencia`; si vio la liquidación con recobro, manda `vistos` al nivel de la solicitud y el servidor los compara con lo que liquida AL GENERAR (mismo mecanismo
+ * de la venta asistida). Ausente ⇒ sin comparación (el servidor igual recalcula todo); ilegible ⇒ error, nunca se ignora en silencio.
+ */
+export function leerVistosEntrada(raw: unknown): { ok: true; vistos?: TerminosVistos } | { ok: false; error: string } {
+  if (!esObjeto(raw) || raw.vistos === undefined || raw.vistos === null) return { ok: true };
+  const vistos = leerVistos(raw.vistos);
+  return vistos ? { ok: true, vistos } : { ok: false, error: "El desglose que se confirmó no es válido. Vuelve a calcular la liquidación." };
 }
 
 /** Los términos que el servidor liquida AHORA deben ser los que el usuario vio: cualquier diferencia (más allá de medio centavo) ⇒ no se crea nada. */
@@ -198,12 +227,44 @@ function lineasValidas(lineas: readonly LineaB2B[]): boolean {
     if (!l || typeof l.clave !== "string" || !l.clave || claves.has(l.clave)) return false;
     claves.add(l.clave);
     if (!finito(l.pvp) || l.pvp < 0 || !finito(l.impuesto) || l.impuesto < 0) return false;
+    if (l.recobro != null && (!finito(l.recobro) || l.recobro < 0)) return false;
   }
   return true;
 }
 
 function pctValido(pct: number): boolean {
   return Number.isFinite(pct) && pct >= 0 && pct <= 1;
+}
+
+export type LiquidacionPlanB2B = {
+  pvp: number; impuesto: number; base: number;
+  /** Lo que gana el aliado en total (ordinaria + participación). Sin recobro = la comisión de siempre. */
+  comision: number; comisionEstado: "pendiente" | "descontada"; totalExigible: number;
+};
+
+/**
+ * ÚNICA fórmula del plan (cotizar y releer lo guardado). Sin recobro: `planComisionReserva`, exactamente como antes. Con recobro: `acuerdosPorContrato` (#97) sobre un solo contrato =
+ * el carrito completo: PVP con recobro, base sin BNC y sin el recobro cuando hay participación, y en NETO exigible = PVP con recobro − (ordinaria + participación).
+ */
+export function liquidarPlanB2B(args: { modo: ModoCompra; pct: number; lineas: readonly LineaB2B[]; recobro?: Pick<RecobroPlan, "total" | "participacion"> | null }): { ok: true; liq: LiquidacionPlanB2B } | { ok: false; error: string } {
+  const { pvp: pvpSin, impuesto } = sumarLineas(args.lineas);
+  const recobroLineas = redondear2(args.lineas.reduce((x, l) => x + (l.recobro ?? 0), 0));
+  const total = args.recobro?.total ?? 0;
+  if (!(recobroLineas > 0) && !(total > 0)) {
+    const r = planComisionReserva({ modoCompra: args.modo, precioVenta: pvpSin, impuesto, pct: args.pct });
+    if (!r.ok) return r;
+    const p = r.plan;
+    return { ok: true, liq: { pvp: pvpSin, impuesto, base: p.base, comision: p.comision ?? 0, comisionEstado: p.comisionEstado === "descontada" ? "descontada" : "pendiente", totalExigible: p.precioFinal } };
+  }
+  if (aCentavos(recobroLineas) !== aCentavos(total)) return { ok: false, error: "El recobro repartido en las unidades no suma el recobro del carrito." };
+  const a = acuerdosPorContrato({
+    contratos: [{ clave: "carrito", pvpCent: aCentavos(pvpSin), bncCent: aCentavos(impuesto), recobroCent: aCentavos(total) }],
+    recobroTotal: total, participacion: { modo: "valor", valor: args.recobro?.participacion ?? 0 }, pct: args.pct,
+  });
+  if (!a.ok) return a;
+  const c = a.valor[0];
+  const neta = args.modo === "neta";
+  return { ok: true, liq: { pvp: Number(c.totalCent) / 100, impuesto, base: Number(c.baseCent) / 100, comision: Number(c.totalAliadoCent) / 100, comisionEstado: neta ? "descontada" : "pendiente", totalExigible: Number(neta ? c.exigibleNetoCent : c.totalCent) / 100 } };
 }
 
 export function construirPlanB2B(args: {
@@ -215,16 +276,21 @@ export function construirPlanB2B(args: {
   lineas: readonly LineaB2B[];
   /** Documento y tipo del aliado según el catálogo, para congelarlos junto al nombre. */
   identidad?: { documento: string | null; tipoDocumento: string | null };
-  actor: { id: string; email: string | null; rol: RolAsistenciaB2B };
+  actor: { id: string; email: string | null; rol: RolActorPlan };
   congeladoEn: string;
+  /** #14-A. `origen` ausente = venta asistida (formato anterior). */
+  origen?: OrigenPlanB2B;
+  recobro?: RecobroPlan | null;
 }): { ok: true; plan: PlanB2BCotizacion } | { ok: false; error: string } {
   if (!lineasValidas(args.lineas)) return { ok: false, error: "No se pudieron determinar los valores de la cotización para la venta B2B." };
   if (!pctValido(args.pct)) return { ok: false, error: "El porcentaje de comisión del aliado está fuera de rango (0 a 100 %); corrígelo en el catálogo de aliados." };
-  const { pvp, impuesto } = sumarLineas(args.lineas);
-  if (!(pvp > 0)) return { ok: false, error: "La cotización no tiene un total mayor que cero; no se puede asistir como venta B2B." };
-  const r = planComisionReserva({ modoCompra: args.modo, precioVenta: pvp, impuesto, pct: args.pct });
-  if (!r.ok) return { ok: false, error: r.error };
-  const p = r.plan;
+  const sinRecobro = sumarLineas(args.lineas);
+  if (!(sinRecobro.pvp > 0)) return { ok: false, error: "La cotización no tiene un total mayor que cero; no se puede asistir como venta B2B." };
+  const recobro = args.recobro && args.recobro.total > 0 ? args.recobro : null;
+  const l = liquidarPlanB2B({ modo: args.modo, pct: args.pct, lineas: args.lineas, recobro });
+  if (!l.ok) return { ok: false, error: l.error };
+  const { pvp, impuesto } = l.liq;
+  const p = { base: l.liq.base, comision: l.liq.comision, comisionEstado: l.liq.comisionEstado, precioFinal: l.liq.totalExigible };
   return {
     ok: true,
     plan: {
@@ -244,8 +310,10 @@ export function construirPlanB2B(args: {
       comision: p.comision ?? 0,
       comision_estado: p.comisionEstado === "descontada" ? "descontada" : "pendiente",
       total_exigible: p.precioFinal,
-      lineas: args.lineas.map((l) => ({ clave: l.clave, pvp: l.pvp, impuesto: l.impuesto })),
+      lineas: args.lineas.map((l) => ({ clave: l.clave, pvp: l.pvp, impuesto: l.impuesto, ...(l.recobro != null && l.recobro > 0 ? { recobro: l.recobro } : {}) })),
       asistido_por: args.actor,
+      ...(args.origen ? { origen: args.origen } : {}),
+      ...(recobro ? { recobro: { total: recobro.total, participacion: recobro.participacion, pct_participacion: recobro.pct_participacion, origen_participacion: recobro.origen_participacion } } : {}),
       congelado_en: args.congeladoEn,
     },
   };
@@ -271,19 +339,32 @@ export function leerPlanB2BDePayload(payload: unknown): { ok: true; plan: PlanB2
   const lineas: LineaB2B[] = [];
   for (const l of p.lineas) {
     if (!esObjeto(l) || typeof l.clave !== "string" || !finito(l.pvp) || !finito(l.impuesto)) return malo;
-    lineas.push({ clave: l.clave, pvp: l.pvp, impuesto: l.impuesto });
+    if ("recobro" in l && l.recobro != null && !finito(l.recobro)) return malo;
+    lineas.push({ clave: l.clave, pvp: l.pvp, impuesto: l.impuesto, ...(finito(l.recobro) && l.recobro > 0 ? { recobro: l.recobro } : {}) });
   }
   if (!lineasValidas(lineas) || !pctValido(p.pct as number)) return malo;
   const a = p.asistido_por;
-  if (!esObjeto(a) || typeof a.id !== "string" || !(ROLES_ASISTENCIA_B2B as readonly string[]).includes(a.rol as string)) return malo;
-  // Consistencia interna: el congelado debe poder reconstruirse desde sus propias líneas y su propio %.
-  const { pvp, impuesto } = sumarLineas(lineas);
-  const esperado = planComisionReserva({ modoCompra: p.modo_compra as ModoCompra, precioVenta: pvp, impuesto, pct: p.pct as number });
-  if (!esperado.ok || esperado.plan.comision == null) return malo;
-  const e = esperado.plan;
+  const origen = p.origen === undefined ? undefined : p.origen === "asistida" || p.origen === "aliado_directo" ? (p.origen as OrigenPlanB2B) : null;
+  if (origen === null) return malo;
+  const rolesPermitidos: readonly string[] = origen === "aliado_directo" ? ["agencia", "freelance"] : (ROLES_ASISTENCIA_B2B as readonly string[]);
+  if (!esObjeto(a) || typeof a.id !== "string" || !rolesPermitidos.includes(a.rol as string)) return malo;
+  // #14-A: recobro sellado (opcional). Debe ser coherente con las líneas: Σ recobro por unidad = recobro total; participación ≤ recobro.
+  let recobro: RecobroPlan | undefined;
+  if ("recobro" in p && p.recobro != null) {
+    const r = p.recobro;
+    if (!esObjeto(r) || !finito(r.total) || r.total <= 0 || !finito(r.participacion) || r.participacion < 0 || r.participacion > r.total + EPS) return malo;
+    if (r.pct_participacion !== null && r.pct_participacion !== undefined && !finito(r.pct_participacion)) return malo;
+    if (r.origen_participacion !== "formulario" && r.origen_participacion !== "parametro") return malo;
+    recobro = { total: r.total, participacion: r.participacion, pct_participacion: finito(r.pct_participacion) ? r.pct_participacion : null, origen_participacion: r.origen_participacion };
+  } else if (lineas.some((l) => (l.recobro ?? 0) > 0)) return malo;
+  // Consistencia interna: el congelado debe poder reconstruirse desde sus propias líneas, su propio % y su propio recobro.
+  const esperado = liquidarPlanB2B({ modo: p.modo_compra as ModoCompra, pct: p.pct as number, lineas, recobro });
+  if (!esperado.ok) return malo;
+  const e = esperado.liq;
+  const pvp = e.pvp, impuesto = e.impuesto;
   const cuadra = Math.abs((p.pvp as number) - pvp) <= EPS && Math.abs((p.impuesto as number) - impuesto) <= EPS
-    && Math.abs((p.base as number) - e.base) <= EPS && Math.abs((p.comision as number) - e.comision!) <= EPS
-    && Math.abs((p.total_exigible as number) - e.precioFinal) <= EPS
+    && Math.abs((p.base as number) - e.base) <= EPS && Math.abs((p.comision as number) - e.comision) <= EPS
+    && Math.abs((p.total_exigible as number) - e.totalExigible) <= EPS
     && p.comision_estado === e.comisionEstado;
   if (!cuadra) return malo;
   return {
@@ -293,9 +374,11 @@ export function leerPlanB2BDePayload(payload: unknown): { ok: true; plan: PlanB2
       ...("aliado_documento" in p ? { aliado_documento: typeof p.aliado_documento === "string" ? p.aliado_documento : null } : {}),
       ...("aliado_tipo_documento" in p ? { aliado_tipo_documento: typeof p.aliado_tipo_documento === "string" ? p.aliado_tipo_documento : null } : {}),
       tipo_asesor: p.tipo_asesor, modo_compra: p.modo_compra as ModoCompra, moneda: p.moneda, pvp, impuesto, base: e.base, pct: p.pct as number,
-      pct_origen: p.pct_origen, comision: e.comision!, comision_estado: e.comisionEstado === "descontada" ? "descontada" : "pendiente",
-      total_exigible: e.precioFinal, lineas,
-      asistido_por: { id: a.id as string, email: typeof a.email === "string" ? a.email : null, rol: a.rol as RolAsistenciaB2B },
+      pct_origen: p.pct_origen, comision: e.comision, comision_estado: e.comisionEstado,
+      total_exigible: e.totalExigible, lineas,
+      asistido_por: { id: a.id as string, email: typeof a.email === "string" ? a.email : null, rol: a.rol as RolActorPlan },
+      ...(origen ? { origen } : {}),
+      ...(recobro ? { recobro } : {}),
       congelado_en: typeof p.congelado_en === "string" ? p.congelado_en : "",
     },
   };
@@ -314,7 +397,8 @@ export function compararPlanesB2B(congelado: PlanB2BCotizacion, vivo: PlanB2BCot
     && congelado.tipo_asesor === vivo.tipo_asesor
     && (["pct", "pvp", "impuesto", "base", "comision", "total_exigible"] as const).every((k) => igual(congelado[k], vivo[k]))
     && congelado.lineas.length === vivo.lineas.length
-    && congelado.lineas.every((l, i) => l.clave === vivo.lineas[i].clave && igual(l.pvp, vivo.lineas[i].pvp) && igual(l.impuesto, vivo.lineas[i].impuesto));
+    && congelado.lineas.every((l, i) => l.clave === vivo.lineas[i].clave && igual(l.pvp, vivo.lineas[i].pvp) && igual(l.impuesto, vivo.lineas[i].impuesto) && igual(l.recobro ?? 0, vivo.lineas[i].recobro ?? 0))
+    && igual(congelado.recobro?.total ?? 0, vivo.recobro?.total ?? 0) && igual(congelado.recobro?.participacion ?? 0, vivo.recobro?.participacion ?? 0);
   return mismo ? { ok: true } : { ok: false, error: MENSAJE_TERMINOS_CAMBIARON };
 }
 
@@ -384,6 +468,48 @@ export function planDeGrupoB2B(plan: PlanB2BCotizacion, lineasDelGrupo: readonly
   if (!lineasValidas(lineasDelGrupo)) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
   const { pvp, impuesto } = sumarLineas(lineasDelGrupo);
   return planComisionReserva({ modoCompra: plan.modo_compra, precioVenta: pvp, impuesto, pct: plan.pct });
+}
+
+export type PlanGrupoB2B = PlanComisionReserva & {
+  /** Recobro de este contrato (dentro de su precio) y su reparto pactado. Ausente = el contrato no lleva recobro. */
+  recobro?: { total: number; aliado: number; empresa: number };
+  /** Total al aliado (ordinaria + participación): lo que cobra el aliado en PVP o lo que se le descontó en NETO. */
+  totalAliado: number;
+};
+
+/**
+ * Planes de TODOS los contratos de la conversión, alineados con `grupos`. Sin recobro en el plan: cada contrato usa `planDeGrupoB2B`, exactamente como antes. Con recobro: el recobro de cada
+ * contrato es la suma del de sus unidades; la participación total se reparte entre los contratos con `repartir` (exacta) y cada uno liquida con `acuerdoComision` (#97).
+ * `ventas.comision_b2b` = ordinaria en PVP y ordinaria + participación en NETO (lo que la base recalcula y exige).
+ */
+export function planesDeGruposB2B(plan: PlanB2BCotizacion, grupos: readonly (readonly LineaB2B[])[]): { ok: true; planes: PlanGrupoB2B[] } | { ok: false; error: string } {
+  for (const g of grupos) if (!lineasValidas(g)) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
+  if (!plan.recobro || !(plan.recobro.total > 0)) {
+    const out: PlanGrupoB2B[] = [];
+    for (const g of grupos) {
+      const r = planDeGrupoB2B(plan, g);
+      if (!r.ok) return r;
+      out.push({ ...r.plan, totalAliado: r.plan.comision ?? 0 });
+    }
+    return { ok: true, planes: out };
+  }
+  const contratos = grupos.map((g, i) => {
+    const { pvp, impuesto } = sumarLineas(g);
+    return { clave: String(i), pvpCent: aCentavos(pvp), bncCent: aCentavos(impuesto), recobroCent: aCentavos(redondear2(g.reduce((x, l) => x + (l.recobro ?? 0), 0))) };
+  });
+  const r = acuerdosPorContrato({ contratos, recobroTotal: plan.recobro.total, participacion: { modo: "valor", valor: plan.recobro.participacion }, pct: plan.pct });
+  if (!r.ok) return r;
+  const neta = plan.modo_compra === "neta";
+  return {
+    ok: true,
+    planes: r.valor.map((a) => {
+      const ordinaria = Number(a.ordinariaCent) / 100, part = Number(a.participacionCent) / 100, rec = Number(a.recobroCent) / 100;
+      return {
+        pct: plan.pct, base: Number(a.baseCent) / 100, comision: neta ? ordinaria + part : ordinaria, modoCompra: plan.modo_compra, comisionEstado: neta ? "descontada" : "pendiente",
+        precioFinal: Number(neta ? a.exigibleNetoCent : a.totalCent) / 100, totalAliado: ordinaria + part, recobro: { total: rec, aliado: part, empresa: Math.round((rec - part) * 100) / 100 },
+      };
+    }),
+  };
 }
 
 // ── Documentos ───────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 // CONGELADO de la opción (cotizacion_opciones.plantilla_hija), no duplica ni vuelve a sumar su precio, no muestra costos ni proveedores, y una comparativa cuyo snapshot no se puede verificar
 // dice que hay que generarla de nuevo en vez de aparentar que contiene —o no— el servicio. Se lee con `cargarDatosComparativa` y se renderiza el componente REAL.
 import { describe, test } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement, type ComponentType } from "react";
 import * as nodeModule from "node:module";
@@ -62,7 +63,7 @@ const madre = { id: 1, codigo: "COT-CMP-1", version: 1, estado: "abierta", clien
 const texto = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 async function pintar(opciones: Fila[], modo: "solo_lectura" | "checkout") {
   const d = await cargarDatosComparativa(bdCon(opciones), 1);
-  const completo = renderToStaticMarkup(createElement(ComparativaDocumento as ComponentType<Record<string, unknown>>, { madre, datos: d, modo, token: modo === "checkout" ? "t".repeat(36) : null, vencida: false }));
+  const completo = renderToStaticMarkup(createElement(ComparativaDocumento as ComponentType<Record<string, unknown>>, { madre, datos: d, modo, token: modo === "checkout" ? "t".repeat(36) : null, vencida: false, identidad: AGENCIA_PRUEBA }));
   // #75: en el enlace público la hoja de impresión viaja oculta en pantalla (`hidden print:block`) con los MISMOS datos; esta prueba mide la vista de pantalla.
   const html = completo.split('<div class="hidden print:block">')[0];
   return { d, t: texto(html), html };

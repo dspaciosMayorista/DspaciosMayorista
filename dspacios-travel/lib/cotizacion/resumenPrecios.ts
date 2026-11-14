@@ -15,9 +15,10 @@ export const ETIQUETA_TIPO: Record<TipoCupo, string> = { adulto: "Adulto", nino:
 /** Un pasajero anónimo de la cotización. `id` estable mientras se edita (no se reasigna al reordenar). */
 export type Cupo = { id: string; tipo: TipoCupo; baseCentavos: number };
 
+/** `oculto`: el importe se reparte entre los cupos que cubre pero su NOMBRE no sale en «incluye» (#14-A: el recobro viaja dentro de la tarifa de adulto, sin identificarse). */
 export type ServicioCobertura =
-  | { id: string; nombre: string; modo: "total"; precioCentavos: number; cubre: "todos" | readonly string[] }
-  | { id: string; nombre: string; modo: "por_tipo"; tarifasCentavos: Partial<Record<TipoCupo, number>>; cubre: "todos" | readonly string[] };
+  | { id: string; nombre: string; modo: "total"; precioCentavos: number; cubre: "todos" | readonly string[]; oculto?: true }
+  | { id: string; nombre: string; modo: "por_tipo"; tarifasCentavos: Partial<Record<TipoCupo, number>>; cubre: "todos" | readonly string[]; oculto?: true };
 
 export type GrupoResumen = {
   tipo: TipoCupo;
@@ -96,7 +97,7 @@ export function resumenUnidad(
         sumaEsperada += t;
       }
     }
-    for (const id of cubiertos) incluidos.get(id)!.push(s.nombre);
+    if (!s.oculto) for (const id of cubiertos) incluidos.get(id)!.push(s.nombre);
   }
   // Grupos: mismo tipo, misma tarifa y mismo conjunto de servicios. Orden determinista e independiente del orden de entrada: tipo, tarifa descendente, servicios.
   const ordenTipo: TipoCupo[] = ["adulto", "nino", "nino2", "infante"];
@@ -143,4 +144,26 @@ export function resumenAplicable(
     total += u.totalCentavos;
   }
   return total === r.totalCentavos ? (r as ResumenPrecios) : null;
+}
+
+/**
+ * #94 — Resumen que se congela en UN contrato al convertir una cotización: solo las unidades (`ref` `item-N`) del grupo que ese contrato cubre, con el total
+ * recalculado, y únicamente si cuadra con lo EXIGIBLE del contrato (modalidad, moneda y total). Sin resumen guardado, con una unidad desconocida o sin cuadre
+ * devuelve null: el contrato conserva su presentación de siempre y NUNCA se inventa un reparto.
+ */
+export function resumenParaContrato(
+  crudo: unknown,
+  refs: readonly string[],
+  acuerdo: { modalidad: "pvp" | "neto"; moneda: string; totalCentavos: number },
+): ResumenPrecios | null {
+  const r = crudo as Partial<ResumenPrecios> | null;
+  if (!r || typeof r !== "object" || r.version !== 1 || !Array.isArray(r.unidades) || !refs.length) return null;
+  const unidades: UnidadResumen[] = [];
+  for (const ref of new Set(refs)) {
+    const u = r.unidades.find((x) => x && x.ref === ref);
+    if (!u) return null;
+    unidades.push(u);
+  }
+  if (r.modalidad !== acuerdo.modalidad || r.moneda !== acuerdo.moneda) return null;
+  return resumenAplicable({ ...r, unidades, totalCentavos: unidades.reduce((s, u) => s + (entero(u.totalCentavos) ? u.totalCentavos : NaN), 0) }, acuerdo);
 }

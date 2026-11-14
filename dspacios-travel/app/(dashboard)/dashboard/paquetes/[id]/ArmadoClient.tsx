@@ -13,6 +13,7 @@ import { estadoSeleccionTodos, mensajeLote } from "@/lib/paquetes/seleccionMasiv
 import { ColaSeleccion, bloqueoGenerar, efectivos, estadoFila, type EstadoFila } from "@/lib/paquetes/seleccionOptimista";
 import { agruparPorCategoriaVigenciaRegimen, type FilaDetalle, type GrupoTarifa } from "@/lib/paquetes/tarifarioGrupos";
 import { Input } from "@/components/ui/input";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { formatMoneda } from "@/lib/utils";
 import { ejecutarReanudable } from "@/lib/tarifario/bucleReanudable";
 import { filasUnidades, resumenUnidades, ROL_NETA_BLOQUEO, ROL_REVENTA_BLOQUEO, type EntradaUnidad, type MonedaMontaje, type PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
@@ -1077,6 +1078,7 @@ function HotelModal({
   // intenta — el modal se queda solo con el mensaje y sin forma de guardar.
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, start] = useTransition();
+  useEscapeCerrar(true, onClose, saving); // Escape = Cancelar; no mientras se guarda
 
   useEffect(() => {
     void (async () => {

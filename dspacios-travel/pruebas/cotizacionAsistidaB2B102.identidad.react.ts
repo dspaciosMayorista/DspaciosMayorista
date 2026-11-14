@@ -6,6 +6,7 @@
 //   · RNT / datos de pago: salen de la fila `agencias` del tenant (Mayorista ≠ Minorista), también en la cotización manual.
 //   · Listado: indicación «NETO» / «PVP» y el importe que corresponde a cada una.
 import { test, describe } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 
@@ -25,7 +26,7 @@ const ventaBase = {
 };
 const items = [{ id: 1, numero_contrato: "", descripcion: "Hotel Aurora — CARTAGENA · 1 hab Doble (2 pax)", adultos: 2, ninos: 0, tarifa_adulto: 500_000, tarifa_nino: 0, orden: 0, modo_precio: "por_persona", valor_total: null }];
 const doc = (venta: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
-  texto(createElement(ContratoDocumento, { venta: { ...ventaBase, ...venta }, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: 0, esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-02-20", ...extra } as never));
+  texto(createElement(ContratoDocumento, { venta: { ...ventaBase, ...venta }, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: 0, esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-02-20", agencia: AGENCIA_PRUEBA, ...extra } as never));
 
 const NETO_VENTA = {
   cliente: "Viajes Aurora 102", cliente_documento: "900123456-7", cliente_telefono: "6044440000", cliente_direccion: "Calle 10 # 5-20, Medellín",

@@ -1,6 +1,9 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+import { identidadDe, parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { createClient } from "@/lib/supabase/server";
+import { validarNochesViaje } from "@/lib/reglas/duracionViaje";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, temporadaVigenteParaFecha, toTemporadaRango, factorLiquidacion, type TemporadaRango } from "@/lib/calc/paquetes";
@@ -73,9 +76,10 @@ import { resolverCondicionesTarifaParaConversion, type HotelSnapConRef } from "@
 import { computarReservaBernalo, type ComputoReservaBernaloOk, type SalidaResueltaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import type { HabitacionOcupacionValidada } from "@/lib/reservar/ocupacionPorHabitacion";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
 import {
-  normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio,
+  normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio, costosServicioPorColumna,
   type ServicioEfectivo,
 } from "@/lib/reservar/serviciosPaquete";
 import {
@@ -99,6 +103,9 @@ import {
   trmReferenciaAproximada,
   congelarCondicionesContratoBestEffort,
 } from "@/lib/contrato/congelarCondicionesContrato";
+import { resumenParaContrato } from "@/lib/cotizacion/resumenPrecios";
+import { aplicarRecobroAFilasAdulto, leerRecobroClienteDePayload, recobroPorAdultoDeUnidad } from "@/lib/cotizacion/recobroCarrito";
+import { aCentavos } from "@/lib/cotizacion/netoHija";
 import { componenteDePrograma } from "@/lib/cotizacion/condicionDesdeCatalogo";
 import type { ComponenteSnapshot } from "@/lib/cotizacion/snapshotCondiciones";
 import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
@@ -128,7 +135,7 @@ import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, moned
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import {
-  compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON,
+  compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, planesDeGruposB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON, type PlanGrupoB2B,
   type LineaB2B, type PlanB2BCotizacion,
 } from "@/lib/cotizacion/asistidaB2B";
 import { resolverActorAsistencia, verificarAliadoVivoParaConversion } from "@/lib/cotizacion/asistidaB2BServidor";
@@ -148,8 +155,9 @@ const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim()
 // importa— se puede ejecutar de verdad en las pruebas. El despacho es
 // explícito por nombre (no un `as never` genérico) para conservar el tipado
 // de cada RPC.
-async function rpcFinanciero(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
-  const admin = createAdminClient();
+// #75: cada llamada declara la identidad del contrato que se está creando (el uid sale del INSERT del propio flujo).
+async function rpcFinanciero(id: IdentidadContrato, fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
+  const admin = createAdminClient(id);
   if (fn === "registrar_financiero_contrato") {
     const { data, error } = await admin.rpc("registrar_financiero_contrato", {
       p_numero_contrato: String(args.p_numero_contrato ?? ""),
@@ -176,21 +184,22 @@ async function rpcFinanciero(fn: string, args: Record<string, unknown>): Promise
 // con el MISMO numero_contrato — el propio RPC financiero borra la fila al
 // tener éxito, pero un segundo intento antes de eso (o una carrera benigna)
 // no debe fallar por clave duplicada.
-async function guardarPendienteFinanciero(p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }): Promise<{ ok: boolean; error?: string }> {
-  const admin = createAdminClient();
+async function guardarPendienteFinanciero(id: IdentidadContrato, p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; contratoUid?: string | null }): Promise<{ ok: boolean; error?: string }> {
+  const admin = createAdminClient(id);
   const { error } = await admin.from("contrato_financiero_pendiente").upsert({
     numero_contrato: p.numeroContrato,
     tenant: p.tenant,
     costos: p.costos as Json,
     cxp: p.cxp as unknown as Json,
+    contrato_uid: p.contratoUid ?? id[p.numeroContrato] ?? null, // #75: la identidad se conserva en el pendiente; la base no deja pisar la de otro contrato
   }, { onConflict: "numero_contrato" });
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 // Dependencias completas de la escritura financiera (RPC + espejo contable + intención durable).
-function depsFinanciero(numeroContrato: string, tenant: Tenant, fecha: string) {
+function depsFinanciero(id: IdentidadContrato, numeroContrato: string, tenant: Tenant, fecha: string) {
   return {
-    rpc: rpcFinanciero,
+    rpc: (fn: string, args: Record<string, unknown>) => rpcFinanciero(id, fn, args),
     // #63: el importe del asiento de una CxP del modo COP con TRM sale de su equivalente congelado
     // (`cuentas_por_pagar.valor_cop_63`), que resuelve `postearAsientoCxP` por id de cuenta.
     postearAsiento: (c: { id: number; tipo_proveedor: string | null; proveedor: string | null; servicio: string | null; valor_total: number }) =>
@@ -199,7 +208,7 @@ function depsFinanciero(numeroContrato: string, tenant: Tenant, fecha: string) {
         servicio: c.servicio, valorTotal: c.valor_total, fecha, tenant,
       }),
     eliminarAsiento: (cuentaId: number) => eliminarAsientoCxP(cuentaId),
-    guardarPendiente: guardarPendienteFinanciero,
+    guardarPendiente: (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; contratoUid?: string | null }) => guardarPendienteFinanciero(id, p),
   };
 }
 
@@ -216,6 +225,7 @@ const MSG_ERROR_GUARDAR_RESERVA = "No fue posible guardar la reserva. Intenta nu
 // (lib/reservar/cotizar.ts → `validarEntradaCotizarPorFechas`), nunca se
 // confía en el tipo declarado en tiempo de ejecución.
 /** Cotiza un hotel para las fechas que elige el asesor (porción/dinámico). */
+// identidad:n/a — solo lectura (cotiza): no escribe tablas del contrato
 export async function cotizarPorFechas(input: unknown): Promise<CotizarResult> {
   return cotizarPorFechasImpl(input);
 }
@@ -224,6 +234,7 @@ export async function cotizarPorFechas(input: unknown): Promise<CotizarResult> {
 // navegador (Vista Booking pública) con cualquier body HTTP — toda la
 // validación de forma vive en `buscarHotelesImpl` (lib/reservar/cotizar.ts),
 // nunca se confía en el tipo `BusquedaInput` en tiempo de ejecución.
+// identidad:n/a — solo lectura (búsqueda): no escribe tablas del contrato
 export async function buscarHoteles(input: unknown): Promise<
   { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[] } | { ok: false; error: string }
 > {
@@ -234,6 +245,7 @@ export async function buscarHoteles(input: unknown): Promise<
 // arriba: toda la validación de forma vive en `buscarReceptivosImpl`
 // (lib/reservar/cotizar.ts), nunca se confía en el tipo `BusquedaServiciosInput`
 // en tiempo de ejecución.
+// identidad:n/a — solo lectura (búsqueda): no escribe tablas del contrato
 export async function buscarReceptivos(input: unknown): Promise<{ ok: true; resultados: ResultadoServicio[] } | { ok: false; error: string }> {
   return buscarReceptivosImpl(input);
 }
@@ -246,7 +258,7 @@ export async function buscarReceptivos(input: unknown): Promise<{ ok: true; resu
 // true`) y el detalle del error real de Supabase viaja aquí para que la UI
 // lo muestre — nunca se asume éxito sin comprobar `{ error }`.
 export type ReservaResult =
-  | { ok: true; numero: string; advertencias?: string[] }
+  | { ok: true; numero: string; advertencias?: string[]; /** #75: identidad del contrato recién creado (la del INSERT). */ contratoUid?: string }
   | { ok: false; error: string };
 
 // #120 · TRM de COSTOS de un contrato en USD de una reserva POR PERSONA (hotel a solicitud o tarifado). Las obligaciones con los proveedores de ese contrato están en dólares: la CxP conserva su moneda y su importe
@@ -261,7 +273,7 @@ async function trmCostoContratoUsd(p: {
   if (!d.ok) return { ok: false, error: d.error };
   // Orden de despliegue: la RPC anterior a la 236 ignora en silencio el equivalente y dejaría la CxP en USD sin él; se comprueba ANTES de numerar.
   if (d.trm != null && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const { error: errEsquema236 } = await createAdminClient().from("cuentas_por_pagar").select("valor_cop_costo, trm_costo").limit(1);
+    const { error: errEsquema236 } = await createAdminClient().from("cuentas_por_pagar").select("valor_cop_costo, trm_costo").limit(1); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
     if (errEsquema236) return { ok: false, error: "La base de datos todavía no tiene el equivalente en pesos de las cuentas por pagar (migración 236); no se crea ningún contrato. Avisa a soporte." };
   }
   return { ok: true, trm: d.trm };
@@ -275,7 +287,7 @@ async function trmCostoContratoUsd(p: {
 // — el tenant llega aquí siempre ya autorizado, nunca desde el navegador.
 // `costo`: TRM de COSTOS (solo contratos en USD): la recibida de quien convierte, ya con su permiso resuelto en el servidor (nunca del navegador).
 async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant, solicitud?: { neta: NetaSolicitud; precioCongelado: number }, costo?: { trmRecibida: unknown; esInterno: boolean }): Promise<ReservaResult> {
-  const sb = await createClient();
+  let sb = await createClient(); // identidad:n/a — lecturas y sesión previas al INSERT: el contrato aún no existe (tras el INSERT se reasigna con la identidad)
 
   // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
   // ReservaResult) — hoy solo las llena el guardado best-effort de
@@ -325,7 +337,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   if (origen.tipo !== "ninguno") {
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
       return { ok: false, error: "No se pudo resolver el origen del vuelo (configuración del servidor incompleta)." };
-    const admin = createAdminClient();
+    const admin = createAdminClient(); // identidad:n/a — lectura del origen del vuelo, antes de crear el contrato
     const rv = await resolverDatosVuelo(admin, origen);
     if (!rv.ok) return { ok: false, error: rv.error };
     datosVuelo = rv.data;
@@ -379,7 +391,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // cabecera es SIEMPRE el congelado en el snapshot de la oferta. El aliado se lee con el mismo cliente que usó la cotización.
   let planVivo63: PlanB2bSnapshot63 | null = null;
   if (input.tipoAsesor !== "interno") {
-    const lector63 = oferta63 && process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    const lector63 = oferta63 && process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null; // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
     const al = lector63
       ? await resolverAliadoReserva(lector63, input.tipoAsesor, input.aliadoId)
       : await resolverAliadoReserva(sb, input.tipoAsesor, input.aliadoId);
@@ -403,6 +415,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // recibido como parámetro ya validado por el caller (nunca del navegador).
   let aceptacion63: AceptacionPreparada63 | null = null;
   let numero: string;
+  let reservaToken: string | null = null; // 287: ticket de reserva del consecutivo (solo DTM reutilizado)
   if (oferta63) {
     // #63 (E/F/G): ACEPTACIÓN ATÓMICA. Los costos y obligaciones se recalculan EN VIVO solo para COMPARAR con lo cotizado
     // (huella financiera): lo que se escribe después sale exclusivamente de lo que devuelve la aceptación.
@@ -418,7 +431,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const vivo63 = await calcularFinancieroReserva({ input, data: comp.data, datosVuelo, costoAereo, hoyISO: fechaNegocio() });
     if (!vivo63.ok) return { ok: false, error: vivo63.error };
     const huellaFin63 = huellaFinanciera63({ costos: vivo63.costosContrato, cxp: construirObligaciones63(vivo63.cxp, oferta63.trm), b2b: planVivo63 });
-    const adminAcept = createAdminClient();
+    const adminAcept = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
     const ac63 = await aceptarOferta63(adminAcept, {
       cotizacionId: cotizacionId63, tenant, usuarioId: actor63.id, huella: huellaDeOferta63(input, comp.data) ?? "", huellaFinanciera: huellaFin63,
       trmProvisional: trmProv63.trm,
@@ -440,6 +453,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const numRes = await siguienteNumeroContrato(tenant);
     if (!numRes.ok) return { ok: false, error: numRes.error };
     numero = numRes.numero;
+    reservaToken = numRes.reservaToken ?? null;
   }
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
@@ -500,8 +514,13 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
         costo_aereo: datosVuelo ? costoAereoOferta : undefined, aerolinea: datosVuelo?.aerolinea ?? null, plan_nombre: `${input.categoria} · ${input.regimen}`,
       };
   // 4) Venta (cabecera) — nace PENDIENTE
+  // #75: la identidad nace en el propio INSERT (uid fijado aquí; un RETURNING fallaría por RLS para el rol `venta`, que inserta pero no lee `ventas`).
+  const contratoUid = randomUUID();
+  const idc = identidadDe(numero, contratoUid);
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    reserva_token: reservaToken,
+    contrato_uid: contratoUid,
     // Conserva EXACTAMENTE el tenant de la cotización de origen — ya validado
     // por el único caller (`convertirCotizacion`) antes de llegar aquí.
     tenant,
@@ -570,8 +589,9 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // borra el contrato y sus hijas y libera las sillas
   // (`revertir_contrato_incompleto`, migración 171); si la reversión misma
   // falla, el mensaje lo dice con el número del contrato — nunca se calla.
+  sb = await createClient(idc); // todo lo que sigue al INSERT declara la identidad del contrato recién creado
   const fallarYRevertir = async (motivo: string): Promise<ReservaResult> => {
-    const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+    const rev = await revertirContratoIncompleto({ rpc: (fn, a) => rpcFinanciero(idc, fn, a) }, numero, tenant);
     if (rev.ok) return { ok: false, error: motivo };
     return {
       ok: false,
@@ -625,7 +645,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   {
     const { data: { user: actorPasajeros } } = await sb.auth.getUser();
     if (!actorPasajeros) return fallarYRevertir("Sesión inválida: no se pudo confirmar el usuario para crear la reserva.");
-    const admin = createAdminClient();
+    const admin = createAdminClient(idc);
     const payloadPasajeros = payloadGuardarPasajeros(
       input.pasajeros.map((p, i) => ({
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
@@ -716,7 +736,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     // lee con service-role si está disponible.
     let proveedorHotel: string | null = null;
     if (input.hotelId) {
-      const clientH = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+      const clientH = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient(idc) : sb;
       const { data: hp } = await clientH.from("hoteles").select("proveedores(nombre)").eq("id", input.hotelId).maybeSingle();
       proveedorHotel = (hp?.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
     }
@@ -743,7 +763,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // cabecera de lib/contrato/congelarCondicionesContrato.ts para el porqué de
   // esta asignación mutuamente excluyente.
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const adminCond = createAdminClient();
+    const adminCond = createAdminClient(idc);
     const { data: { user: usuarioCond } } = await sb.auth.getUser();
     if (usuarioCond) {
       const fechaPagoCond = fechaNegocio();
@@ -926,7 +946,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // best-effort a propósito.
   if (serviciosEfectivos.length) {
     try {
-      const admin = createAdminClient();
+      const admin = createAdminClient(idc);
       const resumen = resumirServiciosContrato(serviciosEfectivos);
       const upd: { tours_traslados?: string; asistencia_medica?: boolean } = {};
       if (resumen.toursTraslados) upd.tours_traslados = resumen.toursTraslados;
@@ -942,7 +962,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       const upd63: { tours_traslados?: string; asistencia_medica?: boolean } = {};
       if (aceptacion63.snapshot.resumen.tours_traslados) upd63.tours_traslados = aceptacion63.snapshot.resumen.tours_traslados;
       if (aceptacion63.snapshot.resumen.asistencia_medica) upd63.asistencia_medica = true;
-      if (Object.keys(upd63).length) await createAdminClient().from("ventas").update(upd63).eq("numero_contrato", numero);
+      if (Object.keys(upd63).length) await createAdminClient(idc).from("ventas").update(upd63).eq("numero_contrato", numero);
     } catch {
       // Informativo/display; no bloquea la reserva.
     }
@@ -959,13 +979,13 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       if (!v.ok) return fallarYRevertir(v.error);
     }
   }
-  const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, hoyISO), {
-    numeroContrato: numero, tenant, costos: costosContrato, cxp, fecha: hoyISO,
+  const fin = await registrarFinancieroContrato(depsFinanciero(idc, numero, tenant, hoyISO), {
+    numeroContrato: numero, tenant, costos: costosContrato, cxp, fecha: hoyISO, contratoUid,
   });
   if (!fin.ok) return { ok: false, error: fin.error };
 
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+  return { ok: true, numero, contratoUid, ...(advertencias.length ? { advertencias } : {}) };
 }
 
 // Costos y cuentas por pagar (CxP) de una reserva del tarifario — pasos 9 a 12 de `reservarDesdeTarifarioInterno`, extraídos SIN
@@ -1042,13 +1062,10 @@ async function calcularFinancieroReserva(p: {
   let costoHotelTotal = 0;
   if (!esServicios && Object.keys(netoPorAcom).length) {
     try {
-      const admin = createAdminClient();
-      for (const l of lineasHab) { const per = netoPorAcom[l.acom]; if (per != null) costoHotelTotal += per * l.pax; }
-      if (numNinos > 0 && netoPorAcom["nino"] != null) costoHotelTotal += netoPorAcom["nino"] * numNinos;
-      if (numNinos2 > 0 && netoPorAcom["nino2"] != null) costoHotelTotal += netoPorAcom["nino2"] * numNinos2;
-      // Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno,
-      // menor de 2 años o de 2 (clase infante del hotel) — antes no se sumaba.
-      if (numInfantes > 0 && netoPorAcom["infante"] != null) costoHotelTotal += netoPorAcom["infante"] * numInfantes;
+      const admin = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
+      // Misma fórmula que el carrito (fuente única, costosObligacionesCarrito.ts): con descuento por habitación suma
+      // habitaciones × neto exacto de la habitación. Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno.
+      costoHotelTotal = costoHotelPersona({ lineasHab, netoPorAcom, numNinos, numNinos2, netoHabitacionPorAcom: p.data.netoHabitacionPorAcom }, numInfantes);
       // #120: el costo del hotel de una solicitud es la neta TOTAL cargada, exacta. La suma por tipo (adultos × neta + niños × neta) solo puede diferir de ella por el redondeo mínimo
       // de centavos; cualquier otra diferencia es un error de cálculo y se rechaza antes de numerar.
       if (solicitud) {
@@ -1080,17 +1097,18 @@ async function calcularFinancieroReserva(p: {
   // dedup por servicioId (nunca solo por nombre).
   const serviciosEfectivos: ServicioEfectivo[] = [];
   // Costo NETO de servicios del contrato (opcionales del paso 11 + incluidos
-  // del 11-bis). Se escribe UNA sola vez, al final, para que
-  // `ventas.costo_receptivo` cuadre EXACTAMENTE con la suma de las CxP de
-  // servicio que crea este mismo flujo — de eso depende que
+  // del 11-bis), uno por servicio con el MISMO tipo que su CxP. Se escribe UNA
+  // sola vez, al final, repartido por columna (asistencia → `costo_asistencia`,
+  // tours/traslados y «otro» → `costo_receptivo`), para que las columnas de
+  // servicio cuadren EXACTAMENTE con la suma de las CxP de servicio que crea este mismo flujo — de eso depende que
   // `asegurarCuentasPorPagar` (cobertura por monto, ver cxpCobertura.ts) no
   // vuelva a crear una segunda cuenta por el mismo dinero, y que la
   // rentabilidad no muestre un margen inflado por un costo con CxP pero sin
   // columna.
-  let costoServiciosTotal = 0;
+  const costosServicios: { tipoCxp: string; costo: number }[] = [];
   if (input.servicios?.length) {
     try {
-      const admin = createAdminClient();
+      const admin = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
       const [{ data: arm, error: armErr }, { data: gruposNet, error: gruposErr }, { data: tempsNet, error: tempsErr }] = await Promise.all([
         admin.from("armado_servicios")
           .select("servicio_id, modo, servicios_adicionales(precio_persona, precio_infante, recargo_individual, categoria, nombre, liquidacion, proveedor_id, proveedores(nombre, aplica_retencion, pct_retencion))")
@@ -1142,7 +1160,6 @@ async function calcularFinancieroReserva(p: {
       // Sin tarifa «GENERAL»: el costo sale de la vigencia aplicable (y de un rango de ESA vigencia por grupo); lo que no se pueda resolver lanza (el contrato
       // se deshace, igual que cualquier otro fallo de costo — B7). Los traslados con franjas horarias no se cobran por esta ruta: hay que cotizarlos desde el carrito.
       const conFranjasCosto = vigenciasConFranjas(tempsNet ?? []);
-      let costoReceptivo = 0;
       for (const s of arm ?? []) {
         const modo = (s.modo as string) === "grupo" ? "grupo" : "persona";
         const srv = s.servicios_adicionales as unknown as { precio_persona: number | null; precio_infante: number | null; recargo_individual: number | null; categoria: string | null; nombre: string; liquidacion: string | null; proveedor_id: number | null; proveedores: ProvFact } | null;
@@ -1165,8 +1182,8 @@ async function calcularFinancieroReserva(p: {
           modo, netoPersona, netoInfanteVigencia: nombreTemp ? netoInfTempServ.get(`${s.servicio_id}|${nombreTemp}`) : undefined, grupos, paxConSilla, numMenoresDeDos,
           liquidacion: srv?.liquidacion, nochesStay, totalPax, recargoIndividual: recTemp ?? 0,
         });
-        costoReceptivo += costoServ;
         const categoria = normalizarCategoriaServicio(srv?.categoria);
+        costosServicios.push({ tipoCxp: tipoProveedorCxpServicio(categoria), costo: costoServ });
         serviciosEfectivos.push({
           servicioId: s.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria,
           incluido: false, costoNeto: costoServ, proveedorId: srv?.proveedor_id ?? null,
@@ -1176,7 +1193,6 @@ async function calcularFinancieroReserva(p: {
         // antes "otro" caía incorrectamente en "receptivo").
         pushCxP(tipoProveedorCxpServicio(categoria), srv?.nombre ?? "Servicio", costoServ, srv?.proveedores ?? null, null, { servicioId: s.servicio_id });
       }
-      costoServiciosTotal += costoReceptivo;
     } catch (e) {
       // FALLA CERRADO (B7), igual que el costo del hotel: un servicio del
       // contrato sin costo ni CxP es una deuda con el proveedor que el sistema
@@ -1195,7 +1211,7 @@ async function calcularFinancieroReserva(p: {
   // que su costo y su CxP no pueden faltar.
   if (serviciosIncluidos.length) {
     try {
-      const admin = createAdminClient();
+      const admin = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
       const ids = serviciosIncluidos.map((s) => s.servicioId);
       const { data: provRows, error: provErr } = await admin
         .from("servicios_adicionales")
@@ -1211,7 +1227,7 @@ async function calcularFinancieroReserva(p: {
           // opcionales: su CxP existe, así que su costo tiene que existir
           // también (si no, la rentabilidad mostraría un margen inflado y
           // `asegurarCuentasPorPagar` vería cobertura sin costo).
-          costoServiciosTotal += s.costoNeto;
+          costosServicios.push({ tipoCxp: tipoProveedorCxpServicio(s.categoria), costo: s.costoNeto });
         }
       }
     } catch (e) {
@@ -1233,16 +1249,23 @@ async function calcularFinancieroReserva(p: {
   //     validado), así que no se reescribe aquí.
   const costosContrato: CostosContrato = {};
   if (costoHotelTotal > 0) costosContrato.costo_hotel = costoHotelTotal;
-  if (costoServiciosTotal > 0) costosContrato.costo_receptivo = costoServiciosTotal;
+  // Cada costo de servicio en su columna (la de su CxP): la asistencia médica NO es costo receptivo.
+  const porColumna = costosServicioPorColumna(costosServicios);
+  if (porColumna.costo_receptivo > 0) costosContrato.costo_receptivo = porColumna.costo_receptivo;
+  if (porColumna.costo_asistencia > 0) costosContrato.costo_asistencia = porColumna.costo_asistencia;
   // #63: en el modo de oferta con conversión por TRM las columnas de costo del contrato (en la moneda de la oferta: COP o USD) son la suma
   // de los equivalentes de SUS MISMAS CxP (cuya moneda de origen puede ser otra): costo y obligación no pueden divergir. El aéreo ya sale
   // en esa moneda desde el origen.
   if (oferta63) {
     const TIPOS_SERVICIO_63 = ["receptivo", "asistencia", "otro"];
     const hotel63 = sumaEquivalentesOferta63(cxp.filter((c) => c.tipo_proveedor === "hotel").map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
-    const servicios63 = sumaEquivalentesOferta63(cxp.filter((c) => TIPOS_SERVICIO_63.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    const equivalente63 = (tipos: string[]) => sumaEquivalentesOferta63(cxp.filter((c) => tipos.includes(c.tipo_proveedor)).map((c) => ({ valor: c.valor_total, moneda: c.moneda === "USD" ? "USD" as const : "COP" as const })), oferta63.moneda, oferta63.trm);
+    // Mismo reparto por columna que arriba, con los equivalentes en la moneda de la oferta de SUS mismas CxP.
+    const asistencia63 = equivalente63(["asistencia"]);
+    const servicios63 = equivalente63(TIPOS_SERVICIO_63.filter((t) => t !== "asistencia"));
     if (hotel63 > 0) costosContrato.costo_hotel = hotel63; else delete costosContrato.costo_hotel;
     if (servicios63 > 0) costosContrato.costo_receptivo = servicios63; else delete costosContrato.costo_receptivo;
+    if (asistencia63 > 0) costosContrato.costo_asistencia = asistencia63; else delete costosContrato.costo_asistencia;
   }
 
   return { ok: true, cxp, costosContrato, serviciosEfectivos };
@@ -1274,20 +1297,21 @@ function huellaDeOferta63(input: ReservaInput, data: ComputoReserva): string | n
 // llama a reservarDesdeTarifario (que sí genera número, sillas y CxP).
 export type CotizacionResult = { ok: true; id: number; avisoPersonas?: string } | { ok: false; error: string };
 
+// identidad:n/a — opera sobre una cotización (no un contrato): crear/editar/descartar la cotización por id
 export async function crearCotizacion(input: ReservaInput, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
   return crearCotizacionInterna(input, opts);
 }
 
 // #120: `solicitud` (neta + id de la cotización pendiente) solo la pasa `asignarNetaSolicitud`, tras leer la neta de la base; no es parte de la acción exportada.
 async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHasta?: string }, solicitud?: { cotizacionId: number; tenant: string; neta: NetaSolicitud }): Promise<CotizacionResult> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
   if (!`${input.cliente.nombres ?? ""}${input.cliente.apellidos ?? ""}`.trim())
     return { ok: false, error: "El nombre del cliente es obligatorio." };
 
   const esServicios = input.modulo === "servicios";
   // #63 (E/F/G): revisiones de T0 de una salida dinámica — se leen ANTES de calcular nada. La base las compara de nuevo al guardar
   // la cotización y al aceptarla: cualquier cambio entre medias rechaza. Un error de lectura solo bloquea si la oferta es 63.
-  const t063 = input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerRevisiones63(createAdminClient(), input.paqueteId) : null;
+  const t063 = input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerRevisiones63(createAdminClient(), input.paqueteId) : null; // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
   const comp = await computarReserva(sb, input, solicitud && { neta: solicitud.neta });
   if (!comp.ok) return { ok: false, error: comp.error };
   const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota, ajusteRedondeo, impuestoTotal } = comp.data;
@@ -1316,7 +1340,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   if (origen.tipo !== "ninguno") {
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY)
       return { ok: false, error: "No se pudo resolver el origen del vuelo (configuración del servidor incompleta)." };
-    const rv = await resolverDatosVuelo(createAdminClient(), origen);
+    const rv = await resolverDatosVuelo(createAdminClient(), origen); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
     if (!rv.ok) return { ok: false, error: rv.error };
     datosVueloSnap = rv.data;
   }
@@ -1498,7 +1522,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   // tanto a aliados B2B como a usuarios públicos. La RLS de `cotizaciones` es solo
   // para roles internos, así que el insert va por service-role cuando está
   // disponible (si no, cae al cliente con sesión = sólo internos).
-  const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb;
+  const sbCot = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb; // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
 
   const tenantCotizacion = ctx.tenant;
 
@@ -1508,7 +1532,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   let row: { id: number };
   const oferta63 = comp.data.oferta63;
   if (oferta63) {
-    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null;
+    const admin = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null; // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
     if (!admin) return { ok: false, error: "No se pudo guardar la cotización (configuración del servidor incompleta)." };
     if (!user) return { ok: false, error: "No autorizado." };
     if (!t063) return { ok: false, error: "No se pudo leer la configuración del paquete. Intenta nuevamente." };
@@ -1603,7 +1627,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   // Composición privada del precio (hotel, vuelo, servicios, markup global, redondeo) con lo que produjo el motor ahora. Mejor esfuerzo: no afecta la cotización.
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     let adminComp: ReturnType<typeof createAdminClient> | null = null;
-    try { adminComp = createAdminClient(); } catch { /* dato interno: sin cliente de servicio no se guarda, la cotización sigue */ }
+    try { adminComp = createAdminClient(); } catch { /* dato interno: sin cliente de servicio no se guarda, la cotización sigue */ } // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
     if (adminComp) await guardarComposicion(adminComp, { cotizacionId: row.id, tenant: tenantCotizacion, hoteles: [{ ref: null, nombre: meta.hotel_nombre ?? null, composicion: comp.data.composicion }] });
   }
 
@@ -1613,7 +1637,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   // persistente en su ficha (con "Reintentar") y un log sin datos personales — nunca se ignora.
   let avisoPersonas: string | undefined;
   if (process.env.SUPABASE_SERVICE_ROLE_KEY && user) {
-    const alta = await altaPersonasCotizacion(createAdminClient(), {
+    const alta = await altaPersonasCotizacion(createAdminClient(), { // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
       fila: { id: row.id, tenant: tenantCotizacion, tipo: "tarifario", payload: inputPersistido },
       usuarioId: user.id,
       sellar: true,
@@ -1636,15 +1660,16 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
 // siempre (markup del paquete, servicios, vuelo, impuesto, redondeo); la RPC congela neta + elección + precio + detalle y abre la cotización. Misma elección = no-op; otra
 // neta u otra distribución se rechaza. Roles: los de producto (`ESCRITURA.producto`), dentro de su agencia.
 // `entradaRaw`: un número (= neta total, hotel a adultos) o { netaTotal, modo, netaAdulto, netaNino, netaInfante }.
+// identidad:n/a — opera sobre una cotización (no un contrato): crear/editar/descartar la cotización por id
 export async function asignarNetaSolicitud(cotizacionId: number, entradaRaw: unknown, opts?: { vigenciaHasta?: string }): Promise<CotizacionResult> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "No autorizado." };
   const { data: perfil } = await sb.from("usuarios").select("rol, activo").eq("id", user.id).maybeSingle();
   if (!perfil?.activo || !puedeEscribir("producto", perfil.rol)) return { ok: false, error: "No tienes permiso para cargar la neta de un hotel." };
   if (!Number.isInteger(cotizacionId) || cotizacionId <= 0) return { ok: false, error: "Cotización no válida." };
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo cargar la neta (configuración del servidor incompleta)." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
   const { data: cot, error: eCot } = await admin.from("cotizaciones").select("estado, payload, tenant").eq("id", cotizacionId).maybeSingle();
   if (eCot || !cot) return { ok: false, error: "Cotización no encontrada." };
   const ctx = await contextoCotizacion();
@@ -1677,6 +1702,7 @@ export async function asignarNetaSolicitud(cotizacionId: number, entradaRaw: unk
 
 // Convierte una cotización en CONTRATO: corre el motor de reserva normal (genera
 // numero_contrato + sillas + CxP) con el payload guardado, y enlaza la cotización.
+// identidad:n/a — crea el contrato desde una cotización; el uid sale del INSERT (y es el que se usa para ligar la cotización)
 export async function convertirCotizacion(
   id: number, pasajeros?: PasajeroReserva[], override?: boolean, asesorInterno?: string, trmProvisional?: number | null,
   /** 235 (#90 F): moneda de cobro elegida (null = la de la oferta) y su TRM (solo si difiere). Se validan en el servidor; el navegador no decide nada. */
@@ -1684,7 +1710,7 @@ export async function convertirCotizacion(
   /** TRM de COSTOS (pesos por dólar) de un contrato en USD con proveedores en dólares: la ingresa el personal interno; en COP se ignora. */
   trmCosto?: unknown,
 ): Promise<ReservaResult> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — lecturas previas a crear el contrato; lo que se escribe después usa clientes con la identidad del INSERT
   const { data: cot, error } = await sb
     .from("cotizaciones")
     .select("estado, payload, numero_contrato, tenant, modo, tipo, vigencia_hasta, fecha_salida")
@@ -1736,20 +1762,21 @@ export async function convertirCotizacion(
   // #120: si la cotización nació de una solicitud, la neta cargada (y su precio congelado) vienen de la base, nunca del navegador.
   let solicitudNeta: { neta: NetaSolicitud; precioCongelado: number } | undefined;
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const nc = await netaCargada(createAdminClient(), id);
+    const nc = await netaCargada(createAdminClient(), id); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
     if (!nc.ok) return { ok: false, error: nc.error };
     if (nc.neta) solicitudNeta = { neta: nc.neta, precioCongelado: nc.precioVenta };
   }
   const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant, solicitudNeta, { trmRecibida: trmCosto, esInterno: ctx.ok && ctx.interno !== false });
   if (!res.ok) return res;
 
-  await sb.from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
+  // #75: ligar la cotización al número exige la identidad del contrato que ESTE flujo acaba de crear.
+  await (await createClient(identidadDe(res.numero, res.contratoUid))).from("cotizaciones").update({ estado: "convertida", numero_contrato: res.numero }).eq("id", id);
   revalidatePath("/dashboard/cotizaciones");
   revalidatePath(`/dashboard/cotizaciones/${id}`);
   revalidatePath("/dashboard/contratos");
   // Reenvía `advertencias` de reservarDesdeTarifarioInterno — no
   // reconstruir el resultado a mano descartándolas en silencio.
-  return { ok: true, numero: res.numero, ...(res.advertencias?.length ? { advertencias: res.advertencias } : {}) };
+  return { ok: true, numero: res.numero, contratoUid: res.contratoUid, ...(res.advertencias?.length ? { advertencias: res.advertencias } : {}) };
 }
 
 // ── Fase 3: convertir una cotización COMBINADA del carrito en contrato(s) ──
@@ -1943,7 +1970,7 @@ async function validarBernaloParaConversion(
   // verificación vive en Paso 2, ver más abajo) — nunca debe depender de
   // `admin`/`sb` del llamador, que en ese punto todavía podría ser el
   // cliente de sesión.
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
   const resultado = await computarReservaBernalo({
     paqueteId: it.paqueteId,
     hotelId: it.hotelId,
@@ -2047,6 +2074,7 @@ const ERROR_COTIZACION_FORMATO_ANTERIOR =
 // `advertencias` en el retorno: mismo criterio que ReservaResult (ver su
 // comentario) — hoy solo las llena el guardado best-effort de
 // nombres/apellidos/nacionalidad.
+// identidad:n/a — crea los contratos del carrito; el uid de cada uno sale de su INSERT y viaja en cotizaciones.detalle.identidades
 export async function convertirCotizacionCarrito(
   id: number,
   opts: {
@@ -2069,7 +2097,7 @@ export async function convertirCotizacionCarrito(
     costosManuales?: ({ costo: number; proveedor: string } | null)[];
   }
 ): Promise<{ ok: true; numeros: string[]; advertencias?: string[] } | { ok: false; error: string }> {
-  const sb = await createClient();
+  let sb = await createClient(); // identidad:n/a — lecturas previas a crear el contrato; lo que se escribe después usa clientes con la identidad del INSERT
   const { data: cot } = await sb
     .from("cotizaciones")
     .select("id, estado, tipo, payload, tenant, numero_contrato, detalle, moneda, vigencia_hasta, fecha_salida")
@@ -2108,7 +2136,7 @@ export async function convertirCotizacionCarrito(
   // (persona, un solo contrato) — si esta cotización YA quedó "convertida" en
   // un intento anterior, un reintento (doble clic, red lenta, etc.) NUNCA debe
   // volver a crear contratos/sillas/CxP: devuelve los números ya generados.
-  const detalleExistente = (cot.detalle ?? {}) as { contratos?: unknown; contratosPorGrupo?: Record<string, string>; agrupar?: string };
+  const detalleExistente = (cot.detalle ?? {}) as { contratos?: unknown; contratosPorGrupo?: Record<string, string>; agrupar?: string; identidades?: unknown };
   // 235: un REINTENTO no puede cambiar lo ya congelado (moneda ni TRM de cobro), ni siquiera si la cotización ya quedó convertida.
   const cmpCobro = compararConCongelado({
     eleccion: eleccionCobro,
@@ -2330,7 +2358,7 @@ export async function convertirCotizacionCarrito(
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { ok: false, error: "No se pudo crear la reserva (configuración del servidor incompleta)." };
   }
-  const admin = createAdminClient();
+  let admin = createAdminClient(); // identidad:n/a — lecturas previas a crear el contrato; tras el INSERT de cada grupo se reasigna con su identidad
 
   // Hallazgo confirmado (idempotencia, ronda 2): un grupo que YA generó su
   // contrato en un intento anterior se salta ANTES de reliquidar/validar sus
@@ -2345,6 +2373,9 @@ export async function convertirCotizacionCarrito(
   // 235: la elección de cobro viaja en CADA escritura de progreso, así que queda congelada desde el primer contrato (los reintentos la comparan arriba).
   const detalleBase = { ...((cot.detalle ?? {}) as Record<string, unknown>), cobro: { moneda: eleccionCobro.monedaCobro, trm: eleccionCobro.trmCobro } } as Record<string, unknown>;
   const numeros: string[] = [];
+  // #75: número → uid de cada contrato del carrito: los de llamadas anteriores se conservan en `cotizaciones.detalle.identidades` (el de su propio INSERT);
+  // nunca se resuelven por número. Los de ESTA llamada se agregan al crearse.
+  const identidadCreada: Record<string, string> = { ...parseIdentidad(detalleExistente.identidades) };
   // Fallas NO bloqueantes acumuladas de TODOS los grupos/contratos de este
   // carrito — mismo criterio que ReservaResult, ver su comentario.
   const advertencias: string[] = [];
@@ -2394,7 +2425,11 @@ export async function convertirCotizacionCarrito(
   // Quien firma como «elaboró»: el asesor elegido en pantalla o, si no se eligió (p. ej. superadmin), el usuario interno autenticado. Nunca se inventa.
   const firmaConversion = nombreQuienElabora(opts.asesorInterno, (await resolverFirmasSesion(sb)).elabora);
   // Plan B2B de cada contrato por crear (con los términos CONGELADOS y el PVP/impuesto VIVOS de sus unidades, ya comparados).
-  const planesB2BPorGrupo = new Map<string, PlanComisionReserva>();
+  // #14-A: recobro guardado en la cotización. Con plan B2B vive en `plan.recobro` + `lineas[].recobro`; sin plan (cotización interna a cliente final) en `payload.recobroCliente`.
+  // Un recobro malformado, o los dos a la vez, se rechaza ANTES de numerar: nunca se convierte «como si no hubiera recobro».
+  const recobroClienteLeido = leerRecobroClienteDePayload(cot.payload, itemsCrudos.map((it) => it.ref).filter((r): r is string => typeof r === "string"), planB2BCot != null);
+  if (!recobroClienteLeido.ok) return { ok: false, error: recobroClienteLeido.error };
+  const planesB2BPorGrupo = new Map<string, PlanGrupoB2B>();
   // #64: impuesto no comisionable del grupo (hoteles + manuales). Es lo que se escribe en `ventas.impuesto`, de donde la base recalcula la comisión.
   const impuestoB2BPorGrupo = new Map<string, number>();
 
@@ -2543,12 +2578,26 @@ export async function convertirCotizacionCarrito(
       ];
       const cmpLineas = compararLineasConCongeladas(planB2BCot, vivas, cot.moneda ?? "");
       if (!cmpLineas.ok) return { ok: false, error: cmpLineas.error };
-      const pg = planDeGrupoB2B(planB2BCot, vivas);
-      if (!pg.ok) return { ok: false, error: pg.error };
-      planesB2BPorGrupo.set(claveDeGrupo(grupo), pg.plan);
+      if (!planB2BCot.recobro) {
+        const pg = planDeGrupoB2B(planB2BCot, vivas);
+        if (!pg.ok) return { ok: false, error: pg.error };
+        planesB2BPorGrupo.set(claveDeGrupo(grupo), { ...pg.plan, totalAliado: pg.plan.comision ?? 0 });
+      }
       impuestoB2BPorGrupo.set(claveDeGrupo(grupo), vivas.reduce((s, l) => s + l.impuesto, 0));
     }
     gruposValidados.push({ grupo, validadosPersona, validadosBernalo });
+  }
+
+  // #14-A: con recobro, la participación del aliado se reparte entre TODOS los contratos de la cotización (también los ya convertidos en un intento anterior) a partir de las líneas CONGELADAS
+  // (que las vivas ya igualaron arriba): así cada contrato recibe SIEMPRE la misma parte en un reintento y la suma es exactamente la participación sellada.
+  if (planB2BCot?.recobro) {
+    const lineasPorGrupo = grupos.map((g) => {
+      const claves = new Set([...g.items.map((it) => it.ref ?? ""), ...g.tours.map((t) => `tour-${t.__idx}`), ...g.manuales.map((x) => `manual-${x.idx}`)]);
+      return planB2BCot.lineas.filter((l) => claves.has(l.clave));
+    });
+    const pl = planesDeGruposB2B(planB2BCot, lineasPorGrupo);
+    if (!pl.ok) return { ok: false, error: pl.error };
+    grupos.forEach((g, i) => planesB2BPorGrupo.set(claveDeGrupo(g), pl.planes[i]));
   }
 
   // ── Paso 2: crear un contrato por grupo, con TODOS sus hoteles/tours ──────
@@ -2588,7 +2637,7 @@ export async function convertirCotizacionCarrito(
   // Falla CERRADO a propósito: si no se puede leer el reloj de la base, se
   // aborta en vez de caer al reloj de Node — ese respaldo silencioso es
   // justamente la divergencia que este cambio elimina.
-  const { data: fechaServidor, error: errFechaServidor } = await createAdminClient()
+  const { data: fechaServidor, error: errFechaServidor } = await createAdminClient() // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
     .rpc("fecha_referencia_servidor");
   if (errFechaServidor || typeof fechaServidor !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fechaServidor)) {
     return { ok: false, error: "No se pudo resolver la fecha de referencia del servidor. Inténtalo de nuevo." };
@@ -2873,14 +2922,32 @@ export async function convertirCotizacionCarrito(
     // comisión en NETO). `precio_venta`, el total de cobro y todo lo que depende de él (saldo, factura, portal) parten de ese importe.
     const planGrupoB2B = planB2BCot ? planesB2BPorGrupo.get(claveGrupo) ?? null : null;
     if (planB2BCot && !planGrupoB2B) return { ok: false, error: MENSAJE_COTIZACION_B2B_INVALIDA };
-    const precioExigibleGrupo = planGrupoB2B ? planGrupoB2B.precioFinal : precioTotal;
+    // #14-A: recobro de ESTE contrato (dentro de su precio, nunca en documentos del cliente). Con plan: el de su acuerdo; sin plan (cliente final): el de sus hoteles, 100 % de la empresa.
+    const recobroClienteGrupo = (recobroClienteLeido.valor?.lineas ?? []).filter((l) => grupo.items.some((it) => it.ref === l.clave)).reduce((x, l) => x + aCentavos(l.recobro), BigInt(0));
+    const recobroGrupo: { total: number; aliado: number; empresa: number } | null = planGrupoB2B?.recobro ?? (recobroClienteGrupo > BigInt(0) ? { total: Number(recobroClienteGrupo) / 100, aliado: 0, empresa: Number(recobroClienteGrupo) / 100 } : null);
+    const precioExigibleGrupo = planGrupoB2B ? planGrupoB2B.precioFinal : precioTotal + (recobroGrupo?.total ?? 0);
     // 235 (#90 F): el total a cobrar de ESTE contrato se convierte UNA sola vez desde su precio_venta (la oferta no cambia) y se congela en la cabecera.
     // Se calcula ANTES de reservar el número: un total inválido no gasta consecutivo.
     const cobroGrupo = cobroDeContratoCarrito({ precioVenta: precioExigibleGrupo, monedaContrato: monedaGrupo, eleccion: eleccionCobro });
     if (!cobroGrupo.ok) return { ok: false, error: numeros.length ? `${cobroGrupo.error} (los contratos ${numeros.join(", ")} sí quedaron completos)` : cobroGrupo.error };
+    // #94: resumen de precios por pasajero de ESTE contrato. Se decide ANTES de reservar el número, así un resumen inconsistente no gasta consecutivo ni deja nada a medias.
+    //   · la cotización NO trae resumen (histórica, o de un tipo que no lo genera, o con `resumenPendiente`) ⇒ no hay snapshot y el contrato se presenta como siempre;
+    //   · trae resumen y este grupo tiene hoteles ⇒ DEBE llegar al contrato: si no cuadra con lo exigible, la conversión se rechaza (nunca se cae en silencio al formato anterior).
+    const resumenGuardadoCot = (cot.detalle as { resumenPrecios?: unknown } | null)?.resumenPrecios ?? null;
+    const refsGrupoResumen = grupo.items.map((it) => it.ref).filter((r): r is string => typeof r === "string");
+    let resumenContrato: ReturnType<typeof resumenParaContrato> = null;
+    if (resumenGuardadoCot != null && refsGrupoResumen.length) {
+      resumenContrato = resumenParaContrato(resumenGuardadoCot, refsGrupoResumen,
+        { modalidad: planGrupoB2B?.modoCompra === "neta" ? "neto" : "pvp", moneda: monedaGrupo, totalCentavos: Math.round(precioExigibleGrupo * 100) });
+      if (!resumenContrato) {
+        const msg = "El resumen de precios por pasajero de la cotización no coincide con el total de este contrato (modalidad, moneda o importe). No se creó nada: genera la cotización de nuevo antes de convertirla.";
+        return { ok: false, error: numeros.length ? `${msg} (los contratos ${numeros.join(", ")} sí quedaron completos)` : msg };
+      }
+    }
     const numRes = await siguienteNumeroContrato(tenantCotizacion);
     if (!numRes.ok) return { ok: false, error: numRes.error };
     const numero = numRes.numero;
+    const reservaToken = numRes.reservaToken ?? null; // 287
 
     // ── Universo LOCAL de este contrato (B13, ronda 5; B17, ronda 6) ─────
     // ÚNICAMENTE la unión de posiciones asignadas a las UNIDADES DE ESTE
@@ -2946,8 +3013,13 @@ export async function convertirCotizacionCarrito(
     ];
     const resumenGrupo = resumirServiciosContrato(serviciosEfectivosGrupo);
 
+    // #75: la identidad de CADA contrato del carrito nace en su propio INSERT (uid fijado aquí; un RETURNING fallaría por RLS para el rol `venta`).
+    const contratoUid = randomUUID();
+    const idc = identidadDe(numero, contratoUid);
     const { error: ve } = await sb.from("ventas").insert({
       numero_contrato: numero,
+      reserva_token: reservaToken,
+      contrato_uid: contratoUid,
       // Conserva EXACTAMENTE el tenant de la cotización de origen (validado
       // arriba: no nulo, y el caller tiene acceso a él).
       tenant: tenantCotizacion,
@@ -2965,6 +3037,7 @@ export async function convertirCotizacionCarrito(
         : totalHotelesGrupo === 0 ? null : `${totalHotelesGrupo} hoteles`,
       // Lo EXIGIBLE del contrato: el PVP del carrito (`precioTotal`) o, en una venta B2B asistida, el de su plan (PVP, o PVP − comisión en NETO).
       precio_venta: precioExigibleGrupo,
+      ...(recobroGrupo ? { recobro_total: recobroGrupo.total, recobro_empresa: recobroGrupo.empresa, recobro_aliado: recobroGrupo.aliado } : {}),
       estado: "pendiente",
       // Migración 172 — mismo criterio que reservarDesdeTarifarioInterno.
       financiero_estado: "pendiente",
@@ -3005,6 +3078,9 @@ export async function convertirCotizacionCarrito(
       }
       return { ok: false, error: ve.message };
     }
+    identidadCreada[numero] = contratoUid;
+    sb = await createClient(idc); // todo lo que sigue al INSERT de este contrato declara su identidad
+    admin = createAdminClient(idc);
 
     // Igual que en `reservarDesdeTarifarioInterno`: con el contrato ya
     // insertado, ninguna salida por error puede dejarlo vivo — sería un
@@ -3012,7 +3088,7 @@ export async function convertirCotizacionCarrito(
     // Los contratos de grupos ANTERIORES que sí se completaron no se tocan:
     // están íntegros, y borrarlos sería inventar una anulación comercial.
     const fallarYRevertirGrupo = async (motivo: string): Promise<{ ok: false; error: string }> => {
-      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenantCotizacion);
+      const rev = await revertirContratoIncompleto({ rpc: (fn, a) => rpcFinanciero(idc, fn, a) }, numero, tenantCotizacion);
       const yaCreados = numeros.length ? ` (los contratos ${numeros.join(", ")} sí quedaron completos)` : "";
       if (rev.ok) return { ok: false, error: `${motivo}${yaCreados}` };
       return {
@@ -3296,11 +3372,20 @@ export async function convertirCotizacionCarrito(
         }
       }
 
-      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total"; valor_total?: number }[] = [];
+      const itemsHotel: { numero_contrato: string; descripcion: string; adultos: number; ninos: number; tarifa_adulto: number; tarifa_nino: number; orden: number; modo_precio?: "total" | "por_persona"; valor_total?: number | null }[] = [];
       lineasHab.forEach((l, i) => itemsHotel.push({
         numero_contrato: numero, descripcion: `${l.habitaciones} hab ${ACOM_ROOM_LABEL[l.acom]} (${l.pax} pax) · ${it.categoria} / ${it.regimen}`,
         adultos: l.pax, ninos: 0, tarifa_adulto: l.pvp, tarifa_nino: 0, orden: hIdx * 300 + i,
       }));
+      // #14-A: el recobro de esta unidad (de las líneas congeladas del plan o del recobro de cliente final) entra a la tarifa de ADULTO sin nombrarse; las filas de adulto se parten solo si dentro
+      // de una fila los adultos llevan centavos distintos. La suma de las filas = precio del hotel + su recobro, exacta.
+      const recobroUnidadCent = aCentavos(planB2BCot ? (planB2BCot.lineas.find((l) => l.clave === it.ref)?.recobro ?? 0) : (recobroClienteLeido.valor?.lineas.find((l) => l.clave === it.ref)?.recobro ?? 0));
+      if (recobroUnidadCent > BigInt(0)) {
+        const adultosUnidad = lineasHab.reduce((n, l) => n + l.pax, 0);
+        const aplicado = aplicarRecobroAFilasAdulto(itemsHotel, recobroPorAdultoDeUnidad(recobroUnidadCent, adultosUnidad));
+        if (!aplicado.ok) return fallarYRevertirGrupo(`No se pudo aplicar el recobro a las tarifas de adulto de "${meta.hotel_nombre ?? it.hotelNombre}": ${aplicado.error}`);
+        itemsHotel.splice(0, itemsHotel.length, ...aplicado.valor);
+      }
       // Menores (migración 226): una fila por clase de hotel y por tarifa (menor
       // de 2 años = tarifa de infante; 2+ = adulto en vuelo y servicios).
       for (const lm of lineasMenores) {
@@ -3326,6 +3411,8 @@ export async function convertirCotizacionCarrito(
           modo_precio: "total", valor_total: rResidual.residual,
         });
       }
+      // Un insert en bloque con filas de forma distinta (la del servicio por grupo trae modo_precio/valor_total y las demás no) deja modo_precio (NOT NULL) en null y la base lo rechaza: se hace explícito en todas.
+      for (const fila of itemsHotel) { fila.modo_precio ??= "por_persona"; fila.valor_total ??= null; }
       if (itemsHotel.length) {
         const { error: eItemsHotel } = await sb.from("contrato_items").insert(itemsHotel);
         if (eItemsHotel) return fallarYRevertirGrupo(`No se pudieron registrar los ítems del hotel "${meta.hotel_nombre ?? it.hotelNombre}" del contrato: ${eItemsHotel.message}`);
@@ -3600,7 +3687,7 @@ export async function convertirCotizacionCarrito(
         componentes: componentesCondicion,
         moneda: monedaGrupo,
         trm: trmCond,
-        precioTotalMoneda: precioTotal,
+        precioTotalMoneda: precioTotal + (recobroGrupo?.total ?? 0),
         fechaPago: hoyServidor,
         usuarioId: usuarioCond.id,
       });
@@ -3613,9 +3700,8 @@ export async function convertirCotizacionCarrito(
     // cobertura sin costo. Se calcula de la MISMA lista que se va a insertar,
     // así ambos números salen de una sola fuente.
     if (estadoObligaciones.error) return fallarYRevertirGrupo(estadoObligaciones.error);
-    const costoServiciosCarrito = cxp
-      .filter((r) => r.servicio_id != null)
-      .reduce((acc, r) => acc + (Number(r.valor_total) || 0), 0);
+    const serviciosCarrito = costosServicioPorColumna(cxp.filter((r) => r.servicio_id != null).map((r) => ({ tipoCxp: r.tipo_proveedor, costo: Number(r.valor_total) || 0 })));
+    const costoServiciosCarrito = serviciosCarrito.costo_receptivo + serviciosCarrito.costo_asistencia;
     // ESCRITURA FINANCIERA ATÓMICA (B7), igual que en el flujo del tarifario:
     // costos y CxP en UNA transacción. Antes eran dos escrituras sueltas SIN
     // chequeo de error — si cualquiera fallaba, este flujo seguía de largo y
@@ -3624,14 +3710,24 @@ export async function convertirCotizacionCarrito(
     if (costoAereoTotal > 0 || costoHotelTotal > 0 || costoServiciosCarrito > 0 || costoOtrosManual > 0) {
       costosGrupo.costo_aereo = costoAereoTotal;
       costosGrupo.costo_hotel = costoHotelTotal;
-      if (costoServiciosCarrito > 0) costosGrupo.costo_receptivo = costoServiciosCarrito;
+      if (serviciosCarrito.costo_receptivo > 0) costosGrupo.costo_receptivo = serviciosCarrito.costo_receptivo;
+      if (serviciosCarrito.costo_asistencia > 0) costosGrupo.costo_asistencia = serviciosCarrito.costo_asistencia;
       if (costoOtrosManual > 0) costosGrupo.otros_costos = costoOtrosManual;
     }
     // Igual que el flujo individual, debe cerrar el estado aunque el payload
     // financiero sea vacío.
+    // #94: el resumen se congela ANTES del cierre financiero: mientras el contrato es `pendiente` un fallo lo revierte completo con el mecanismo de siempre
+    // (`fallarYRevertirGrupo`), y un contrato ya válido nunca se revierte ni se completa a medias. Reintentar la conversión rehace solo este grupo.
+    if (resumenContrato) {
+      const { error: eResumen } = await admin.from("contrato_resumen_precios").insert({ numero_contrato: numero, resumen: resumenContrato as unknown as Json });
+      if (eResumen) {
+        registrarErrorTecnico("convertir_cotizacion", numero, "resumen_precios", "insert", eResumen);
+        return fallarYRevertirGrupo(`No se pudo guardar el resumen de precios del contrato ${numero}: ${eResumen.message}. El contrato no quedó creado; vuelve a intentarlo.`);
+      }
+    }
     const fin = await registrarFinancieroContrato(
-      depsFinanciero(numero, tenantCotizacion, hoyServidor),
-      { numeroContrato: numero, tenant: tenantCotizacion, costos: costosGrupo, cxp, fecha: hoyServidor }
+      depsFinanciero(idc, numero, tenantCotizacion, hoyServidor),
+      { numeroContrato: numero, tenant: tenantCotizacion, costos: costosGrupo, cxp, fecha: hoyServidor, contratoUid }
     );
     // `registrarFinancieroContrato` YA revirtió este contrato (o dijo por
     // qué no pudo) — acá solo se agrega qué contratos del carrito sí
@@ -3649,7 +3745,7 @@ export async function convertirCotizacionCarrito(
     // comparar desde el primer grupo que complete, no solo al final.
     contratosPorGrupo[claveGrupo] = numero;
     const { error: eDetalleGrupo } = await sb.from("cotizaciones").update({
-      detalle: { ...detalleBase, contratos: numeros, contratosPorGrupo, agrupar: opts.agrupar },
+      detalle: { ...detalleBase, contratos: numeros, contratosPorGrupo, agrupar: opts.agrupar, identidades: identidadCreada },
     }).eq("id", id);
     // Hallazgo confirmado (idempotencia, ronda 2): si esta escritura falla,
     // el progreso NO quedó durable — un reintento no sabría que este grupo
@@ -3667,10 +3763,11 @@ export async function convertirCotizacionCarrito(
     }
   }
 
-  const { error: eDetalleFinal } = await sb.from("cotizaciones").update({
+  // #75: ligar la cotización al número exige la identidad de los contratos que ESTE flujo acaba de crear.
+  const { error: eDetalleFinal } = await (await createClient(identidadCreada)).from("cotizaciones").update({
     estado: "convertida",
     numero_contrato: numeros[0],
-    detalle: { ...detalleBase, contratos: numeros, contratosPorGrupo, agrupar: opts.agrupar },
+    detalle: { ...detalleBase, contratos: numeros, contratosPorGrupo, agrupar: opts.agrupar, identidades: identidadCreada },
   }).eq("id", id);
   if (eDetalleFinal) {
     return {
@@ -3685,12 +3782,13 @@ export async function convertirCotizacionCarrito(
   return { ok: true, numeros, ...(advertencias.length ? { advertencias } : {}) };
 }
 
+// identidad:n/a — opera sobre una cotización (no un contrato): crear/editar/descartar la cotización por id
 export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: string): Promise<{ ok: boolean; error?: string }> {
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
   // #40 E3: cambiar o renovar la vigencia es solo del personal interno; un aliado B2B activo de la misma agencia pasa `contextoCotizacion` pero no esta puerta.
   if (ctx.interno === false) return { ok: false, error: "No tienes permiso para cambiar la vigencia." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
   let lectura = sb.from("cotizaciones").select("fecha_salida").eq("id", id).eq("estado", "abierta");
   if (!ctx.superadmin) lectura = lectura.eq("tenant", ctx.tenant);
   const { data: cot, error: errorLectura } = await lectura.maybeSingle();
@@ -3715,10 +3813,11 @@ export async function actualizarVigenciaCotizacion(id: number, vigenciaHasta: st
   return { ok: true };
 }
 
+// identidad:n/a — opera sobre una cotización (no un contrato): crear/editar/descartar la cotización por id
 export async function descartarCotizacion(id: number): Promise<{ ok: boolean; error?: string }> {
   const ctx = await contextoCotizacion();
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
 
   // A3 (auditoría 164): una cotización con pagos previos ACTIVOS/APLICADOS no se
   // puede descartar — el candado AUTORITATIVO es el trigger de BD
@@ -3726,7 +3825,7 @@ export async function descartarCotizacion(id: number): Promise<{ ok: boolean; er
   // directo). Aquí hay una pre-comprobación de solo lectura para dar un mensaje
   // limpio ANTES de intentar el update; el trigger sigue siendo el respaldo si un
   // pago cae en la carrera entre la pre-comprobación y el update.
-  const admin = createAdminClient();
+  const admin = createAdminClient(); // identidad:n/a — cotización por id, no es un contrato (la guarda deja editar la cotización por id)
   const { count: activos } = await admin
     .from("cotizacion_pagos_previos")
     .select("id", { count: "exact", head: true })
@@ -3759,8 +3858,9 @@ export async function descartarCotizacion(id: number): Promise<{ ok: boolean; er
 }
 
 // ── Confirmar venta: sillas en_plazo -> confirmada ─────────────────────────
-export async function confirmarVenta(numeroContrato: string): Promise<{ ok: boolean; error?: string }> {
-  const sb = await createClient();
+export async function confirmarVenta(numeroContrato: string, identidad: IdentidadContrato): Promise<{ ok: boolean; error?: string }> {
+  const id = parseIdentidad(identidad);
+  const sb = await createClient(id);
   // W7 (§6.8), migración 197: la venta y sus sillas se confirman en UNA
   // transacción de la base (`confirmar_venta`). La función corre con la RLS
   // de quien llama (lee y actualiza `ventas` con su sesión, como antes) y
@@ -3768,12 +3868,14 @@ export async function confirmarVenta(numeroContrato: string): Promise<{ ok: bool
   // financiera incompleta (financiero_estado='pendiente') NUNCA se confirma.
   // Si cualquier parte falla, no cambia nada. Ya no necesita la clave de
   // servicio ni hay "compensación" en dos pasos.
-  const { error } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  const { data: confData, error } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? mensajeErrorRpc(error).error };
+  // 288 (#75): las CxP previstas nacieron en la base dentro de esta confirmación; su asiento (best-effort, idempotente) se postea aquí y, si falla, lo repone el reconciliador.
+  await postearAsientosDeObligaciones(numeroContrato, idsCxpMaterializadas(confData), id);
   // Respaldo: si el contrato aún no tiene cuentas por pagar (p. ej. venía de
   // legacy o se creó manual), generarlas desde sus costos al confirmar. No debe
   // tumbar la confirmación si falla.
-  try { await asegurarCuentasPorPagar(numeroContrato); } catch { /* no bloquear la confirmación */ }
+  try { await asegurarCuentasPorPagar(numeroContrato, id); } catch { /* no bloquear la confirmación */ }
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/contratos");
   return { ok: true };
@@ -3861,6 +3963,7 @@ function sumarDias(fecha: string, dias: number): string {
 // las etapas atadas al mismo `flujo_id` — antes esta Server Action solo
 // medía "contexto" y nada más, lo que no permitía diagnosticar el botón
 // "Generar reserva" de Programas más allá del gate de autorización.
+// identidad:n/a — crea el contrato; el uid sale del INSERT
 export async function reservarPrograma(input: ReservaProgramaInput): Promise<ReservaProgramaResultado> {
   const flujoId = generarFlujoId();
   const medir = crearMedidor("reservar_programa", flujoId);
@@ -3887,6 +3990,7 @@ export async function reservarPrograma(input: ReservaProgramaInput): Promise<Res
  * PR #409 — Términos B2B (PVP o NETO) que el servidor liquidaría HOY para esta selección, para que el asesor los vea ANTES de generar. Corre el mismo
  * cuerpo de `reservarPrograma` y se detiene antes de numerar: no crea contrato, CxP, comisión ni asiento. Mismo gate de personal interno.
  */
+// identidad:n/a — solo lectura (vista previa de términos): no escribe tablas del contrato
 export async function terminosB2BPrograma(input: ReservaProgramaInput): Promise<{ ok: true; terminos: TerminosVisibles } | { ok: false; error: string }> {
   const flujoId = generarFlujoId();
   const salida: CapturaTerminosB2B = {};
@@ -3938,7 +4042,8 @@ async function reservarProgramaInterno(
   // en `lib/contrato/contexto.ts`) — antes se creaba aquí ANTES del gate,
   // así que un intento rechazado también pagaba el costo de un cliente
   // (barato, pero innecesario) que nunca se llegaba a usar.
-  const { tenant, sb } = ctx;
+  const { tenant } = ctx;
+  let sb = ctx.sb; // #75: tras el INSERT se reasigna a un cliente que declara la identidad del contrato recién creado
 
   // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
   // ReservaResult) — hoy solo las llena el guardado best-effort de
@@ -4070,6 +4175,9 @@ async function reservarProgramaInterno(
     const incluidas = nochesIncluidasPrograma(prog);
     if (!incluidas.ok) return _rechazarValidacionPrograma({ ok: false, error: incluidas.error });
     const nochesIncluidas = incluidas.noches;
+    // Entrega L: el viaje completo (noches del programa + adicionales) respeta la estadía máxima.
+    const vViaje = validarNochesViaje(nochesIncluidas + est.nochesAdicionales);
+    if (!vViaje.ok) return _rechazarValidacionPrograma(vViaje);
     const catalogoCliente = clienteCatalogoHoteles(sb);
     const cat = await cargarCatalogoHoteles88(catalogoCliente, input.programaId);
     if (!cat.ok) return _errorValidacionPrograma("error_consulta_catalogo_hoteles", cat.error);
@@ -4326,6 +4434,7 @@ async function reservarProgramaInterno(
     return { ok: false, error: numRes.error };
   }
   const numero = numRes.numero;
+  const reservaToken = numRes.reservaToken ?? null; // 287
 
   const canal = input.tipoAsesor === "interno" ? "B2C" : "B2B";
   // Todo contrato lleva ASESOR INTERNO (quien firma/vende internamente y a quien
@@ -4338,8 +4447,13 @@ async function reservarProgramaInterno(
 
   // 5) Venta (cabecera) — nace PENDIENTE, en la moneda del programa
   const _tVenta0 = performance.now();
+  // #75: la identidad nace en el propio INSERT (uid fijado aquí; un RETURNING fallaría por RLS para el rol `venta`).
+  const contratoUid = randomUUID();
+  const idc = identidadDe(numero, contratoUid);
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    reserva_token: reservaToken,
+    contrato_uid: contratoUid,
     tenant,
     // PR #409: NETO ⇒ cliente = aliado (identidad del catálogo) y la persona queda como titular; PVP con comisión y B2C ⇒ cliente = la persona.
     ...camposClienteVenta({ modo: planB2B?.modoCompra ?? null, fiscal: aliadoPrograma?.fiscal ?? null, titular: titularDeCliente(input.cliente) }),
@@ -4387,6 +4501,7 @@ async function reservarProgramaInterno(
     registrarErrorTecnico("reservar_programa", flujoId, "insert_venta", "error_insert_venta", ve);
     return { ok: false, error: MSG_ERROR_GUARDAR_RESERVA };
   }
+  sb = await createClient(idc); // todo lo que sigue al INSERT declara la identidad del contrato recién creado
 
   // 5.b) PR #409 — comisión B2B: la crea la base (`registrar_comision_b2b_reserva`, valida usuario, rol, tenant, aliado y venta, y recalcula con la
   // misma regla del plan). Si falla, el contrato se revierte completo: nunca queda un contrato B2B sin su comisión.
@@ -4395,7 +4510,7 @@ async function reservarProgramaInterno(
     if (!com.ok) {
       elevarEstadoFlujo(estado, "error");
       registrarErrorTecnico("reservar_programa", flujoId, "comision_b2b", "error_comision_b2b", com.error);
-      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      const rev = await revertirContratoIncompleto({ rpc: (fn, a) => rpcFinanciero(idc, fn, a) }, numero, tenant);
       return {
         ok: false,
         error: rev.ok ? com.error : `${com.error} · Además, el contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente (${rev.error ?? "motivo desconocido"}): revísalo antes de volver a reservar.`,
@@ -4408,7 +4523,7 @@ async function reservarProgramaInterno(
   // por precio_venta completo, condicionado por su propia fila real de
   // `programas` (ya traída arriba, sin re-consultar).
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const adminCond = createAdminClient();
+    const adminCond = createAdminClient(idc);
     const { data: { user: usuarioCond } } = await sb.auth.getUser();
     if (usuarioCond) {
       const fechaPagoCond = fechaNegocio();
@@ -4449,7 +4564,7 @@ async function reservarProgramaInterno(
     // pasajeros e ítems. Si la reversión misma falla, el error nombra el contrato y este sigue 'pendiente' (no confirmable, recuperable).
     let mensaje = MSG_ERROR_GUARDAR_RESERVA;
     if (estanciaEntrada || aliadoPrograma) {
-      const rev = await revertirContratoIncompleto({ rpc: rpcFinanciero }, numero, tenant);
+      const rev = await revertirContratoIncompleto({ rpc: (fn, a) => rpcFinanciero(idc, fn, a) }, numero, tenant);
       if (!rev.ok) {
         registrarErrorTecnico("reservar_programa", flujoId, "insert_hijas", "error_revertir_contrato", rev.error);
         mensaje = `${MSG_ERROR_GUARDAR_RESERVA} El contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente: revísalo antes de volver a reservar.`;
@@ -4471,7 +4586,7 @@ async function reservarProgramaInterno(
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return _errorHijas("sin_service_role_para_pasajeros", null);
     const { data: { user: actorPasajeros } } = await sb.auth.getUser();
     if (!actorPasajeros) return _errorHijas("sin_usuario_para_pasajeros", null);
-    const admin = createAdminClient();
+    const admin = createAdminClient(idc);
     const payloadPasajeros = payloadGuardarPasajeros(
       input.pasajeros.map((p) => ({
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
@@ -4532,7 +4647,7 @@ async function reservarProgramaInterno(
   // Si la transición falla, se revierte el contrato pendiente (y se avisa si la reversión también falla).
   if (aliadoPrograma && !estanciaEntrada) {
     const completar = process.env.SUPABASE_SERVICE_ROLE_KEY
-      ? await createAdminClient().from("ventas").update({ financiero_estado: "completo", financiero_actualizado_en: new Date().toISOString() }).eq("numero_contrato", numero)
+      ? await createAdminClient(idc).from("ventas").update({ financiero_estado: "completo", financiero_actualizado_en: new Date().toISOString() }).eq("numero_contrato", numero)
       : { error: { message: "falta la clave de servicio para completar el contrato" } };
     if (completar.error) return _errorHijas("completar_b2b", completar.error);
   }
@@ -4545,7 +4660,7 @@ async function reservarProgramaInterno(
     const habitaciones = Object.fromEntries(
       Object.entries(input.paxPorAcom).filter(([, n]) => Number(n) > 0).map(([a, n]) => [a, Number(n)])
     );
-    const { error: errorEstancia } = await createAdminClient().from("contrato_programa_estancia").insert({
+    const { error: errorEstancia } = await createAdminClient(idc).from("contrato_programa_estancia").insert({
       numero_contrato: numero,
       programa_id: input.programaId,
       hotel_id: estanciaEntrada.hotel.id,
@@ -4574,7 +4689,7 @@ async function reservarProgramaInterno(
   // 7.c) #88 — registro de costo de la estancia (netos, asistencia total y TRM de costos). Va ANTES de la escritura financiera: si falla, el
   //      contrato se revierte; después de ella el contrato ya está completo y no se puede deshacer.
   if (estanciaEntrada && liq.estancia) {
-    const { error: errorCosto } = await createAdminClient().from("contrato_programa_estancia_costo").insert({
+    const { error: errorCosto } = await createAdminClient(idc).from("contrato_programa_estancia_costo").insert({
       numero_contrato: numero,
       moneda: prog.moneda,
       neto_base: liq.costoNetoBase,
@@ -4677,7 +4792,7 @@ async function reservarProgramaInterno(
       }));
     }
     const costosFin: CostosContrato = { costo_receptivo: liq.costoNeto, ...(liq.costoAsistencia > 0 ? { costo_asistencia: liq.costoAsistencia } : {}) };
-    const fin = await registrarFinancieroContrato(depsFinanciero(numero, tenant, fechaFin), { numeroContrato: numero, tenant, costos: costosFin, cxp: cxpFin, fecha: fechaFin });
+    const fin = await registrarFinancieroContrato(depsFinanciero(idc, numero, tenant, fechaFin), { numeroContrato: numero, tenant, costos: costosFin, cxp: cxpFin, fecha: fechaFin, contratoUid });
     registrarEtapa("reservar_programa", flujoId, "cxp_programa", Math.round(performance.now() - _tFin0), fin.ok ? (fin.avisos.length ? "parcial" : "ok") : "error");
     if (!fin.ok) {
       elevarEstadoFlujo(estado, "error");
@@ -4688,7 +4803,7 @@ async function reservarProgramaInterno(
     for (const aviso of fin.avisos) advertencias.push(aviso);
     if (fin.avisos.length) elevarEstadoFlujo(estado, "parcial");
     revalidatePath("/dashboard/contratos");
-    return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+    return { ok: true, numero, contratoUid, ...(advertencias.length ? { advertencias } : {}) };
   }
 
   // 9) Cuenta por pagar al proveedor del programa (neto, en la moneda del
@@ -4701,7 +4816,7 @@ async function reservarProgramaInterno(
   if (costoNeto > 0 && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     _huboBloqueCxp = true;
     try {
-      const admin = createAdminClient();
+      const admin = createAdminClient(idc);
       const pr = prog.proveedores as unknown as { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
       const { error: updateError } = await admin.from("ventas").update({ costo_receptivo: costoNeto }).eq("numero_contrato", numero);
       if (updateError) {
@@ -4709,7 +4824,7 @@ async function reservarProgramaInterno(
         registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_update_costo", updateError);
       }
       const fechaProg = fechaNegocio();
-      const { data: cProg, error: cProgError } = await admin.from("cuentas_por_pagar").insert({
+      const filaCxpProg = {
         numero_contrato: numero,
         proveedor: pr?.nombre ?? null,
         tipo_proveedor: "programa",
@@ -4720,7 +4835,14 @@ async function reservarProgramaInterno(
         aplica_retencion: pr?.aplica_retencion ?? false,
         pct_retencion: Number(pr?.pct_retencion) || 0,
         observaciones: "Generado automáticamente desde el tarifario (programa)",
-      }).select("id").single();
+      };
+      // 288 (#75): la reserva nace PENDIENTE y una obligación no se crea hasta confirmar → la base la guarda como PREVISTA. Si el contrato ya no
+      // está pendiente (o la 288 aún no se aplicó), el camino de siempre.
+      const { data: prevProg } = await admin.rpc("prevista_cxp_aplicar", { p_numero: numero, p_eliminar: [], p_actualizar: [], p_insertar: [filaCxpProg] as unknown as Json });
+      const quedoPrevista = (prevProg as { aplicado?: boolean } | null)?.aplicado === true;
+      const { data: cProg, error: cProgError } = quedoPrevista
+        ? { data: null, error: null }
+        : await admin.from("cuentas_por_pagar").insert(filaCxpProg).select("id").single();
       if (cProgError) {
         _resultadoCxp = "error";
         registrarErrorTecnico("reservar_programa", flujoId, "cxp_programa", "error_insert_cxp", cProgError);
@@ -4749,5 +4871,5 @@ async function reservarProgramaInterno(
   }
 
   revalidatePath("/dashboard/contratos");
-  return { ok: true, numero, ...(advertencias.length ? { advertencias } : {}) };
+  return { ok: true, numero, contratoUid, ...(advertencias.length ? { advertencias } : {}) };
 }

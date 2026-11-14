@@ -105,7 +105,9 @@ async function dinamicaComun(entrada: EntradaComparativaManual, ref: "A" | "B") 
   const { aliadoId: _a, tenant: _t, ...resto } = entrada;
   void _a; void _t;
   const servicios = entrada.servicios.filter((s) => !s.opcionRef || s.opcionRef === ref).map(({ opcionRef: _o, ...s }) => { void _o; return s; });
-  const r = await crearCotizacionManual({ ...resto, servicios });
+  // #97: una dinámica B2B exige aliado del catálogo por id y BNC escrita (la comparativa lleva su propio aliado).
+  const b2b = entrada.tipoAsesor !== "interno";
+  const r = await crearCotizacionManual({ ...resto, servicios, ...(b2b ? { aliadoId: 7, bnc: 0 } : {}) });
   assert.ok(r.ok, "la cotización dinámica de referencia debe crearse");
   assert.equal(r.ok && r.id, 501, "devuelve el id que crea la RPC");
   assert.equal(r.ok && "avisoPersonas" in r, false, "con el registro de personas en orden no hay aviso");
@@ -113,8 +115,8 @@ async function dinamicaComun(entrada: EntradaComparativaManual, ref: "A" | "B") 
   // #39: una sola llamada a la RPC definer y ninguna escritura directa desde TypeScript.
   // #42: después, y solo después, el registro del titular (no es financiero).
   assert.equal(inserts.length, 0, "crearCotizacionManual no debe insertar directo en ninguna tabla");
-  assert.deepEqual(rpcs.map((x) => x.fn), ["crear_cotizacion_manual", "registrar_personas_cotizacion"],
-    "la creación va por UNA llamada a crear_cotizacion_manual, seguida del registro del titular");
+  assert.deepEqual(rpcs.map((x) => x.fn), [b2b ? "crear_cotizacion_manual_con_acuerdo" : "crear_cotizacion_manual", "registrar_personas_cotizacion"],
+    "la creación va por UNA llamada (con acuerdo si es B2B), seguida del registro del titular");
   const alta = rpcs[1].args as { p_cotizacion_id: number; p_usuario_id: string; p_participantes: { rol: string; numero_doc: string | null }[] };
   assert.deepEqual(Object.keys(alta).sort(), ["p_cotizacion_id", "p_participantes", "p_usuario_id"], "argumentos del registro");
   assert.equal(alta.p_cotizacion_id, 501, "registra la cotización recién creada");
@@ -122,7 +124,7 @@ async function dinamicaComun(entrada: EntradaComparativaManual, ref: "A" | "B") 
   assert.deepEqual(alta.p_participantes.map((p) => [p.rol, p.numero_doc]), [["titular", entrada.cliente.numeroDoc]],
     "solo el titular: las cantidades de pax/niños nunca crean personas");
   const args = rpcs[0].args;
-  assert.deepEqual(Object.keys(args).sort(), ["p_cabecera", "p_servicios", "p_tenant", "p_usuario_id"], "argumentos de la RPC");
+  assert.deepEqual(Object.keys(args).sort(), b2b ? ["p_aliado_id", "p_bnc", "p_cabecera", "p_servicios", "p_tenant", "p_usuario_id"] : ["p_cabecera", "p_servicios", "p_tenant", "p_usuario_id"], "argumentos de la RPC");
   assert.equal(args.p_usuario_id, "u-1", "el autor es el usuario de la sesión, no un dato del formulario");
   assert.equal(args.p_tenant, "mayorista", "la agencia sale del contexto validado");
 

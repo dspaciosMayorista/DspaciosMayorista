@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 import { fechaElegidaONegocio } from "@/lib/fechaNegocio";
 import { postearAsientoPago, eliminarAsientoPago } from "@/lib/contabilidad/asientos";
@@ -15,8 +16,8 @@ export async function configurarFacturaProveedor(input: {
   id: number;
   clasificacion: "costo" | "irt";
   baseGravable: number;
-}): Promise<Result> {
-  const sb = await createClient();
+}, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: param } = await sb.from("parametros_tributarios").select("valor").eq("parametro", "IVA").maybeSingle();
   const ivaPct = Number(param?.valor) || 0.19;
   const esCosto = input.clasificacion !== "irt";
@@ -26,7 +27,7 @@ export async function configurarFacturaProveedor(input: {
     base_gravable: esCosto ? base : null,
     iva_proveedor: esCosto ? Math.round(base * ivaPct) : null,
   }).eq("id", input.id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/pagos");
   revalidatePath("/dashboard/rentabilidad");
   return { ok: true };
@@ -38,16 +39,17 @@ export async function registrarPagoProveedor(
   id: number,
   valor: number,        // monto pagado en COP (en CxP USD se convierte con la TRM)
   fecha: string,
-  trmInput?: number,    // TRM del día de pago (obligatoria en CxP USD)
+  trmInput: number | undefined,    // TRM del día de pago (obligatoria en CxP USD)
+  identidad: IdentidadContrato,
 ): Promise<Result> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
     .select("valor_total, moneda, numero_contrato, tipo_proveedor, proveedor")
     .eq("id", id)
     .maybeSingle();
-  if (e1) return { ok: false, error: e1.message };
+  if (e1) return { ok: false, error: mensajeSiIdentidad(e1) ?? e1.message };
   if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada" };
 
   // En CxP USD se paga en pesos a la TRM del día: el abono se guarda en USD
@@ -63,7 +65,7 @@ export async function registrarPagoProveedor(
     .insert({ cuenta_por_pagar_id: id, fecha: f, valor: abono, trm })
     .select("id")
     .single();
-  if (e2) return { ok: false, error: mensajeGuardaSaldo(e2, "pago") ?? e2.message };
+  if (e2) return { ok: false, error: mensajeSiIdentidad(e2) ?? mensajeGuardaSaldo(e2, "pago") ?? e2.message };
 
   // Pre-asiento del pago, siempre en COP (es lo que realmente salió de caja o
   // banco, incluso si la CxP es en USD).
@@ -80,20 +82,20 @@ export async function registrarPagoProveedor(
 // S4 / C2 -- "Pagar saldo exacto": cancela el saldo NOMINAL exacto de la cuenta.
 // El usuario digita el COP REAL pagado; nominal = saldo exacto (calculado aquí, no
 // confiado al cliente); trm = COP / nominal a 4 decimales. El asiento usa el COP real.
-export async function pagarSaldoExacto(id: number, copPagado: number, fecha: string): Promise<Result> {
-  const sb = await createClient();
+export async function pagarSaldoExacto(id: number, copPagado: number, fecha: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
     .select("valor_total, moneda, numero_contrato, tipo_proveedor, proveedor")
     .eq("id", id)
     .maybeSingle();
-  if (e1) return { ok: false, error: e1.message };
+  if (e1) return { ok: false, error: mensajeSiIdentidad(e1) ?? e1.message };
   if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada" };
 
   const { data: pagos, error: e2 } = await sb.from("cxp_pagos").select("valor").eq("cuenta_por_pagar_id", id);
-  if (e2) return { ok: false, error: e2.message };
+  if (e2) return { ok: false, error: mensajeSiIdentidad(e2) ?? e2.message };
   const { data: rets, error: e3 } = await sb.from("retenciones_cxp").select("valor").eq("cuenta_por_pagar_id", id);
-  if (e3) return { ok: false, error: e3.message };
+  if (e3) return { ok: false, error: mensajeSiIdentidad(e3) ?? e3.message };
   const suma = (rows: { valor: number | null }[] | null) => (rows ?? []).reduce((s, r) => s + (Number(r.valor) || 0), 0);
   const saldo = saldoNominalCxp(Number(cxp.valor_total) || 0, suma(pagos), suma(rets));
 
@@ -109,7 +111,7 @@ export async function pagarSaldoExacto(id: number, copPagado: number, fecha: str
     .insert({ cuenta_por_pagar_id: id, fecha: f, valor: calc.nominal, trm })
     .select("id")
     .single();
-  if (e4) return { ok: false, error: mensajeGuardaSaldo(e4, "pago") ?? e4.message };
+  if (e4) return { ok: false, error: mensajeSiIdentidad(e4) ?? mensajeGuardaSaldo(e4, "pago") ?? e4.message };
 
   await postearAsientoPago({
     cuentaId: id, pagoId: pago.id, numeroContrato: cxp.numero_contrato, tipoProveedor: cxp.tipo_proveedor, proveedor: cxp.proveedor,
@@ -126,9 +128,10 @@ export async function pagarSaldoExacto(id: number, copPagado: number, fecha: str
 // nacen sin proveedor.
 export async function asignarProveedorCuentaPorPagar(
   id: number,
-  proveedorNombre: string
+  proveedorNombre: string,
+  identidad: IdentidadContrato
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   if (!proveedorNombre.trim()) return { ok: false, error: "Elige un proveedor." };
 
   const { data: prov } = await sb
@@ -150,21 +153,21 @@ export async function asignarProveedorCuentaPorPagar(
       ...(prov.pct_retencion != null ? { pct_retencion: prov.pct_retencion } : {}),
     })
     .eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath("/dashboard/pagos");
   return { ok: true };
 }
 
 // Deshace el último pago registrado (el más reciente de cxp_pagos por fecha,
 // y por id si hay empate).
-export async function deshacerUltimoPago(id: number): Promise<Result> {
-  const sb = await createClient();
+export async function deshacerUltimoPago(id: number, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
   const { data: cxp, error: e1 } = await sb
     .from("cuentas_por_pagar")
     .select("numero_contrato")
     .eq("id", id)
     .maybeSingle();
-  if (e1) return { ok: false, error: e1.message };
+  if (e1) return { ok: false, error: mensajeSiIdentidad(e1) ?? e1.message };
   if (!cxp) return { ok: false, error: "Cuenta por pagar no encontrada" };
 
   const { data: ultimo, error: e2 } = await sb
@@ -175,11 +178,11 @@ export async function deshacerUltimoPago(id: number): Promise<Result> {
     .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (e2) return { ok: false, error: e2.message };
+  if (e2) return { ok: false, error: mensajeSiIdentidad(e2) ?? e2.message };
   if (!ultimo) return { ok: false, error: "No hay pagos para deshacer" };
 
   const { error: e3 } = await sb.from("cxp_pagos").delete().eq("id", ultimo.id);
-  if (e3) return { ok: false, error: e3.message };
+  if (e3) return { ok: false, error: mensajeSiIdentidad(e3) ?? e3.message };
   await eliminarAsientoPago(id, ultimo.id);
   revalidatePath("/dashboard/pagos");
   revalidatePath("/dashboard/contabilidad/libro-diario");

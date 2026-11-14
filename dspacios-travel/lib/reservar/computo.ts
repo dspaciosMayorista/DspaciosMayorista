@@ -14,7 +14,6 @@ import { MENSAJE_PAQUETE_NO_DISPONIBLE_CLIENTE, tarifarioFallido } from "@/lib/r
 import {
   precioServicio,
   noches,
-  liquidarHotelNoches,
   liquidarHotelNochesConTemporadas,
   hoyISO,
   temporadaVigenteParaFecha,
@@ -22,6 +21,8 @@ import {
   marcar,
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
+import { basesPromoDeFilas, clavesPrecioFinal, filasPorClave, netosDeColumna } from "@/lib/calc/netosPorTemporada";
+import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
 import {
   normalizarReglaEdadGeneral,
   resolverReglaEdadEstadiaSegura,
@@ -46,6 +47,10 @@ import { construirComposicion, type BaseMotor, type Composicion } from "@/lib/co
 import { claveComposicion, leerComposicionTarifario, origenDeClave } from "@/lib/tarifario/composicionTarifario";
 import { aplicarDescuentoNeta, pvpInfanteNormalConDescuento, pvpPublicadoConDescuento, resolverDescuentoHotel, type DescuentoAplicado } from "@/lib/calc/descuentoHotel";
 import { cargarReglasDescuentoHotel } from "@/lib/reservar/reglasDescuentoHotel";
+import { validarNochesViaje } from "@/lib/reglas/duracionViaje";
+import { descuentoMostrado, liquidarConPrecedencia, mismoDescuento, resolverPrecedencia, type DescuentoMostrado } from "@/lib/calc/precedenciaPromociones";
+import type { ReglaDescuentoHotel } from "@/lib/calc/descuentoHotel";
+import { normCombinacion, type CombinacionPromo } from "@/lib/calc/promocionesGrupo";
 import { leerCompartida, type LecturasCompartidas } from "@/lib/reservar/lecturasCompartidas";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ajusteRedondeoReparto, DESCRIPCION_AJUSTE_REDONDEO, MENSAJE_HOTEL_SOLO_SOLICITUD, repartoDeReferencia, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
@@ -155,6 +160,9 @@ export type ComputoReserva = {
   // PVP normal del infante cuando el fijo (254) la reemplazó; es el que usa el cómputo si un servicio opcional le cobra al infante. null = el fijo no se aplicó.
   pvpInfanteSinFijo: { mayor2: number | null; menor2: number | null };
   netoPorAcom: Record<string, number>; // costo neto/persona por acomodación (autoritativo)
+  // #43/#60 entrega 4 (reparto exacto): neto EXACTO de UNA habitación en la estadía, solo para acomodaciones con
+  // descuento por habitación. El costo de esas líneas es habitaciones × este total (nunca tarifa por persona × pax).
+  netoHabitacionPorAcom: Record<string, { ocupantes: number; total: number; descuento: number }>;
   precioVenta: number;
   // Pasajeros de 2 años o más (ocupan silla, cuentan para el rango de un
   // servicio por grupo y pagan tarifa de adulto en vuelo y servicios).
@@ -225,8 +233,9 @@ export type ComputoReserva = {
   // Composición del precio (hotel, vuelo, cada servicio incluido, markup global, redondeo) tal como la produjo el motor. Solo en la liquidación por fechas y sin conversión de moneda;
   // null = este camino no conserva componentes (tarifa publicada, oferta con TRM). Se guarda aparte y en privado (migración 272).
   composicion: Composicion | null;
-  // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo para mostrarla.
-  descuentoHotel: { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number } | null;
+  // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo para mostrarla. Entrega 5: mixta (`porAcomodacion`)
+  // si la precedencia decidió distinto por acomodación.
+  descuentoHotel: DescuentoMostrado | null;
 };
 
 // Expande `habitaciones: {doble: 2, triple: 1}` (conteo por tipo, la única
@@ -328,6 +337,8 @@ async function paqueteConTarifarioFallido(paqueteId: number): Promise<boolean> {
  * #120: `solicitud` (neta de un hotel «bajo solicitud») la pasa SOLO código de servidor que la leyó de `cotizacion_tarifa_solicitud`; nunca viene del navegador ni
  * de `ReservaInput`. Sin ella, un hotel bajo solicitud NO se calcula (no hay tarifa que mostrar ni vender).
  */
+const MENSAJE_PRECEDENCIA_90 = "El hotel tiene una promoción pendiente de configurar con sus descuentos por anticipación o larga estadía para estas fechas: no se puede cotizar todavía. Consulta con el área de producto.";
+
 export async function computarReserva(
   sb: Awaited<ReturnType<typeof createClient>>,
   input: ReservaInput,
@@ -463,6 +474,7 @@ export async function computarReserva(
   // seleccionado le cobra al infante (entonces vale la fórmula normal completa, nunca el fijo + la normal).
   const pvpInfanteSinFijo: { mayor2: number | null; menor2: number | null } = { mayor2: null, menor2: null };
   const netoPorAcom: Record<string, number> = {};
+  const netoHabitacionPorAcom: Record<string, { ocupantes: number; total: number; descuento: number }> = {};
   let menoresDeDos: ConteoMenores = { infante: 0, nino: 0, nino2: 0 };
   let lineasMenores: LineaMenor[] = [];
   let precioVenta = 0;
@@ -495,7 +507,13 @@ export async function computarReserva(
   const vigencias63: VigenciaCompra63[] = [];
   const nombresVigHotel63 = new Set<string>();
   let descuentoHotel90: DescuentoAplicado | null = null; // #90: EBB/Long Stay vigente hoy para lo publicado (null = ninguno)
+  // Entrega 5: reglas autorizadas leídas para lo publicado, y el descuento por acomodación cuando la precedencia con una promoción decide otro.
+  let reglas90: ReglaDescuentoHotel[] | null = null;
+  const descuentoPorAcom90: Record<string, DescuentoAplicado | null> = {};
+  const descuento90De = (acom: string) => (acom in descuentoPorAcom90 ? descuentoPorAcom90[acom] : descuentoHotel90);
   let descuentoVivo90: DescuentoAplicado | null = null; // #90: el que aplicó el motor en vivo (porción/dinámico/empaquetado por fechas); solo para mostrar su etiqueta
+  let porAcomVivo90: Record<string, DescuentoAplicado | null> | undefined; // entrega 5: el que decidió la precedencia por acomodación (motor en vivo)
+  let rutaVivo90 = false;
 
   const usarFechas = !!solicitud ||
     input.modulo !== "bloqueo" && input.modulo !== "dinamico" && !!input.fechaIda && !!input.fechaRegreso && !!process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -525,6 +543,7 @@ export async function computarReserva(
   if (!esServicios && usarFechas) {
     const numNoches = noches(input.fechaIda!, input.fechaRegreso!);
     if (numNoches <= 0) return { ok: false, error: "El regreso debe ser posterior a la ida." };
+    { const vViaje = validarNochesViaje(numNoches); if (!vViaje.ok) return vViaje; } // entrega L: estadía máxima, también al reservar
     const admin = createAdminClient();
     let opcionesSolicitud: OpcionesSolicitudLiquidacion | undefined;
     if (solicitud) {
@@ -543,15 +562,20 @@ export async function computarReserva(
     // (La firma pública de liquidarHotelPaquete no cambia: `errorServiciosIncluidos` viaja en el objeto que devuelve evaluarHotelPorFechas.)
     const errIncluidos = (res as { errorServiciosIncluidos?: string } | null)?.errorServiciosIncluidos;
     if (!combo && errIncluidos) return { ok: false, error: errIncluidos };
+    const sinResolver = (res as { precedenciaSinResolver?: string } | null)?.precedenciaSinResolver;
+    if (!combo && sinResolver) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
     if (!combo) return { ok: false, error: "No hay tarifa para esas fechas / categoría / régimen." };
     for (const [acom, p] of Object.entries(combo.precios)) pvpPorAcom[acom] = p;
     if (combo.preciosMenor2) for (const [acom, p] of Object.entries(combo.preciosMenor2)) pvpMenor2PorAcom[acom] = p;
     pvpInfanteSinFijo.mayor2 = combo.preciosSinFijo?.["infante"] ?? null;
     pvpInfanteSinFijo.menor2 = combo.preciosMenor2SinFijo?.["infante"] ?? null;
     if (combo.netos) for (const [acom, n] of Object.entries(combo.netos)) netoPorAcom[acom] = n;
+    if (combo.netosHabitacion) for (const [acom, h] of Object.entries(combo.netosHabitacion)) netoHabitacionPorAcom[acom] = h;
     descuentoVivo90 = (res as { descuentoHotel?: DescuentoAplicado | null } | null)?.descuentoHotel ?? null;
+    porAcomVivo90 = combo.descuentoPorAcom; // entrega 5: la etiqueta se arma por acomodación al final
+    rutaVivo90 = true;
     const baseFechas = (res as { composicionBase?: Omit<BaseMotor, "netos" | "pvps"> } | null)?.composicionBase;
-    if (baseFechas) composicionBase = { ...baseFechas, netos: { ...(combo.netos ?? {}) } };
+    if (baseFechas) composicionBase = { ...baseFechas, netos: { ...(combo.netos ?? {}) }, ...(combo.netosHabitacion ? { netosHabitacion: { ...combo.netosHabitacion } } : {}) };
     meta = { hotel_nombre: res!.hotelNombre, destino_nombre: res!.destinoNombre, fecha_ida: input.fechaIda!, fecha_regreso: input.fechaRegreso! };
 
     const { data: hotelRowF, error: hotelRowFErr } = await leerCompartida(lecturas, `sb:hoteles:fila_por_fechas:${input.hotelId}`, () => sb
@@ -603,7 +627,7 @@ export async function computarReserva(
     if (temporadasSeleccionadasF.size && !solicitud) {
       const { data: tarEdad, error: tarEdadErr } = await admin
         .from("tarifa_hotel")
-        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas")
+        .select("tipo_habitacion, alimentacion, temporada, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, grupo_id")
         .eq("hotel_id", input.hotelId)
         .eq("tipo_habitacion", input.categoria)
         .eq("alimentacion", input.regimen)
@@ -745,19 +769,46 @@ export async function computarReserva(
         return { ok: false, error: "No se pudieron validar las promociones del hotel. Intenta de nuevo." };
       }
       descuentoHotel90 = resolverDescuentoHotel(rg.reglas, { fechaReserva: fechaNegocio(), fechaIda: f0d.fecha_ida, numNoches: f0d.noches });
+      reglas90 = rg.reglas;
+      // Entrega 5: si la estadía publicada lleva promociones, la precedencia con EBB / Long Stay se decide AQUÍ (fecha de compra real),
+      // con la combinación VIGENTE de cada promoción. Si la promoción queda fuera, el precio se recompone con el neto sin ella.
+      const promPub = composicionBase?.promociones;
+      if (promPub && Object.keys(promPub).length) {
+        // Solo cuando la estadía publicada lleva promociones: su combinación VIGENTE (la del momento de generar pudo cambiar).
+        const { data: tempsC, error: tempsCErr } = await leerCompartida(lecturas, `admin:combinacion_promociones:${input.hotelId}`, () => createAdminClient().from("hotel_temporadas").select("nombre, tipo, hotel_promocion_combinacion(estado, alternativas, acumulable_ebb, acumulable_long_stay, orden)").eq("hotel_id", input.hotelId));
+        if (tempsCErr) return { ok: false, error: "No se pudieron validar las promociones del hotel. Intenta de nuevo." };
+        const comb = new Map<string, CombinacionPromo | null>();
+        for (const t of (tempsC ?? []) as { nombre: string; tipo?: string | null; hotel_promocion_combinacion?: unknown }[]) if ((t.tipo ?? "tarifa") !== "tarifa") comb.set(t.nombre, normCombinacion(t.hotel_promocion_combinacion));
+        const netosSin: Record<string, number> = {};
+        for (const [acom, p] of Object.entries(promPub)) {
+          const d = resolverPrecedencia({ promos: p.nombres.map((n) => ({ nombre: n, combinacion: comb.get(n) ?? null })), reglas: rg.reglas, fechaReserva: fechaNegocio(), fechaIda: f0d.fecha_ida, numNoches: f0d.noches });
+          if (!d.ok) { console.error(`[computarReserva] etapa=precedencia_promociones hotelId=${input.hotelId} detalle=${d.detalle}`); return { ok: false, error: MENSAJE_PRECEDENCIA_90 }; }
+          if (!mismoDescuento(d.descuento, descuentoHotel90)) descuentoPorAcom90[acom] = d.descuento;
+          if (!d.usarPromocion) {
+            if (p.netoSinPromocion == null) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
+            netosSin[acom] = p.netoSinPromocion;
+          }
+        }
+        // El precio publicado sigue verificándose contra su composición; solo cambia el neto desde el que se recompone.
+        if (composicionBase && Object.keys(netosSin).length) {
+          const nh = { ...(composicionBase.netosHabitacion ?? {}) };
+          for (const a of Object.keys(netosSin)) delete nh[a];
+          composicionBase = { ...composicionBase, netos: { ...composicionBase.netos, ...netosSin }, netosHabitacion: nh };
+        }
+      }
     }
-    if (descuentoHotel90) {
+    if (descuentoHotel90 || Object.keys(descuentoPorAcom90).length) {
       if (!composicionBase) return { ok: false, error: "Este hotel tiene una promoción por anticipación o estadía que no se puede aplicar al precio publicado: regenera el tarifario del paquete antes de cotizar o reservar." };
       const compPublicada = composicionBase; // netas SIN descuento: base para recomponer el precio normal del infante
       const netosD: Record<string, number> = { ...composicionBase.netos };
       const pvpsD: Record<string, { pvp: number; pvpMenor2: number | null }> = { ...(composicionBase.pvps ?? {}) };
       for (const acom of Object.keys(pvpPorAcom)) {
-        const r = pvpPublicadoConDescuento(composicionBase, { clave: acom, pvpPublicado: pvpPorAcom[acom], menorDeDos: false, descuento: descuentoHotel90, moneda: monedaReserva });
+        const r = pvpPublicadoConDescuento(composicionBase, { clave: acom, pvpPublicado: pvpPorAcom[acom], menorDeDos: false, descuento: descuento90De(acom), moneda: monedaReserva });
         if (!r) return { ok: false, error: "El precio publicado no coincide con su composición, así que no se puede aplicar la promoción del hotel: regenera el tarifario del paquete antes de cotizar o reservar." };
         pvpPorAcom[acom] = r.pvp; netosD[acom] = r.neto;
         let menor2 = pvpsD[acom]?.pvpMenor2 ?? null;
         if (pvpMenor2PorAcom[acom] != null) {
-          const m = pvpPublicadoConDescuento(composicionBase, { clave: acom, pvpPublicado: pvpMenor2PorAcom[acom], menorDeDos: true, descuento: descuentoHotel90, moneda: monedaReserva });
+          const m = pvpPublicadoConDescuento(composicionBase, { clave: acom, pvpPublicado: pvpMenor2PorAcom[acom], menorDeDos: true, descuento: descuento90De(acom), moneda: monedaReserva });
           if (!m) return { ok: false, error: "El precio publicado no coincide con su composición, así que no se puede aplicar la promoción del hotel: regenera el tarifario del paquete antes de cotizar o reservar." };
           pvpMenor2PorAcom[acom] = m.pvp; menor2 = m.pvp;
         }
@@ -768,7 +819,7 @@ export async function computarReserva(
       for (const ruta of ["mayor2", "menor2"] as const) {
         const normal = pvpInfanteSinFijo[ruta];
         if (normal == null) continue;
-        const d = pvpInfanteNormalConDescuento(compPublicada, { pvpNormalPublicado: normal, menorDeDos: ruta === "menor2", descuento: descuentoHotel90, moneda: monedaReserva });
+        const d = pvpInfanteNormalConDescuento(compPublicada, { pvpNormalPublicado: normal, menorDeDos: ruta === "menor2", descuento: descuento90De("infante"), moneda: monedaReserva });
         if (d == null) return { ok: false, error: "El precio publicado no coincide con su composición, así que no se puede aplicar la promoción del hotel: regenera el tarifario del paquete antes de cotizar o reservar." };
         pvpInfanteSinFijo[ruta] = d;
       }
@@ -837,11 +888,11 @@ export async function computarReserva(
     let tarRowsVig: FilaTarifaHotelEdadCruda[] = [];
     type TarRow = FilaTarifaHotelEdadCruda & { neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null; neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null; notas: string | null; precio_final_autoritativo: boolean | null };
     const colDe: Record<string, keyof TarRow> = { sencilla: "neto_sencilla", doble: "neto_doble", triple: "neto_triple", multiple: "neto_multiple", nino: "neto_nino", nino2: "neto_nino2", infante: "neto_infante" };
+    // #43/#60: armado único del mapa de netos (clave = nombre, o nombre + grupo de días).
     const netoPorTemporadaDe = (rows: TarRow[], acom: string): Record<string, number | null> => {
-      const col = colDe[acom]; const m: Record<string, number | null> = {};
-      if (!col) return m;
-      for (const r of rows) if (r.temporada) m[r.temporada] = r[col] as number | null;
-      return m;
+      const col = colDe[acom];
+      if (!col) return {};
+      return netosDeColumna(filasPorClave(rows.filter((r) => r.temporada)), col);
     };
     // Temporadas marcadas como PRECIO FINAL AUTORITATIVO (migración 179,
     // `tarifa_hotel.precio_final_autoritativo`) dentro de las filas YA
@@ -849,19 +900,19 @@ export async function computarReserva(
     // para que una promoción Dubai con descuento/suplemento/edades propios
     // nunca se recalcule desde su temporada base. Vacío = comportamiento
     // legacy sin cambios (ninguna fila marcada).
-    const precioFinalTemporadasDe = (rows: TarRow[]): Set<string> => {
-      const s = new Set<string>();
-      for (const r of rows) if (r.temporada && r.precio_final_autoritativo) s.add(r.temporada);
-      return s;
-    };
+    const precioFinalTemporadasDe = (rows: TarRow[]): Set<string> =>
+      clavesPrecioFinal(filasPorClave(rows.filter((r) => r.temporada)));
+    // Entrega 5: el costo sale de la MISMA decisión de precedencia (promoción / EBB / Long Stay) que el precio. Sin reglas leídas
+    // (`reglas90` null) es exactamente el cálculo de siempre: la promoción entra y no hay descuento.
+    const costoConPrecedencia = (args: Parameters<typeof liquidarConPrecedencia>[0]) => liquidarConPrecedencia(args, { reglas: reglas90, fechaReserva: fechaNegocio() });
     const conServiceRole = !!process.env.SUPABASE_SERVICE_ROLE_KEY && !!meta.fecha_ida && !!meta.fecha_regreso;
     if (conServiceRole) {
       const admin = createAdminClient();
       numNochesVig = noches(meta.fecha_ida!, meta.fecha_regreso!);
       const [{ data: temps, error: tempsErr }, { data: tarRows, error: tarRowsErr }] = await Promise.all([
-        leerCompartida(lecturas, `admin:hotel_temporadas:${input.hotelId}`, () => admin.from("hotel_temporadas").select("nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido").eq("hotel_id", input.hotelId).order("orden").order("id")),
+        leerCompartida(lecturas, `admin:hotel_temporadas:${input.hotelId}`, () => admin.from("hotel_temporadas").select(`id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo), ${SELECT_PROMO_VIGENCIA}`).eq("hotel_id", input.hotelId).order("orden").order("id")),
         // La tarifa neta SÍ depende del combo (categoría y régimen): se lee por combo, sin memo.
-        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, precio_final_autoritativo").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
+        admin.from("tarifa_hotel").select("tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, neto_nino, neto_nino2, neto_infante, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, notas, precio_final_autoritativo, grupo_id, temporada_base").eq("hotel_id", input.hotelId).eq("tipo_habitacion", input.categoria).eq("alimentacion", input.regimen),
       ]);
       if (tempsErr) return { ok: false, error: `No se pudo validar la vigencia de temporadas del hotel: ${tempsErr.message}` };
       if (tarRowsErr) return { ok: false, error: `No se pudo validar la tarifa neta del hotel: ${tarRowsErr.message}` };
@@ -885,11 +936,16 @@ export async function computarReserva(
       // pasa a `extraerCondicionesTarifa`.
       const temporadasCondiciones = new Set<string>();
       const precioFinalTemporadasVig = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
+      const basePromoVig = basesPromoDeFilas(filasPorClave(tarRowsVig as TarRow[]));
       for (const l of lineasHab) {
         const netoPorTemporada = netoPorTemporadaDe(tarRowsVig as TarRow[], l.acom);
-        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasVig });
-        if (r == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom[l.acom] = aplicarDescuentoNeta(r.total, descuentoHotel90, monedaHotelOrigen63);
+        const lp = costoConPrecedencia({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada, regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasVig, basePromoPorClave: basePromoVig, acomodacion: l.acom, ocupantes: paxTarifa(l.acom) });
+        if (lp == null) return { ok: false, error: TARIFA_VENCIDA };
+        if (!lp.ok) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
+        const r = lp.r;
+        netoPorAcom[l.acom] = aplicarDescuentoNeta(r.total, lp.descuento, monedaHotelOrigen63);
+        // Reparto exacto: el EBB y el redondeo se aplican UNA vez sobre el total de la habitación.
+        if (r.habitacion) netoHabitacionPorAcom[l.acom] = { ...r.habitacion, total: aplicarDescuentoNeta(r.habitacion.total, lp.descuento, monedaHotelOrigen63) };
         for (const t of r.temporadasTarifa) { temporadasEstadia.add(t); temporadasCondiciones.add(t); }
         for (const p of r.procedencia) temporadasCondiciones.add(p.temporadaGanadora);
         if (oferta63) {
@@ -933,9 +989,10 @@ export async function computarReserva(
 
     if (conServiceRole) {
       const precioFinalTemporadasMenores = precioFinalTemporadasDe(tarRowsVig as TarRow[]);
+      const basePromoMenores = basesPromoDeFilas(filasPorClave(tarRowsVig as TarRow[]));
       // #63: la vigencia de compra de la tarifa de un MENOR también respalda el precio (puede ganar otra temporada que la del adulto).
       const recogerVigenciaMenor63 = (acom: "nino" | "nino2" | "infante", precioFinal: Set<string>) => {
-        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], acom), regimen: input.regimen, precioFinalTemporadas: precioFinal });
+        const r = liquidarHotelNochesConTemporadas({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], acom), regimen: input.regimen, precioFinalTemporadas: precioFinal, basePromoPorClave: basePromoMenores, acomodacion: acom });
         if (r == null) return;
         for (const t of r.temporadasTarifa) nombresVigHotel63.add(t);
         for (const p of r.procedencia) nombresVigHotel63.add(p.temporadaGanadora);
@@ -949,20 +1006,24 @@ export async function computarReserva(
         }
       }
       if (numNinos > 0) {
-        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
-        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom["nino"] = aplicarDescuentoNeta(per, descuentoHotel90, monedaHotelOrigen63);
+        const lp = costoConPrecedencia({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores, basePromoPorClave: basePromoMenores, acomodacion: "nino" });
+        if (lp == null) return { ok: false, error: TARIFA_VENCIDA };
+        if (!lp.ok) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
+        netoPorAcom["nino"] = aplicarDescuentoNeta(lp.r.total, lp.descuento, monedaHotelOrigen63);
       }
       if (numNinos2 > 0) {
-        const per = liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores });
-        if (per == null) return { ok: false, error: TARIFA_VENCIDA };
-        netoPorAcom["nino2"] = aplicarDescuentoNeta(per, descuentoHotel90, monedaHotelOrigen63);
+        const lp = costoConPrecedencia({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores, basePromoPorClave: basePromoMenores, acomodacion: "nino2" });
+        if (lp == null) return { ok: false, error: TARIFA_VENCIDA };
+        if (!lp.ok) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
+        netoPorAcom["nino2"] = aplicarDescuentoNeta(lp.r.total, lp.descuento, monedaHotelOrigen63);
       }
       // Infante: a diferencia de niño, si no está configurado NO bloquea la
       // reserva (queda gratis) — evita romper reservas de hoteles que todavía
       // no han cargado su tarifa de infante en tarifa_hotel.
       if (numInfantes > 0) {
-        netoPorAcom["infante"] = aplicarDescuentoNeta(liquidarHotelNoches({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores }) ?? 0, descuentoHotel90, monedaHotelOrigen63);
+        const lp = costoConPrecedencia({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "infante"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores, basePromoPorClave: basePromoMenores, acomodacion: "infante" });
+        if (lp && !lp.ok) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
+        netoPorAcom["infante"] = aplicarDescuentoNeta(lp?.r.total ?? 0, lp ? lp.descuento : descuentoHotel90, monedaHotelOrigen63);
       }
     }
 
@@ -1322,7 +1383,10 @@ export async function computarReserva(
       paxConSilla,
     });
   } else if (!esServicios) {
-    const { data: pqImp } = await leerCompartida(lecturas, `sb:armado_paquetes:impuesto_fijo:${input.paqueteId}`, () => sb
+    // El BNC es un dato de LIQUIDACIÓN del servidor, no algo que la sesión deba poder leer: un aliado B2B logueado no lee `armado_paquetes` (RLS) y con su sesión el impuesto salía 0 en silencio,
+    // lo que inflaba su base comisionable y hacía que la conversión (hecha por el personal, con impuesto real) rechazara el plan congelado. Se lee con la llave de servicio; sin ella, con la sesión.
+    const lectorImpuesto = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb; // identidad:n/a — lectura de configuración de liquidación; no escribe tablas de contrato
+    const { data: pqImp } = await leerCompartida(lecturas, `srv:armado_paquetes:impuesto_fijo:${input.paqueteId}`, () => lectorImpuesto
       .from("armado_paquetes")
       .select("impuesto_fijo")
       .eq("id", input.paqueteId)
@@ -1364,12 +1428,15 @@ export async function computarReserva(
     composicion = null; // la composición es un dato interno: ningún fallo suyo bloquea el cálculo ni la venta
   }
   // #90: etiqueta de la regla que usó el cálculo (la del motor en vivo o la recompuesta sobre lo publicado). Ningún importe depende de ella.
-  const reglaUsada90 = descuentoVivo90 ?? descuentoHotel90;
-  const descuentoHotel = reglaUsada90?.etiqueta ? { etiqueta: reglaUsada90.etiqueta, tipo: reglaUsada90.tipo, umbral: reglaUsada90.umbral, pct: reglaUsada90.pct } : null;
+  // Entrega 5: con las acomodaciones de ESTA reserva; si la precedencia decidió distinto por acomodación, una etiqueta por cada una.
+  const acomsUsadas90 = [...ACOM_ROOMS.filter((a) => (Number(input.habitaciones?.[a]) || 0) > 0), ...(numNinos ? ["nino"] : []), ...(numNinos2 ? ["nino2"] : []), ...(numInfantes ? ["infante"] : [])];
+  const descuentoHotel = rutaVivo90
+    ? descuentoMostrado(descuentoVivo90 ?? descuentoHotel90, porAcomVivo90, acomsUsadas90)
+    : descuentoMostrado(descuentoHotel90, descuentoPorAcom90, acomsUsadas90);
   if (composicion && descuentoHotel) composicion = { ...composicion, descuentoHotel };
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, pvpInfanteSinFijo: { ...pvpInfanteSinFijo }, netoPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, pvpInfanteSinFijo: { ...pvpInfanteSinFijo }, netoPorAcom, netoHabitacionPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

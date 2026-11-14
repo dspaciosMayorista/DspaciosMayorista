@@ -25,14 +25,16 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import {
-  liquidarHotelNoches, liquidarHotelNochesConTemporadas, marcar, componerTarifa, precioMenorDeDos, toTemporadaRango, minNochesAplicable,
+  marcar, componerTarifa, precioMenorDeDos, toTemporadaRango, minNochesAplicable,
   factorLiquidacion, normRangos, hoyISO, type TemporadaRango,
 } from "../calc/paquetes.ts";
+import { basesPromoDeFilas, claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "../calc/netosPorTemporada.ts";
 import {
   resolverReglaEdadEstadiaSegura, type FilaTarifaHotelEdadCruda, type ReglaEdadGeneralParcial,
 } from "../calc/reglaEdadTarifa.ts";
-import { type AcomRoom } from "../acomodaciones.ts";
+import { PAX_TARIFA_DEFAULT, type AcomRoom } from "../acomodaciones.ts";
 import { resolverDescuentoHotel, aplicarDescuentoNeta, type ReglaDescuentoHotel, type DescuentoAplicado } from "../calc/descuentoHotel.ts";
+import { liquidarConPrecedencia, mismoDescuento, type DescuentoMostrado } from "../calc/precedenciaPromociones.ts";
 import {
   clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles, type ClasificacionMenores,
 } from "./edadesMenores.ts";
@@ -60,6 +62,14 @@ const COL_NETO: Record<string, string> = {
 
 export type ComboCotizado = {
   categoria: string; regimen: string; precios: Record<string, number>; netos?: Record<string, number>;
+  // #43/#60 entrega 4 (reparto exacto): neto EXACTO de UNA habitación en la estadía (con EBB/redondeo aplicados una vez)
+  // y el descuento por habitación aplicado. Solo para acomodaciones con descuento por habitación.
+  // Entrega 5: EBB / Long Stay de las acomodaciones donde la precedencia con una promoción decidió OTRO descuento que el de
+  // la estadía (`descuentoHotel` del resultado). Ausente = todas usan el de la estadía.
+  descuentoPorAcom?: Record<string, DescuentoAplicado | null>;
+  // Lo que se MUESTRA de ese EBB / Long Stay para este combo (lo arma cotizarPorFechas; mixto si difiere por acomodación).
+  descuentoHotel?: DescuentoMostrado | null;
+  netosHabitacion?: Record<string, { ocupantes: number; total: number; descuento: number }>;
   // Tarifa de infante (migración 226): precio de un MENOR DE 2 AÑOS por clase de
   // hotel (infante / nino / nino2) — parte de hotel de esa clase + servicios
   // incluidos con su precio de infante (o el de adulto si el servicio no lo
@@ -121,6 +131,8 @@ export type FilaArmadoHotel = {
   hotel_moneda: string | null;
   // Adults Only: sin niños ni infantes, así que no se publica fila de infante.
   hotel_adults_only?: boolean | null;
+  // #43/#60 entrega 4: `hotel_acomodaciones.pax_tarifa` por acomodación (sin fila = PAX_TARIFA_DEFAULT, como la reserva).
+  hotel_pax_tarifa?: Partial<Record<string, number>> | null;
 } | null; // null = no hay fila armado_hoteles para este par (mismo comportamiento que antes: sin filtro, moneda COP)
 export type FilaTemporadaHotelRaw = {
   // `id`/`condicion_pago_*` = migración 164 (condiciones de pago por
@@ -136,6 +148,11 @@ export type FilaTemporadaHotelRaw = {
   condicion_pago_tipo?: string | null;
   condicion_pago_pct_inicial?: number | null;
   condicion_pago_dias_saldo?: number | null;
+  // #43/#60: grupos de días incrustados en la misma lectura (solo cuentan los activos).
+  hotel_temporada_grupos?: unknown;
+  // #43/#60 entrega 4: promociones (misma lectura, `SELECT_PROMO_VIGENCIA`).
+  promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null;
+  dias_promo?: unknown; hotel_promocion_reglas?: unknown;
 };
 export type FilaTarifaHotelRaw = Record<string, unknown>; // tipo_habitacion, alimentacion, temporada, neto_*
 export type FilaServicioIncluidoRaw = {
@@ -174,6 +191,9 @@ export type ResultadoHotelFechas = {
   combos: ComboCotizado[]; destinoNombre: string | null; hotelNombre: string | null; minNoches: number; moneda: string;
   // #90: descuento EBB/Long Stay aplicado a la neta hotelera de esta estadía (null = ninguno).
   descuentoHotel?: DescuentoAplicado | null;
+  // Entrega 5: alguna acomodación no se vende porque una promoción coincide con EBB / Long Stay sin configuración (o con
+  // configuraciones contradictorias). Texto para quien cotiza; nunca se elige un descuento implícito.
+  precedenciaSinResolver?: string;
   // Servicios incluidos con cobro POR GRUPO: NO están dentro de `combos`
   // (su costo depende del pax, que este motor no conoce). Quien sí conoce el
   // pax les suma el cargo con `cargoGrupoIncluido`; quien no, muestra la marca
@@ -230,6 +250,8 @@ export function evaluarHotelPorFechas(
   const temporadas: TemporadaRango[] = datos.temporadas.map(toTemporadaRango);
   // #90: un solo descuento (el mayor %) sobre la neta hotelera, antes del markup. Aplica igual a adultos y menores.
   const descuentoHotel = resolverDescuentoHotel(datos.reglasDescuento, { fechaReserva: datos.fechaReserva ?? hoyISO(), fechaIda, numNoches });
+  const ctxPrecedencia = { reglas: datos.reglasDescuento, fechaReserva: datos.fechaReserva ?? hoyISO() };
+  let precedenciaSinResolver: string | undefined;
 
   let aporteServ = 0;
   let aporteServMenor = 0; // igual que aporteServ pero con el precio de infante de cada servicio
@@ -297,7 +319,7 @@ export function evaluarHotelPorFechas(
     const reg = (r.alimentacion as string) ?? "";
     const key = `${cat}|||${reg}`;
     if (!grupos.has(key)) grupos.set(key, new Map());
-    grupos.get(key)!.set((r.temporada as string) ?? "", r);
+    grupos.get(key)!.set(claveFilaTarifa(r), r); // #43/#60: nombre, o nombre + grupo de días
   }
 
   const combos: ComboCotizado[] = [];
@@ -318,18 +340,27 @@ export function evaluarHotelPorFechas(
     // de abajo para que nunca recalculen el descuento desde la base. Vacío en
     // filas legacy/base (comportamiento histórico sin cambios).
     const precioFinalTemporadas = new Set<string>();
-    for (const [temp, row] of tempMap) if (row.precio_final_autoritativo === true) precioFinalTemporadas.add(temp);
+    for (const k of clavesPrecioFinal(tempMap)) precioFinalTemporadas.add(k);
+    const basePromoPorClave = basesPromoDeFilas(tempMap);
+    const netosHabitacion: Record<string, { ocupantes: number; total: number; descuento: number }> = {};
+    const descuentoPorAcom: Record<string, DescuentoAplicado | null> = {};
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
-      const netoPorTemporada: Record<string, number | null> = {};
-      for (const [temp, row] of tempMap) { const v = row[col]; netoPorTemporada[temp] = v == null ? null : Number(v); }
+      const netoPorTemporada = netosDeColumna(tempMap, col);
       const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
       let costoHotel: number | null;
       let temporadasAcom: string[] = [];
       let temporadasCondicionAcom: string[] = [];
+      // Entrega 5: la precedencia promoción / EBB / Long Stay decide el descuento (y si la promoción entra) por acomodación.
+      const ocupantes = esRoom ? datos.armadoHotel?.hotel_pax_tarifa?.[acom] ?? PAX_TARIFA_DEFAULT[acom as AcomRoom] : undefined;
+      const lp = liquidarConPrecedencia({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes }, ctxPrecedencia);
+      if (lp && !lp.ok) { precedenciaSinResolver ??= lp.detalle; continue; }
+      const descAcom = lp ? lp.descuento : descuentoHotel;
+      if (!mismoDescuento(descAcom, descuentoHotel)) descuentoPorAcom[acom] = descAcom;
       if (esRoom) {
-        const r = liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
+        const r = lp?.r ?? null;
         costoHotel = r?.total ?? null;
+        if (r?.habitacion) netosHabitacion[acom] = r.habitacion;
         if (r) {
           temporadasAcom = r.temporadasTarifa;
           // Unión de la identidad de EDAD (temporadaTarifa/base) con la
@@ -339,12 +370,20 @@ export function evaluarHotelPorFechas(
           temporadasCondicionAcom = [...new Set([...r.temporadasTarifa, ...r.procedencia.map((p) => p.temporadaGanadora)])];
         }
       } else {
-        costoHotel = liquidarHotelNoches({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas });
+        costoHotel = lp?.r.total ?? null;
       }
       if (costoHotel == null) continue;
-      costoHotel = aplicarDescuentoNeta(costoHotel, descuentoHotel, monedaHotel);
+      costoHotel = aplicarDescuentoNeta(costoHotel, descAcom, monedaHotel);
       if (datos.redondeoCentavos) costoHotel = Math.round(costoHotel * 100) / 100;
       if (esRoom && costoHotel <= 0) continue;
+      // Reparto exacto (T.3): el neto de la HABITACIÓN se descuenta y redondea una sola vez sobre su total;
+      // la tarifa por persona de arriba solo alimenta el precio de venta por persona (redondeo de venta de siempre).
+      const nh = netosHabitacion[acom];
+      if (nh) {
+        let tot = aplicarDescuentoNeta(nh.total, descAcom, monedaHotel);
+        if (datos.redondeoCentavos) tot = Math.round(tot * 100) / 100;
+        netosHabitacion[acom] = { ...nh, total: tot };
+      }
       const t = componerTarifa({ aporteHotel: marcar(costoHotel, pctMk), aporteServicios: aporteServ, aporteVuelo: aporteVueloSol, impuesto, moneda: monedaHotel });
       precios[acom] = acom === "infante" && fijoMayor2 != null ? fijoMayor2 : t.pvp;
       if (acom === "infante" && fijoMayor2 != null) preciosSinFijo.infante = t.pvp;
@@ -370,7 +409,8 @@ export function evaluarHotelPorFechas(
       if (fijoMayor2 != null) preciosSinFijo.infante = normalMayor2;
       if (fijoMenor2 != null) preciosMenor2SinFijo.infante = normalMenor2;
     }
-    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, preciosMenor2, preciosSinFijo, preciosMenor2SinFijo, temporadasTarifaPorAcom, temporadasCondicionPorAcom });
+    if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, preciosMenor2, preciosSinFijo, preciosMenor2SinFijo, temporadasTarifaPorAcom, temporadasCondicionPorAcom,
+      ...(Object.keys(netosHabitacion).length ? { netosHabitacion } : {}), ...(Object.keys(descuentoPorAcom).length ? { descuentoPorAcom } : {}) });
   }
   if (reglasCierre.length) {
     for (const c of combos) {
@@ -380,7 +420,7 @@ export function evaluarHotelPorFechas(
     }
   }
   const combosF = combos.filter((c) => Object.keys(c.precios).some((a) => a !== "nino" && a !== "nino2" && a !== "infante"));
-  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, descuentoHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}),
+  return { combos: combosF, destinoNombre, hotelNombre, minNoches: minNochesAplicable(temporadas, fechaIda), moneda: monedaHotel, descuentoHotel, serviciosGrupoIncluidos, serviciosEfectivos, ...(precedenciaSinResolver ? { precedenciaSinResolver } : {}), ...(serviciosOmitidos.length ? { serviciosOmitidos } : {}),
     composicionBase: { pctMk, impuesto, vuelo: aporteVueloSol, vueloNeto: null, feeInfante: feeInfanteSol, servicios: composicionServicios, fijo: { mayor2: fijoMayor2 != null, menor2: fijoMenor2 != null } } };
 }
 

@@ -1,16 +1,20 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
+import { validarFechasViaje } from "@/lib/reglas/duracionViaje";
 import { tipoDocumentoCliente } from "@/lib/personas/tiposDocumento";
+import { identidadDe, parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
 import { precioServicio, noches, factorLiquidacion } from "@/lib/calc/paquetes";
-import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio } from "@/lib/reservar/serviciosPaquete";
+import { normalizarCategoriaServicio, resumirServiciosContrato, tipoProveedorCxpServicio, costosServicioPorColumna } from "@/lib/reservar/serviciosPaquete";
 import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { formatearHora, parseHora } from "@/lib/calc/trasladoFranjas";
 import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
+import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
 import { formatMoneda } from "@/lib/utils";
 import { fechaElegidaONegocio, fechaNegocio } from "@/lib/fechaNegocio";
@@ -24,6 +28,7 @@ import { payloadGuardarPasajeros } from "@/lib/reservar/pasajerosEdicion";
 import {
   planNetoContratoManual, comisionCoincide, esAsesorPropio, aplicarNetoContratoManual, type PlanNetoManual,
 } from "@/lib/contrato/netoManual";
+import { resolverAliadoReserva, planComisionReserva, registrarComisionReserva, type PlanComisionReserva } from "@/lib/reservar/comisionReserva";
 import { evaluarMargenContrato, puedeAprobarMargenBajo, mensajeMargenInsuficiente } from "@/lib/contrato/margenContrato";
 import type { Json } from "@/types/database";
 import {
@@ -41,8 +46,9 @@ import { cobroDeVenta } from "@/lib/finanzas/cobro";
 // (`marca_cxp_automatica()`, como prefijo) para que un reintento las
 // reemplace en vez de duplicarlas.
 const OBS_CXP_MANUAL = "Generado automáticamente desde el tarifario (contrato manual)";
-async function rpcFinancieroManual(fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
-  const admin = createAdminClient();
+// #75: toda escritura sobre el contrato declara su identidad (la del INSERT del propio flujo).
+async function rpcFinancieroManual(id: IdentidadContrato, fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> {
+  const admin = createAdminClient(id);
   if (fn === "registrar_financiero_contrato") {
     const { data, error } = await admin.rpc("registrar_financiero_contrato", {
       p_numero_contrato: String(args.p_numero_contrato ?? ""),
@@ -61,9 +67,9 @@ async function rpcFinancieroManual(fn: string, args: Record<string, unknown>): P
   }
   return { data: null, error: { message: `RPC no soportado: ${fn}` } };
 }
-function depsFinancieroManual(numeroContrato: string, tenant: string, fecha: string) {
+function depsFinancieroManual(id: IdentidadContrato, numeroContrato: string, tenant: string, fecha: string) {
   return {
-    rpc: rpcFinancieroManual,
+    rpc: (fn: string, args: Record<string, unknown>) => rpcFinancieroManual(id, fn, args),
     postearAsiento: (c: { id: number; tipo_proveedor: string | null; proveedor: string | null; servicio: string | null; valor_total: number }) =>
       postearAsientoCxP({
         cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
@@ -71,9 +77,9 @@ function depsFinancieroManual(numeroContrato: string, tenant: string, fecha: str
       }),
     eliminarAsiento: (cuentaId: number) => eliminarAsientoCxP(cuentaId),
     // Intención durable (172): su propio commit, antes del RPC.
-    guardarPendiente: async (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[] }) => {
-      const { error } = await createAdminClient().from("contrato_financiero_pendiente").upsert({
-        numero_contrato: p.numeroContrato, tenant: p.tenant, costos: p.costos as Json, cxp: p.cxp as unknown as Json,
+    guardarPendiente: async (p: { numeroContrato: string; tenant: string; costos: CostosContrato; cxp: CxPFinanciera[]; contratoUid?: string | null }) => {
+      const { error } = await createAdminClient(id).from("contrato_financiero_pendiente").upsert({
+        numero_contrato: p.numeroContrato, tenant: p.tenant, costos: p.costos as Json, cxp: p.cxp as unknown as Json, contrato_uid: p.contratoUid ?? id[p.numeroContrato] ?? null,
       }, { onConflict: "numero_contrato" });
       return error ? { ok: false, error: error.message } : { ok: true };
     },
@@ -83,9 +89,9 @@ function depsFinancieroManual(numeroContrato: string, tenant: string, fecha: str
 // Deshace un contrato manual que quedó a medias: borra la venta y sus hijas y
 // libera SOLO sus sillas (`revertir_contrato_incompleto`, migración 171). Es
 // la misma reversión de la reserva desde tarifario; necesita service_role.
-async function revertirContratoManual(numero: string, tenant: string): Promise<{ ok: boolean; error?: string }> {
+async function revertirContratoManual(id: IdentidadContrato, numero: string, tenant: string): Promise<{ ok: boolean; error?: string }> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "Falta la clave de servicio para revertir el contrato." };
-  const admin = createAdminClient();
+  const admin = createAdminClient(id);
   return revertirContratoIncompleto({
     rpc: async (_fn, args) => {
       const { data, error } = await admin.rpc("revertir_contrato_incompleto", {
@@ -106,11 +112,11 @@ async function revertirContratoManual(numero: string, tenant: string): Promise<{
 // CONTRATO; la cuenta acreedora la decide la base con la factura vigente a la
 // vista y se conserva al re-postear. El actor es el usuario de la sesión.
 async function postearAsientoAbono(
-  sb: Awaited<ReturnType<typeof createClient>>, abonoId: number, tenant: string | undefined,
+  sb: Awaited<ReturnType<typeof createClient>>, abonoId: number, tenant: string | undefined, id: IdentidadContrato,
 ): Promise<string | null> {
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return "sesión no válida";
-  const r = await postearAsientoAbonoAtomico(abonoId, tenant ?? "mayorista", user.id);
+  const r = await postearAsientoAbonoAtomico(abonoId, tenant ?? "mayorista", user.id, id);
   return r.ok ? null : r.error;
 }
 
@@ -286,6 +292,7 @@ export type CrearContratoResult =
 // cuerpo que existía antes de esta ronda, con las llamadas de medición ahora
 // atadas al mismo `flujo_id` y con la clasificación de resultado corregida
 // (ver `lib/observabilidad/medicion.ts` y el detalle etapa por etapa abajo).
+// identidad:n/a — crea el contrato; el uid sale del INSERT (se genera en el servidor y viaja en la propia fila)
 export async function crearContrato(
   input: ContratoInput
 ): Promise<CrearContratoResult> {
@@ -352,7 +359,8 @@ async function crearContratoInterno(
   // Reutiliza el MISMO cliente de sesión que `contextoCrearContrato()` ya
   // creó y autenticó — en vez de crear uno nuevo aquí (optimización posterior
   // al PR #274, ver el comentario en `lib/contrato/contexto.ts`).
-  const { tenant, sb } = ctx;
+  const { tenant } = ctx;
+  let sb = ctx.sb; // #75: tras el INSERT se reasigna a un cliente que declara la identidad del contrato recién creado
 
   // Etapa "validacion_negocio": tarifas del negociado, ítems, BNC, margen
   // mínimo y catálogo de aliado B2B — varias validaciones con retorno
@@ -369,6 +377,9 @@ async function crearContratoInterno(
     registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "rechazado");
     return resultado;
   };
+  // Entrega L: un contrato manual NUEVO respeta la estadía máxima (antes de reservar el consecutivo; los guardados no cambian).
+  const vViaje = validarFechasViaje(input.fechaSalida, input.fechaRegreso);
+  if (!vViaje.ok) return _rechazarValidacion(vViaje);
   // #40: un tipo de documento fuera del catálogo se rechaza AQUÍ, antes de reservar el consecutivo (no consume número).
   const tipoCliente = tipoDocumentoCliente(input.clienteTipoDocumento, input.clienteDocumento);
   if (!tipoCliente.ok) return _rechazarValidacion({ ok: false, error: tipoCliente.error });
@@ -491,8 +502,8 @@ async function crearContratoInterno(
   let agenciaNombre: string | null = null;
   let freelanceNombre: string | null = null;
   // El aliado sigue siendo obligatorio y del catálogo (vínculo ventas.aliado_id),
-  // pero el contrato manual ya NO genera la comisión B2B (decisión del dueño,
-  // #38): nace "Por definir" y se registra a mano en la pestaña Comisiones
+  // pero (antes de #97) el contrato manual no generaba la comisión B2B (decisión del dueño,
+  // #38): nacía "Por definir"; desde #97 en PVP se registra sola (ver más abajo). Antes se registraba a mano en Comisiones
   // (el asesor de su propio contrato, o administración).
   if (tipoVenta !== "interno") {
     if (!input.aliadoId) return _rechazarValidacion({ ok: false, error: `Selecciona la ${tipoVenta} del catálogo.` });
@@ -549,6 +560,26 @@ async function crearContratoInterno(
     }
     planNeto = plan.plan;
   }
+  // #97: PVP B2B asistido → la comisión del aliado se registra sola al crear el contrato. Se valida ANTES de numerar
+  // (aliado del catálogo, tipo coincidente, % legible) para no gastar un consecutivo; no inventa % ni base (los resuelve la regla de #38).
+  // Negociado (bloqueo / porción terrestre) B2B: nace 'pendiente' —lo que exige la RPC 205— y SOLO se cierra después de copiar los costos negociados.
+  const registraComisionPvp = modoCompraManual === "pvp" && tipoVenta !== "interno";
+  const negociadoB2B = registraComisionPvp && negociado;
+  // Con paquete negociado la copia de costos es una dependencia del cierre: sin la llave de servicio no puede hacerse, así que se rechaza ANTES de numerar.
+  const requiereCopiaCostos = negociadoB2B && !!input.paqueteId;
+  if (requiereCopiaCostos && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return _rechazarValidacion({ ok: false, error: "No se puede crear este contrato B2B negociado: falta la configuración del servidor para copiar los costos del paquete. No se creó nada." });
+  }
+  // La RPC 205 exige que la venta ya diga cuánto vale su comisión (modo_compra + comision_b2b) y la recalcula: se escribe con el MISMO plan
+  // puro de la reserva (base = PVP − BNC, % del aliado), no con una fórmula propia. Sin modo_compra la RPC fallaría (descontada_en_precio NULL).
+  let planPvp: PlanComisionReserva | null = null;
+  if (registraComisionPvp) {
+    const al = await resolverAliadoReserva(sb, tipoVenta, input.aliadoId);
+    if (!al.ok) return _rechazarValidacion({ ok: false, error: al.error });
+    const pl = planComisionReserva({ modoCompra: "comisionable", precioVenta, impuesto: bnc, pct: al.pct });
+    if (!pl.ok) return _rechazarValidacion({ ok: false, error: pl.error });
+    planPvp = pl.plan;
+  }
   registrarEtapa("crear_contrato", flujoId, "validacion_negocio", Math.round(performance.now() - _tValidacion0), "ok");
 
   // Número de contrato — se genera AQUÍ, justo antes del primer INSERT que lo
@@ -557,6 +588,22 @@ async function crearContratoInterno(
   // gastaría un consecutivo DTM/MIN por cada formulario inválido — con el RPC
   // ahora en service_role (ver lib/contrato/numeracion.ts), este es el punto
   // razonable más tardío antes del INSERT que lo requiere.
+  // Estado de nacimiento (regla de #75, no del interruptor de comisión): el manual de Mayorista nace PENDIENTE; Minorista conserva 'activo'.
+  // Un manual pendiente con comisión B2B solo deja el PLAN (286), que se materializa al confirmar (288), con el interruptor en cualquier posición.
+  // Lo que se exige son esas DEPENDENCIAS (no el interruptor): si faltan, se rechaza ANTES de numerar —nunca se marca activo ni se crea una comisión exigible—.
+  if (registraComisionPvp && tenant !== "minorista") {
+    const { data: faltan, error: eDep } = await createAdminClient().rpc("p97_dependencias_comision_faltantes"); // identidad:n/a — consulta de esquema (dependencias de la 286) antes de numerar; no toca tablas de contrato
+    const sinFuncion = !!eDep && /PGRST202|42883|Could not find the function|does not exist/i.test(`${eDep.code ?? ""} ${eDep.message ?? ""}`);
+    if (eDep && !sinFuncion) {
+      elevarEstadoFlujo(estado, "error");
+      return { ok: false, error: "No se pudieron verificar las dependencias de la comisión B2B. Inténtalo de nuevo." };
+    }
+    if (sinFuncion || faltan) {
+      const detalle = sinFuncion ? "falta la migración 286 (plan de comisión)" : String(faltan);
+      return _rechazarValidacion({ ok: false, error: `No se puede crear este contrato B2B: nace pendiente y su comisión necesita dependencias que faltan (${detalle}). No se creó nada.` });
+    }
+  }
+
   const numRes = await medir("numero_contrato", () => siguienteNumeroContrato(tenant), (r) => (r.ok ? "ok" : "error"));
   if (!numRes.ok) {
     // Fallo TÉCNICO bloqueante (el RPC de numeración falló) — nunca
@@ -568,12 +615,20 @@ async function crearContratoInterno(
     return { ok: false, error: numRes.error };
   }
   const numero = numRes.numero;
+  // 287: ticket de la reserva del consecutivo (nulo salvo que sea un DTM reutilizado); el trigger de `ventas` lo valida y lo descarta.
+  const reservaToken = numRes.reservaToken ?? null;
 
 
   // 2. Crear la venta (cabecera del contrato) — estampada con la agencia activa.
   const _tVenta0 = performance.now();
+  // #75: la identidad nace en el propio INSERT. El uid se fija aquí (en vez de pedir RETURNING) porque el rol `venta` puede insertar pero no leer `ventas`
+  // (migración 144): un `.select()` posterior fallaría por RLS para él. Todo lo que se escribe después declara `idc`.
+  const contratoUid = randomUUID();
+  const idc = identidadDe(numero, contratoUid);
   const { error: ve } = await sb.from("ventas").insert({
     numero_contrato: numero,
+    reserva_token: reservaToken,
+    contrato_uid: contratoUid,
     tenant,
     cliente: input.cliente.trim(),
     destino: oNull(input.destino),
@@ -583,7 +638,8 @@ async function crearContratoInterno(
     pax,
     precio_venta: precioVenta,
     impuesto: bnc,
-    estado: "activo",
+    // 288 (#75): Mayorista nace PENDIENTE como todo contrato (información preparada; las obligaciones nacen al confirmar). Minorista conserva su estado «activo» (fuera del alcance de #75).
+    estado: tenant === "minorista" ? "activo" : "pendiente",
     // Solo empaquetado/dinámico (manual) pueden ir en USD; negociado sigue su producto (COP).
     moneda: monedaContrato,
     ...(!negociado
@@ -618,6 +674,10 @@ async function crearContratoInterno(
     // sigue guardando para el documento y como respaldo de los contratos
     // viejos, pero la pertenencia en el portal B2B se resuelve por este id.
     aliado_id: tipoVenta !== "interno" ? input.aliadoId ?? null : null,
+    // #97: PVP B2B asistido → modalidad comisionable (el comprador paga el PVP; la comisión del aliado queda pendiente).
+    ...(planPvp ? { modo_compra: "comisionable", comision_b2b: planPvp.comision, comision_estado: planPvp.comisionEstado } : {}),
+    // Negociado B2B: 'pendiente' hasta que los costos negociados estén copiados (no se presenta como completo un proceso a medias).
+    ...(negociadoB2B ? { financiero_estado: "pendiente" } : {}),
     cliente_documento: oNull(input.clienteDocumento),
     ...(tipoCliente.tipo && { cliente_tipo_documento: tipoCliente.tipo }),
     cliente_telefono: oNull(input.clienteTelefono),
@@ -637,6 +697,8 @@ async function crearContratoInterno(
     return { ok: false, error: MSG_ERROR_GUARDAR_CONTRATO };
   }
 
+  // Clientes de TODO lo que sigue al INSERT: declaran la identidad del contrato recién creado.
+  sb = await createClient(idc);
   // 3. Tablas hijas — 5 inserts secuenciales (pasajeros/hoteles/vuelos/
   // servicios/items), medidos como un solo grupo (etapa=insert_hijas): no se
   // reordenan ni paralelizan sin antes demostrar sus dependencias (ninguna
@@ -660,7 +722,7 @@ async function crearContratoInterno(
     registrarEtapa("crear_contrato", flujoId, "insert_hijas", Math.round(performance.now() - _tHijas0), "error");
     registrarErrorTecnico("crear_contrato", flujoId, "insert_hijas", detalle, error);
     elevarEstadoFlujo(estado, "error");
-    const rev = await revertirContratoManual(numero, tenant);
+    const rev = await revertirContratoManual(idc, numero, tenant);
     if (rev.ok) return { ok: false as const, error: MSG_ERROR_GUARDAR_CONTRATO };
     registrarErrorTecnico("crear_contrato", flujoId, "insert_hijas", "reversion_fallida", rev.error);
     return { ok: false as const, error: `${MSG_ERROR_GUARDAR_CONTRATO} El contrato ${numero} quedó creado a medias y no se pudo deshacer automáticamente: revísalo antes de volver a intentarlo.` };
@@ -701,7 +763,7 @@ async function crearContratoInterno(
     }
     const { data: { user: actorPasajeros } } = await ctx.sb.auth.getUser();
     if (!actorPasajeros) return _errorHijas("sin_usuario_para_pasajeros", null);
-    const admin = createAdminClient();
+    const admin = createAdminClient(idc);
     const payloadPasajeros = payloadGuardarPasajeros(
       input.pasajeros.map((p, i) => ({
         nombre: `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim(),
@@ -849,7 +911,7 @@ async function crearContratoInterno(
     if (!neto.ok) {
       elevarEstadoFlujo(estado, "error");
       registrarErrorTecnico("crear_contrato", flujoId, "neto_manual", "error_aplicar_neto", neto.error);
-      const rev = await revertirContratoManual(numero, tenant);
+      const rev = await revertirContratoManual(idc, numero, tenant);
       if (rev.ok) {
         return { ok: false, error: `No se pudo registrar el contrato en NETO (${neto.error}), así que no se creó. Revisa los datos e inténtalo de nuevo.` };
       }
@@ -857,6 +919,23 @@ async function crearContratoInterno(
       return {
         ok: false,
         error: `No se pudo registrar el contrato en NETO (${neto.error}) y tampoco se pudo deshacer el contrato ${numero} automáticamente (${rev.error ?? "motivo desconocido"}). Quedó como PVP con la comisión por definir: revísalo antes de volver a intentarlo.`,
+      };
+    }
+  }
+
+  // #97: PVP B2B — comisión del ALIADO (nunca del asesor interno) registrada una sola vez por la RPC 205 (rechaza duplicados y
+  // serializa con FOR UPDATE). Si falla se deshace el contrato: nunca queda B2B sin comisión ni a medias.
+  if (!planNeto && registraComisionPvp) {
+    const com = await registrarComisionReserva(sb, numero, input.aliadoId as number);
+    if (!com.ok) {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("crear_contrato", flujoId, "comision_pvp", "error_comision_pvp", com.error);
+      const rev = await revertirContratoManual(idc, numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok
+          ? `${com.error} El contrato no se creó; revisa los datos e inténtalo de nuevo.`
+          : `${com.error} Tampoco se pudo deshacer el contrato ${numero} (${rev.error ?? "motivo desconocido"}): revísalo antes de usarlo.`,
       };
     }
   }
@@ -917,9 +996,9 @@ async function crearContratoInterno(
     let provMap = new Map<string, { aplica_retencion: boolean | null; pct_retencion: number | null }>();
     if (cxpRows.length) {
       const nombres = [...new Set(cxpRows.map((r) => r.proveedor))];
-      const { data: provs, error: provsError } = await createAdminClient().from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
+      const { data: provs, error: provsError } = await createAdminClient(idc).from("proveedores").select("nombre, aplica_retencion, pct_retencion").in("nombre", nombres);
       if (provsError) {
-        const rev = await revertirContratoIncompleto({ rpc: rpcFinancieroManual }, numero, tenant);
+        const rev = await revertirContratoIncompleto({ rpc: (fn, a) => rpcFinancieroManual(idc, fn, a) }, numero, tenant);
         return fallarFinanciero(rev.ok
           ? "No se pudo leer el catálogo de proveedores, así que el contrato no se creó. Inténtalo de nuevo."
           : `No se pudo leer el catálogo de proveedores y tampoco se pudo deshacer el contrato ${numero} (${rev.error ?? "motivo desconocido"}). Quedó sin abonos hasta revisarlo.`, provsError);
@@ -946,8 +1025,8 @@ async function crearContratoInterno(
       costo_hotel: costoHotelManual, costo_aereo: costoAereoManual, costo_asistencia: costoAsistenciaManual,
       costo_receptivo: costoReceptivoManual, otros_costos: otrosCostosManual,
     };
-    const fin = await registrarFinancieroContrato(depsFinancieroManual(numero, tenant, hoyCxP), {
-      numeroContrato: numero, tenant, costos, cxp, fecha: hoyCxP,
+    const fin = await registrarFinancieroContrato(depsFinancieroManual(idc, numero, tenant, hoyCxP), {
+      numeroContrato: numero, tenant, costos, cxp, fecha: hoyCxP, contratoUid,
     });
     if (!fin.ok) return fallarFinanciero(fin.error, fin.error);
     if (fin.avisos.length) {
@@ -971,13 +1050,16 @@ async function crearContratoInterno(
   // creación del contrato. La diferencia es que la MÉTRICA ya no dice "ok"
   // a ciegas: "parcial" si algún paso individual devolvió `error` sin lanzar
   // excepción (el patrón normal del cliente Supabase), "error" si entró al
-  // catch (una excepción real, ej. `createAdminClient()` sin llave configurada).
+  // catch (una excepción real, ej. `createAdminClient(idc)` sin llave configurada).
   let _resultadoAdmin: ResultadoEtapa = "ok";
+  // #97: costos realmente copiados al contrato (null = no se copiaron) y el motivo si falló; solo gobiernan el cierre del negociado B2B.
+  let costosCopiados: CostosContrato | null = null;
+  let falloCopia: string | null = requiereCopiaCostos ? "los costos del paquete no se copiaron" : null;
   if ((esNegociado && input.paqueteId) || (input.tipoPaquete === "bloqueo" && input.bloqueoId)) {
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       _huboBloqueAdmin = true;
       try {
-        const admin = createAdminClient();
+        const admin = createAdminClient(idc);
 
         // 1) Copiar costos negociados del paquete a la venta (ocultos al asesor)
         if (esNegociado && input.paqueteId) {
@@ -987,9 +1069,11 @@ async function crearContratoInterno(
             .eq("paquete_id", input.paqueteId)
             .maybeSingle();
           if (costosError) {
+            falloCopia = "no se pudieron leer los costos del paquete";
             _resultadoAdmin = "parcial";
             registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_consulta_costos", costosError);
           }
+          if (!costos && !costosError) falloCopia = "el paquete no tiene costos negociados configurados";
           if (costos) {
             const { error: updateError } = await admin
               .from("ventas")
@@ -1002,8 +1086,15 @@ async function crearContratoInterno(
               })
               .eq("numero_contrato", numero);
             if (updateError) {
+              falloCopia = "no se pudieron guardar los costos en el contrato";
               _resultadoAdmin = "parcial";
               registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "error_update_costos", updateError);
+            } else {
+              falloCopia = null;
+              costosCopiados = {
+                costo_hotel: Number(costos.costo_hotel) || 0, costo_aereo: Number(costos.costo_aereo) || 0, costo_receptivo: Number(costos.costo_receptivo) || 0,
+                costo_asistencia: Number(costos.costo_asistencia) || 0, otros_costos: Number(costos.otros_costos) || 0,
+              };
             }
           }
         }
@@ -1019,6 +1110,7 @@ async function crearContratoInterno(
         // administrativo (comportamiento histórico sin cambios) — pero la
         // métrica SÍ debe decir "error", nunca "ok".
         _resultadoAdmin = "error";
+        if (requiereCopiaCostos) falloCopia = "error inesperado al copiar los costos del paquete";
         registrarErrorTecnico("crear_contrato", flujoId, "negociado_admin", "excepcion", e);
       }
     }
@@ -1028,6 +1120,27 @@ async function crearContratoInterno(
     // Best-effort (oculto al asesor): un fallo aquí nunca bloquea el
     // contrato, pero SÍ debe elevar el TOTAL a "parcial" (nunca "ok" a ciegas).
     if (_resultadoAdmin !== "ok") elevarEstadoFlujo(estado, "parcial");
+  }
+
+  // #97: cierre del negociado B2B. Solo con los costos YA copiados (o sin paquete que copiar) se marca el financiero completo; si no, el contrato se
+  // deshace por completo (comisión, sillas, hijas) y se dice por qué. Nunca queda 'completo' con costos faltantes ni 'pendiente' sin avisar.
+  if (negociadoB2B) {
+    const deshacer = async (motivo: string): Promise<CrearContratoResult> => {
+      elevarEstadoFlujo(estado, "error");
+      registrarErrorTecnico("crear_contrato", flujoId, "cierre_negociado", "error_cierre_negociado", motivo);
+      const rev = await revertirContratoManual(idc, numero, tenant);
+      return {
+        ok: false,
+        error: rev.ok
+          ? `No se pudo crear el contrato B2B negociado: ${motivo}. No se creó nada (sin comisión ni sillas asignadas); inténtalo de nuevo o avisa a administración.`
+          : `No se pudo crear el contrato B2B negociado (${motivo}) y tampoco se pudo deshacer el contrato ${numero} (${rev.error ?? "motivo desconocido"}). Quedó pendiente y sin abonos: avisa a administración.`,
+      };
+    };
+    if (falloCopia) return deshacer(falloCopia);
+    const fin = await registrarFinancieroContrato(depsFinancieroManual(idc, numero, tenant, fechaElegidaONegocio(input.fechaEmision)), {
+      numeroContrato: numero, tenant, costos: costosCopiados ?? {}, cxp: [], fecha: fechaElegidaONegocio(input.fechaEmision),
+    });
+    if (!fin.ok) return deshacer(`no se pudo cerrar el registro financiero (${fin.error})`);
   }
 
   revalidatePath("/dashboard/contratos");
@@ -1058,7 +1171,8 @@ export type VentaEditInput = {
 
 export async function actualizarVenta(
   numero: string,
-  input: VentaEditInput
+  input: VentaEditInput,
+  identidad: IdentidadContrato
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!input.cliente.trim()) return { ok: false, error: "El nombre del cliente es obligatorio." };
   const tipoCliente = tipoDocumentoCliente(input.clienteTipoDocumento, input.clienteDocumento);
@@ -1067,7 +1181,8 @@ export async function actualizarVenta(
   if (!Number.isFinite(precioVenta) || precioVenta < 0) return { ok: false, error: "El precio de venta debe ser un número ≥ 0." };
   const pax = Math.trunc(Number(input.pax));
   if (!Number.isFinite(pax) || pax < 1) return { ok: false, error: "La cantidad de pasajeros debe ser al menos 1." };
-  const sb = await createClient();
+  const id = parseIdentidad(identidad);
+  const sb = await createClient(id);
   // #30: un contrato NETO no cambia de modalidad ni de importes después de
   // emitido. Pasarlo a "interno" (B2C) dejaría un precio con la comisión del
   // aliado descontada en una venta directa; mover `precio_venta` lo
@@ -1127,7 +1242,7 @@ export async function actualizarVenta(
       updated_at: new Date().toISOString(),
     })
     .eq("numero_contrato", numero);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };
 }
@@ -1139,7 +1254,7 @@ export async function actualizarVenta(
 // §6.8). La confirmación (venta + sillas) es UNA transacción de la base
 // (`confirmar_venta`, migración 197, con la RLS de quien llama): o se aplica
 // entera o no cambia nada.
-async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string): Promise<{ ok: true } | { ok: false; error: string }> {
+async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>>, numeroContrato: string, id: IdentidadContrato): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: venta, error: ventaError } = await sb
     .from("ventas")
     .select("estado, precio_venta, tipo_paquete, moneda, financiero_estado, moneda_cobro, trm_cobro, total_cobro")
@@ -1158,26 +1273,29 @@ async function recalcularEstadoAbono(sb: Awaited<ReturnType<typeof createClient>
     await sb.from("ventas").update({ trm_contrato: totalCop / totalAbonado }).eq("numero_contrato", numeroContrato);
   }
 
-  const { data: cfg } = await sb.from("config_cobros").select("pct_abono").eq("tipo_paquete", venta?.tipo_paquete ?? "").maybeSingle();
-  const pctMin = cfg?.pct_abono ?? 0.3;
-  const alcanzaMinimo = totalAbonado >= cobro.total * pctMin;
-  if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente" && alcanzaMinimo) {
-    const { error: eConf } = await sb.rpc("confirmar_venta", { p_numero: numeroContrato });
+  // Parte 3 (#75): UNA sola regla del mínimo, decidida por la BASE (NETO aliado = total NETO; condición congelada; % histórico solo sin condiciones). Antes esta función
+  // aplicaba su propio 30 % (config_cobros) aparte de la regla que muestran la pantalla y el documento. Misma autorización que confirmar a mano (RPC INVOKER).
+  if (venta?.estado === "pendiente" && venta.financiero_estado !== "pendiente") {
+    const { data: rc, error: eConf } = await sb.rpc("reintentar_confirmacion_pago", { p_numero: numeroContrato });
     if (eConf) return { ok: false, error: mensajeErrorRpc(eConf).error };
-    // Respaldo: generar cuentas por pagar desde los costos si aún no existen.
-    await asegurarCuentasPorPagar(numeroContrato);
+    if ((rc as { confirmada?: boolean } | null)?.confirmada === true) {
+      await postearAsientosDeObligaciones(numeroContrato, idsCxpMaterializadas(rc), id);   // 288: asiento de las CxP que la confirmación materializó
+      // Respaldo: generar cuentas por pagar desde los costos si aún no existen (contratos históricos).
+      await asegurarCuentasPorPagar(numeroContrato, id);
+    }
   }
   return { ok: true };
 }
 
 // `confirmacion` solo viene con ok=false cuando el contrato ya está cubierto: no se escribió nada y la pantalla
 // debe pedir confirmación y reintentar con `confirmarExcedente=true`.
-export type ResultadoAbono = { ok: boolean; error?: string; confirmacion?: DatosExcedente };
+// confirmacionPendiente: el abono QUEDÓ registrado pero la confirmación del contrato falló (288): la pantalla debe decirlo, no permitir registrarlo de nuevo y reintentar con la MISMA operación.
+export type ResultadoAbono = { ok: boolean; error?: string; confirmacion?: DatosExcedente; confirmacionPendiente?: boolean };
 
 const UUID_OPERACION = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type RegistroAbonoSql =
-  | { estado: "registrado"; abono_id: number; asiento_error?: string }
-  | { estado: "ya_registrado"; abono_id: number; asiento_error?: string }
+  | { estado: "registrado"; abono_id: number; asiento_error?: string; confirmacion?: unknown; confirmacion_error?: string }
+  | { estado: "ya_registrado"; abono_id: number; asiento_error?: string; confirmacion?: unknown; confirmacion_error?: string }
   | { estado: "requiere_confirmacion"; contrato: string; total: number; pagado: number; nuevo: number; moneda: "COP" | "USD" };
 
 // El registro lo decide UNA RPC de la base (migración 248, `registrar_abono`) con la venta bloqueada: la comprobación
@@ -1188,12 +1306,14 @@ export async function registrarAbono(
   valor: number,            // monto PAGADO en COP (en USD se convierte con la TRM)
   formaPago: string,
   referencia: string,
-  trmInput?: number,        // TRM del día (obligatoria si el contrato es USD)
-  fecha?: string,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
-  confirmarExcedente?: boolean, // pago adicional intencional sobre un contrato ya cubierto
-  operacionId?: string,     // idempotencia: misma operación = mismo abono (doble pulsación / reintento)
+  trmInput: number | undefined,        // TRM del día (obligatoria si el contrato es USD)
+  fecha: string | undefined,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
+  confirmarExcedente: boolean | undefined, // pago adicional intencional sobre un contrato ya cubierto
+  operacionId: string | undefined,     // idempotencia: misma operación = mismo abono (doble pulsación / reintento)
+  identidad: IdentidadContrato,        // #75: el contrato que la pantalla abrió (último argumento, obligatorio)
 ): Promise<ResultadoAbono> {
-  const sb = await createClient();
+  const id = parseIdentidad(identidad);
+  const sb = await createClient(id);
   const { data: venta, error: ventaError } = await sb
     .from("ventas")
     .select("estado, precio_venta, tipo_paquete, moneda, tenant, financiero_estado, moneda_cobro, trm_cobro, total_cobro")
@@ -1223,8 +1343,8 @@ export async function registrarAbono(
     p_fecha: fechaElegidaONegocio(fecha),
     p_confirmar: confirmarExcedente === true,
     p_operacion: operacionId ?? null,
-  });
-  if (!r.ok) return { ok: false, error: r.error };
+  }, id);
+  if (!r.ok) return { ok: false, error: mensajeSiIdentidad({ message: r.error, code: r.code }) ?? r.error };
 
   if (r.data.estado === "requiere_confirmacion") {
     // Pago adicional: la base ya vio el contrato cubierto con los abonos vigentes y NO escribió nada.
@@ -1234,10 +1354,16 @@ export async function registrarAbono(
   }
   // «ya_registrado» (reintento de la misma operación) también trae el estado contable real: la base reintentó el asiento.
   const errAsiento = r.data.asiento_error ?? null;
-  const conf = await recalcularEstadoAbono(sb, numeroContrato);
+  // 288 (#75): la base decide la confirmación por pago EN LA MISMA transacción que el abono (confirmar + materializar son todo-o-nada; el abono nunca se pierde).
+  if (r.data.confirmacion) await postearAsientosDeObligaciones(numeroContrato, idsCxpMaterializadas(r.data.confirmacion), id);
+  if (r.data.confirmacion_error) {
+    revalidatePath(`/dashboard/contratos/${numeroContrato}`);
+    return { ok: false, confirmacionPendiente: true, error: `Abono registrado; confirmación pendiente: ${r.data.confirmacion_error}` };
+  }
+  const conf = await recalcularEstadoAbono(sb, numeroContrato, id);
   if (!conf.ok) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
-    return { ok: false, error: `El abono quedó registrado, pero la venta no se pudo confirmar: ${conf.error}` };
+    return { ok: false, confirmacionPendiente: true, error: `Abono registrado; confirmación pendiente: ${conf.error}` };
   }
   if (errAsiento) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
@@ -1255,12 +1381,14 @@ export async function registrarAbono(
 // para cuando el asesor se equivoca al digitar y no quiere crear un segundo
 // abono para "cuadrar" el saldo.
 export async function actualizarAbono(
-  id: number,
+  abonoId: number,
   numeroContrato: string,
-  input: { valor: number; fecha: string; formaPago: string; referencia: string; trmInput?: number }
+  input: { valor: number; fecha: string; formaPago: string; referencia: string; trmInput?: number },
+  identidad: IdentidadContrato
 ): Promise<{ ok: boolean; error?: string }> {
   if (!(input.valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0." };
-  const sb = await createClient();
+  const id = parseIdentidad(identidad);
+  const sb = await createClient(id);
   const { data: venta } = await sb.from("ventas").select("moneda, tenant, precio_venta, moneda_cobro, trm_cobro, total_cobro").eq("numero_contrato", numeroContrato).maybeSingle();
   const esUSD = cobroDeVenta(venta).moneda === "USD";
   const montoCop = Math.max(0, Number(input.valor) || 0);
@@ -1276,11 +1404,11 @@ export async function actualizarAbono(
     fecha_abono: fechaAbono,
     forma_pago: input.formaPago || null,
     referencia: input.referencia || null,
-  }).eq("id", id);
-  if (error) return { ok: false, error: error.message };
+  }).eq("id", abonoId);
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
 
-  const errAsiento = await postearAsientoAbono(sb, id, (venta as { tenant?: string } | null)?.tenant ?? undefined);
-  const conf = await recalcularEstadoAbono(sb, numeroContrato);
+  const errAsiento = await postearAsientoAbono(sb, abonoId, (venta as { tenant?: string } | null)?.tenant ?? undefined, id);
+  const conf = await recalcularEstadoAbono(sb, numeroContrato, id);
   if (!conf.ok) {
     revalidatePath(`/dashboard/contratos/${numeroContrato}`);
     return { ok: false, error: `El abono quedó actualizado, pero la venta no se pudo confirmar: ${conf.error}` };
@@ -1300,19 +1428,20 @@ export async function actualizarAbono(
 // Anula un abono (con o sin asiento contable) en UNA transacción de la base (migración 248, RPC `anular_abono`):
 // retira el asiento, borra el abono y deja la huella con actor y motivo. Las guardas de la 208 siguen activas.
 // Contrato, agencia y rol los revalida la RPC contra `usuarios`; aquí solo se deriva el actor de la sesión.
-export async function anularAbono(id: number, numeroContrato: string, motivo: string): Promise<{ ok: boolean; error?: string }> {
-  const sb = await createClient();
+export async function anularAbono(abonoId: number, numeroContrato: string, motivo: string, identidad: IdentidadContrato): Promise<{ ok: boolean; error?: string }> {
+  const id = parseIdentidad(identidad);
+  const sb = await createClient(id);
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "Sesión no válida." };
   if (!motivo || motivo.trim().length < 3) return { ok: false, error: "Indica el motivo de la anulación (mínimo 3 caracteres)." };
   const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", numeroContrato).maybeSingle();
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
   const r = await rpcFinanciero<{ estado: string }>("anular_abono", {
-    p_abono_id: id, p_numero: numeroContrato, p_tenant: (venta.tenant as string | null) ?? "mayorista", p_actor: user.id, p_motivo: motivo.trim(),
-  });
-  if (!r.ok) return { ok: false, error: r.error };
+    p_abono_id: abonoId, p_numero: numeroContrato, p_tenant: (venta.tenant as string | null) ?? "mayorista", p_actor: user.id, p_motivo: motivo.trim(),
+  }, id);
+  if (!r.ok) return { ok: false, error: mensajeSiIdentidad({ message: r.error, code: r.code }) ?? r.error };
   // La TRM efectiva (USD) se promedia sobre los abonos que quedan; el resultado de la confirmación no cambia la anulación ya hecha.
-  await recalcularEstadoAbono(sb, numeroContrato);
+  await recalcularEstadoAbono(sb, numeroContrato, id);
   revalidatePath(`/dashboard/contratos/${numeroContrato}`);
   revalidatePath("/dashboard/cartera");
   revalidatePath("/dashboard/contabilidad/libro-diario");
@@ -1326,9 +1455,11 @@ export async function anularAbono(id: number, numeroContrato: string, motivo: st
 // casillas Tours/Asistencia. Solo aplica a contratos en estado 'pendiente'.
 export async function actualizarServiciosContrato(
   numeroContrato: string,
-  serviciosIds: number[]
+  serviciosIds: number[],
+  identidad: IdentidadContrato
 ): Promise<{ ok: boolean; error?: string }> {
-  const sb = await createClient();
+  const id = parseIdentidad(identidad);
+  const sb = await createClient(id);
   const { data: venta } = await sb
     .from("ventas")
     .select("estado, pax, precio_venta, paquete_armado_id, fecha_salida, fecha_regreso, comision_estado")
@@ -1392,13 +1523,12 @@ export async function actualizarServiciosContrato(
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { ok: false, error: "No se pueden editar los servicios: falta la configuración del servidor para actualizar costos y cuentas por pagar. Contacta a un administrador." };
   }
-  const admin = createAdminClient();
+  const admin = createAdminClient(id);
   const nochesStay = venta.fecha_salida && venta.fecha_regreso ? noches(venta.fecha_salida, venta.fecha_regreso) : 1;
 
   // Objetivo: costo NETO por servicio seleccionado con la MISMA función que usa la CxP del carrito (`liquidarCostoTour`: vigencia + rango de pasajeros + suplementos
   // por horario, sin «GENERAL») + su proveedor real del catálogo.
   const objetivo: ServicioObjetivo[] = [];
-  let costoReceptivo = 0;
   for (const idSrv of serviciosIds) {
     let liq: Awaited<ReturnType<typeof liquidarCostoTour>>;
     try {
@@ -1409,7 +1539,6 @@ export async function actualizarServiciosContrato(
     }
     if (!liq) continue; // ya no está en el paquete
     const srv = liq.srv;
-    costoReceptivo += liq.costoNeto;
     const categoria = normalizarCategoriaServicio(srv?.categoria);
     objetivo.push({
       servicioId: idSrv,
@@ -1453,8 +1582,21 @@ export async function actualizarServiciosContrato(
     for (const r of pagos ?? []) conMovimiento.add(r.cuenta_por_pagar_id);
     for (const r of rets ?? []) conMovimiento.add(r.cuenta_por_pagar_id);
   }
+  // 288 (#75): este contrato está PENDIENTE → sus obligaciones nuevas viven como PREVISTAS (no son CxP exigibles). Entran al mismo plan con id NEGATIVO
+  // (-id de la prevista) para distinguirlas de las CxP reales de contratos pendientes anteriores a la 288 (que se reconcilian como siempre, sin tocar históricos).
+  const { data: prevFilas } = await admin
+    .from("contrato_obligaciones_previstas")
+    .select("id, payload")
+    .eq("numero_contrato", numeroContrato).eq("clase", "cxp").is("materializada_en", null);
+  const prevComoCxp = (prevFilas ?? [])
+    .map((p) => ({ id: -p.id, payload: (p.payload ?? {}) as { servicio_id?: number | string | null; valor_total?: number | string | null } }))
+    .filter((p) => p.payload.servicio_id != null)
+    .map((p) => ({ id: p.id, servicio_id: Number(p.payload.servicio_id), valor_total: Number(p.payload.valor_total) || 0, tieneMovimientos: false }));
   const plan = planReconciliacionCxpServicios(
-    (cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id) })),
+    [
+      ...(cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id) })),
+      ...prevComoCxp,
+    ],
     objetivo
   );
   // Fallo cerrado ANTES de tocar nada: quitar un servicio cuya cuenta ya
@@ -1481,19 +1623,10 @@ export async function actualizarServiciosContrato(
       oldServiceIds.push(it.id);
     }
   }
-  if (oldServiceIds.length) await sb.from("contrato_items").delete().in("id", oldServiceIds);
-  if (nuevos.length) {
-    await sb.from("contrato_items").insert(
-      nuevos.map((s, i) => ({
-        numero_contrato: numeroContrato,
-        descripcion: `Servicio · ${s.nombre}`,
-        adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0, orden: 100 + i,
-      }))
-    );
-  }
-
+  // 288 (#75): NADA se escribe hasta tenerlo todo calculado; la aplicación (ítems + precio + costos/resumen + obligaciones) es UNA transacción
+  // (`pendiente_aplicar_servicios`): o queda todo consistente o se rechaza todo junto.
+  const itemsNuevos = nuevos.map((s, i) => ({ descripcion: `Servicio · ${s.nombre}`, adultos: 1, ninos: 0, tarifa_adulto: s.precio, tarifa_nino: 0, orden: 100 + i }));
   const nuevoPrecio = Math.max(0, (Number(venta.precio_venta) || 0) - oldTotal + nuevoTotal);
-  await sb.from("ventas").update({ precio_venta: nuevoPrecio }).eq("numero_contrato", numeroContrato);
 
   // ── Aplicar: costos, resumen y CxP reconciliadas ────────────────────────
   // El plan ya se validó arriba (nada bloqueado), así que acá solo se
@@ -1526,11 +1659,6 @@ export async function actualizarServiciosContrato(
       incluido: e.incluido, costoNeto: 0, proveedorId: null,
     }))
   );
-  await admin.from("ventas").update({
-    costo_receptivo: costoReceptivo,
-    tours_traslados: resumen.toursTraslados,
-    asistencia_medica: resumen.asistenciaMedica,
-  }).eq("numero_contrato", numeroContrato);
 
   // CxP: insertar las nuevas, ajustar el valor de las que siguen y eliminar
   // las de servicios quitados (ninguna con movimientos — ya se bloqueó
@@ -1541,37 +1669,42 @@ export async function actualizarServiciosContrato(
   const hoyCxp = fechaNegocio();
   const OBS_EDIT = "Generado automáticamente al editar los servicios del contrato";
 
-  for (const del of plan.eliminar) {
-    const { error } = await admin.from("cuentas_por_pagar").delete().eq("id", del.id);
-    if (error) return { ok: false, error: "No se pudieron actualizar las cuentas por pagar del contrato. Inténtalo de nuevo." };
-    await eliminarAsientoCxP(del.id);
+  // 288 (#75): lo PREVISTO (ids negativos) y los servicios nuevos son obligaciones previstas — no CxP exigibles hasta confirmar; las CxP reales (ids positivos)
+  // solo existen en pendientes anteriores a la 288 y se ajustan en la MISMA transacción. Todo junto con los ítems, el precio y el resumen.
+  const eliminarPrev = plan.eliminar.filter((d) => d.id < 0).map((d) => -d.id);
+  const actualizarPrev = plan.actualizar.filter((u) => u.id < 0).map((u) => ({ id: -u.id, valor_total: u.valor, servicio: u.nombre, tipo_proveedor: u.tipoProveedor, proveedor: u.proveedor }));
+  const insertarPrev = plan.insertar.map((o) => ({
+    servicio_id: o.servicioId, proveedor: o.proveedor, tipo_proveedor: o.tipoProveedor, servicio: o.nombre,
+    valor_total: Math.max(0, o.costoNeto), fecha_obligacion: hoyCxp,
+    fecha_vencimiento: (ventaTenant?.plazo as string | null) ?? (ventaTenant?.fecha_salida as string | null) ?? null,
+    aplica_retencion: o.aplicaRetencion, pct_retencion: o.pctRetencion, observaciones: OBS_EDIT,
+  }));
+  const eliminarCxp = plan.eliminar.filter((d) => d.id > 0);
+  const actualizarCxp = plan.actualizar.filter((u) => u.id > 0);
+  const { data: aplicado, error: errAplicar } = await admin.rpc("pendiente_aplicar_servicios", {
+    p_numero: numeroContrato,
+    p_items_borrar: oldServiceIds,
+    p_items_nuevos: itemsNuevos as unknown as Json,
+    // Cada costo de servicio en la columna de su CxP (asistencia → costo_asistencia). Las dos columnas se escriben siempre: el conjunto editado es completo.
+    p_ventas: { precio_venta: nuevoPrecio, ...costosServicioPorColumna(objetivo.map((o) => ({ tipoCxp: o.tipoProveedor, costo: o.costoNeto }))), tours_traslados: resumen.toursTraslados, asistencia_medica: resumen.asistenciaMedica } as unknown as Json,
+    p_prev_eliminar: eliminarPrev,
+    p_prev_actualizar: actualizarPrev as unknown as Json,
+    p_prev_insertar: insertarPrev as unknown as Json,
+    p_cxp_eliminar: eliminarCxp.map((d) => d.id),
+    p_cxp_actualizar: actualizarCxp.map((u) => ({ id: u.id, valor_total: u.valor, servicio: u.nombre, tipo_proveedor: u.tipoProveedor, proveedor: u.proveedor })) as unknown as Json,
+  });
+  if (errAplicar || (aplicado as { aplicado?: boolean } | null)?.aplicado !== true) {
+    return { ok: false, error: "No se pudieron actualizar los servicios del contrato: no se guardó ningún cambio. Inténtalo de nuevo." };
   }
-  for (const upd of plan.actualizar) {
-    const { error } = await admin.from("cuentas_por_pagar").update({ valor_total: upd.valor, servicio: upd.nombre, tipo_proveedor: upd.tipoProveedor, proveedor: upd.proveedor }).eq("id", upd.id);
-    if (error) return { ok: false, error: "No se pudieron actualizar las cuentas por pagar del contrato. Inténtalo de nuevo." };
+  // Asientos de las CxP REALES de pendientes anteriores a la 288 (fuera de la transacción: best-effort e idempotente por `cxp:{id}`; el reconciliador repone fallos).
+  for (const del of eliminarCxp) await eliminarAsientoCxP(del.id);
+  for (const upd of actualizarCxp) {
     await postearAsientoCxP({
       cuentaId: upd.id, numeroContrato, tipoProveedor: upd.tipoProveedor, proveedor: upd.proveedor,
       servicio: upd.nombre, valorTotal: upd.valor, fecha: hoyCxp, tenant: tenantCxp,
     });
   }
-  if (plan.insertar.length) {
-    const { data: creadas, error } = await admin.from("cuentas_por_pagar").insert(
-      plan.insertar.map((o) => ({
-        numero_contrato: numeroContrato, tenant: tenantCxp, servicio_id: o.servicioId,
-        proveedor: o.proveedor, tipo_proveedor: o.tipoProveedor, servicio: o.nombre,
-        valor_total: Math.max(0, o.costoNeto), moneda: (ventaTenant?.moneda as string | null) ?? "COP",
-        fecha_obligacion: hoyCxp, fecha_vencimiento: (ventaTenant?.plazo as string | null) ?? (ventaTenant?.fecha_salida as string | null) ?? null,
-        aplica_retencion: o.aplicaRetencion, pct_retencion: o.pctRetencion, observaciones: OBS_EDIT,
-      }))
-    ).select("id, tipo_proveedor, proveedor, servicio, valor_total");
-    if (error) return { ok: false, error: "No se pudieron crear las cuentas por pagar de los servicios agregados. Inténtalo de nuevo." };
-    for (const c of creadas ?? []) {
-      await postearAsientoCxP({
-        cuentaId: c.id, numeroContrato, tipoProveedor: c.tipo_proveedor, proveedor: c.proveedor,
-        servicio: c.servicio, valorTotal: Number(c.valor_total) || 0, fecha: hoyCxp, tenant: tenantCxp,
-      });
-    }
-  }
+
   revalidatePath("/dashboard/pagos");
   revalidatePath("/dashboard/contabilidad/libro-diario");
   revalidatePath("/dashboard/contabilidad/libro-auxiliar");
@@ -1588,6 +1721,7 @@ export async function actualizarServiciosContrato(
 // escritura sobre `ventas`): el plan revela el % y la comisión del aliado, y
 // una sesión cualquiera (control_vuelo, por ejemplo, que sí lee `aliados`) no
 // debe obtenerlos por aquí. Prueba: pruebas/contratoManualNeto206.pg.ts (P3).
+// identidad:n/a — solo lectura (vista previa): no escribe ninguna tabla del contrato
 export async function previsualizarNetoContrato(input: {
   tipoVenta: string;
   aliadoId: number | null;

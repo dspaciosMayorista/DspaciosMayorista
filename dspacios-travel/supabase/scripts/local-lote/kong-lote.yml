@@ -1,0 +1,11 @@
+# Gateway LOCAL del lote de mejoras operativas (revisión del dueño). Solo REST y Auth: ningún recorrido usa Storage.
+_format_version: "2.1"
+services:
+  - name: auth
+    url: http://lote-auth:9999/
+    routes: [{ name: auth, strip_path: true, paths: [/auth/v1/] }]
+  - name: rest
+    url: http://lote-rest:3000/
+    routes: [{ name: rest, strip_path: true, paths: [/rest/v1/] }]
+plugins:
+  - name: cors

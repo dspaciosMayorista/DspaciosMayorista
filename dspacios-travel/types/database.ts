@@ -359,6 +359,11 @@ export type Database = {
           financiero_estado: string;
           // Migración 227 (#63): aceptación de oferta COP con TRM que respalda este contrato (NULL = contrato de siempre).
           aceptacion_63_id: number | null;
+          // Migración 287: ticket transitorio de reserva de consecutivo (siempre NULL tras el INSERT).
+          reserva_token: string | null;
+          // Migración 284 (#75): identidad inmutable del contrato (única por vida; se conserva al renumerar) y si nació de un número reutilizado.
+          contrato_uid: string;
+          nacio_de_reuso: boolean;
           // Migración 235 (#90 F): moneda de COBRO (NULL = se cobra en `moneda`). Si difiere de `moneda`, `total_cobro` es el total a cobrar
           // (precio_venta convertido UNA vez con `trm_cobro`, congelado). Léelo siempre con `cobroDeVenta` (lib/finanzas/cobro.ts).
           moneda_cobro: string | null;
@@ -444,6 +449,10 @@ export type Database = {
           cotizacion_id?: number | null;
           financiero_estado?: string;
           aceptacion_63_id?: number | null;
+          // Migración 287: ticket TRANSITORIO de una reserva de consecutivo DTM reutilizado; el trigger lo valida y lo deja en NULL (nunca persiste).
+          reserva_token?: string | null;
+          contrato_uid?: string;
+          nacio_de_reuso?: boolean;
           moneda_cobro?: string | null;
           trm_cobro?: number | null;
           total_cobro?: number | null;
@@ -505,6 +514,13 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      // Migración 288 (#75): obligaciones PREVISTAS de un contrato pendiente (no exigibles); se materializan una vez al confirmar. Solo service_role.
+      contrato_obligaciones_previstas: {
+        Row: { id: number; numero_contrato: string; clase: "cxp"; clave: string; payload: Json; creado_en: string; materializada_en: string | null };
+        Insert: { id?: number; numero_contrato: string; clase: "cxp"; clave: string; payload: Json; creado_en?: string; materializada_en?: string | null };
+        Update: { id?: number; numero_contrato?: string; clase?: "cxp"; clave?: string; payload?: Json; creado_en?: string; materializada_en?: string | null };
+        Relationships: [];
+      };
       contrato_financiero_pendiente: {
         Row: {
           numero_contrato: string;
@@ -515,6 +531,8 @@ export type Database = {
           creado_en: string;
           ultimo_intento_en: string | null;
           ultimo_error: string | null;
+          // Migración 285 (#75): identidad del contrato conservada desde la creación (el cron declara ESTA, no la vigente).
+          contrato_uid: string | null;
         };
         Insert: {
           numero_contrato: string;
@@ -525,6 +543,7 @@ export type Database = {
           creado_en?: string;
           ultimo_intento_en?: string | null;
           ultimo_error?: string | null;
+          contrato_uid?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_financiero_pendiente"]["Insert"]>;
         Relationships: [
@@ -910,6 +929,48 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["meta_ventas_mensual"]["Insert"]>;
+        Relationships: [];
+      };
+      contrato_soportes_pago: {
+        Row: {
+          id: number;
+          numero_contrato: string;
+          tenant: string;
+          path: string;
+          nombre_original: string;
+          mime: string;
+          size_bytes: number;
+          sha256: string;
+          subido_por: string;
+          subido_en: string;
+          vigente: boolean;
+          reemplaza_id: number | null;
+          retirado_en: string | null;
+          retirado_por: string | null;
+          motivo_retiro: "reemplazo" | "retiro" | null;
+          nota_retiro: string | null;
+          archivado_en: string | null;
+        };
+        /** Solo lectura: se escribe únicamente con las funciones soporte_* (migración 281). */
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      avisos: {
+        Row: {
+          id: number;
+          usuario_id: string;
+          tipo: "soporte_pago_nuevo" | "soporte_pago_reemplazado";
+          numero_contrato: string;
+          soporte_id: number | null;
+          creado_en: string;
+          notificado_en: string | null;
+          leido_en: string | null;
+          archivado_en: string | null;
+        };
+        /** Solo lectura: se escribe únicamente con las funciones avisos_* / soporte_* (migración 281). */
+        Insert: never;
+        Update: never;
         Relationships: [];
       };
       cxp_pagos: {
@@ -1461,6 +1522,13 @@ export type Database = {
             columns: ["bloqueo_id"];
             referencedRelation: "bloqueos_vuelo";
             referencedColumns: ["id"];
+          },
+          // #75: permite traer el uid del contrato embebido en la consulta de las sillas (ventas(contrato_uid)).
+          {
+            foreignKeyName: "sillas_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
           }
         ];
       };
@@ -1991,6 +2059,21 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["contrato_items"]["Insert"]>;
         Relationships: [];
       };
+      // #94 (migración 304): resumen de precios del cliente congelado al convertir la cotización. Solo importes de cara al cliente; escribe el servidor (service_role).
+      contrato_resumen_precios: {
+        Row: { numero_contrato: string; resumen: Json; created_at: string };
+        Insert: { numero_contrato: string; resumen: Json; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["contrato_resumen_precios"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "contrato_resumen_precios_numero_contrato_fkey";
+            columns: ["numero_contrato"];
+            isOneToOne: true;
+            referencedRelation: "ventas";
+            referencedColumns: ["numero_contrato"];
+          },
+        ];
+      };
       // Migración 176 (Fase 3F-2): snapshot PRIVADO por habitación física de
       // un contrato Bernalo (neto/bruto/comisión/fuente en `snapshot`, un
       // `SnapshotAlojamiento` completo de `lib/calc/unidadAlojamiento.ts`).
@@ -2150,8 +2233,9 @@ export type Database = {
         Relationships: [];
       };
       hotel_categorias: {
-        Row: { hotel_id: number; categoria_id: number };
-        Insert: { hotel_id: number; categoria_id: number };
+        // descripcion/incluye = migración 303 (#45): texto de la categoría en ESTE hotel.
+        Row: { hotel_id: number; categoria_id: number; descripcion: string | null; incluye: string | null };
+        Insert: { hotel_id: number; categoria_id: number; descripcion?: string | null; incluye?: string | null };
         Update: Partial<Database["public"]["Tables"]["hotel_categorias"]["Insert"]>;
         Relationships: [];
       };
@@ -2164,13 +2248,17 @@ export type Database = {
       hotel_temporadas: {
         // condicion_pago_* = migración 164. hotel_temporadas NO tiene columna de
         // restricción comercial: se deriva 100% implícita (ver lib/cotizacion/condicionPagoCatalogo.ts).
-        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null };
-        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null };
+        Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null;
+          // Migración 300 (#43/#60 entrega 4, PROPUESTA — no aplicada). NULL = promoción existente sin cambios.
+          promo_base_id: number | null; descuento_unidad: string | null; noche_gratis_regla: string | null; dias_promo: number[] | null };
+        Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null;
+          promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null; dias_promo?: number[] | null };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
       hotel_calculadora: {
-        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string };
+        // version: migración 297 (PROPUESTA) — cambia en CADA escritura (trigger); los escritores condicionan por ella.
+        Row: { id: number; hotel_id: number; tipo: string; params: Json; updated_at: string; version: number };
         Insert: { id?: number; hotel_id: number; tipo?: string; params?: Json; updated_at?: string };
         Update: Partial<Database["public"]["Tables"]["hotel_calculadora"]["Insert"]>;
         Relationships: [];
@@ -2360,6 +2448,12 @@ export type Database = {
           // derivó (solo auditoría, nunca se usa en el motor de liquidación).
           precio_final_autoritativo: boolean;
           temporada_base: string | null;
+          // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupo de días de la vigencia;
+          // NULL = todos los días (todo el dato actual). Hoy SIEMPRE NULL: la base rechaza
+          // tarifas con grupo mientras los grupos estén inactivos. `grupo_dias` es la copia
+          // de los días del grupo que fija el trigger (no se escribe desde la app).
+          grupo_id: string | null;
+          grupo_dias: number[] | null;
         };
         Insert: {
           id?: number; hotel_id: number; tipo_habitacion?: string | null; alimentacion?: string | null;
@@ -2370,8 +2464,116 @@ export type Database = {
           edad_infante_min?: number | null; edad_infante_max?: number | null;
           edad_nino_min?: number | null; edad_nino_max?: number | null;
           precio_final_autoritativo?: boolean; temporada_base?: string | null;
+          grupo_id?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifa_hotel"]["Insert"]>;
+        Relationships: [];
+      };
+      // Migración 293 (#43/#60, PROPUESTA — no aplicada). Grupos de días (1 = lunes … 7 = domingo)
+      // de una vigencia. INACTIVOS: `activo` solo admite false (check en la base) hasta que el
+      // motor los soporte; ningún código los lee todavía.
+      // Migración 300 (#43/#60 entrega 4, PROPUESTA — no aplicada). Reglas por grupo de una promoción por noche.
+      // Lectura interna (anon sin acceso); escritura por la RPC promocion_guardar_reglas (o directa, mismos roles).
+      // Migración 301: acumulación y orden de una promoción frente a EBB / Long Stay. Escritura solo por RPC.
+      hotel_promocion_cambio_pendiente: {
+        Row: { promocion_id: number; cambios: Json; base: Json; faltan: string[]; propuesto_por: string | null; propuesto_en: string };
+        Insert: { promocion_id: number; cambios: Json; base: Json; faltan?: string[]; propuesto_por?: string | null; propuesto_en?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_promocion_cambio_pendiente"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_promocion_cambio_pendiente_promocion_id_fkey";
+            columns: ["promocion_id"];
+            isOneToOne: true;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      hotel_promocion_combinacion: {
+        Row: { promocion_id: number; estado: "heredada" | "configurada" | "pendiente"; alternativas: string[]; acumulable_ebb: boolean | null; acumulable_long_stay: boolean | null; orden: string[] | null; decidido_por: string | null; actualizado_en: string };
+        Insert: { promocion_id: number; estado: "heredada" | "configurada" | "pendiente"; alternativas?: string[]; acumulable_ebb?: boolean | null; acumulable_long_stay?: boolean | null; orden?: string[] | null; decidido_por?: string | null; actualizado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_promocion_combinacion"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_promocion_combinacion_promocion_id_fkey";
+            columns: ["promocion_id"];
+            isOneToOne: true;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      hotel_promocion_reglas: {
+        Row: { id: string; promocion_id: number; grupo_id: string | null; valor: number; dias: number[] | null; creado_en: string; actualizado_en: string };
+        Insert: { id?: string; promocion_id: number; grupo_id?: string | null; valor: number; dias?: number[] | null; creado_en?: string; actualizado_en?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_promocion_reglas"]["Insert"]>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_promocion_reglas_promocion_id_fkey";
+            columns: ["promocion_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "hotel_promocion_reglas_grupo_id_fkey";
+            columns: ["grupo_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporada_grupos";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      hotel_temporada_grupos: {
+        Row: {
+          id: string; temporada_id: number; nombre: string; dias: number[];
+          activo: boolean; creado_en: string; actualizado_en: string;
+        };
+        Insert: {
+          id?: string; temporada_id: number; nombre: string; dias: number[];
+          activo?: false; creado_en?: string; actualizado_en?: string;
+        };
+        Update: Partial<Omit<Database["public"]["Tables"]["hotel_temporada_grupos"]["Insert"], "temporada_id">>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_temporada_grupos_temporada_id_fkey";
+            columns: ["temporada_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporadas";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      // Migración 295 (#43/#60 incremento 3, PROPUESTA — no aplicada). PROPUESTA de tarifas por grupo
+      // (inactiva): el motor no la lee. Lectura para internos; escrituras solo por las RPC grupos_dias_*.
+      // Migración 297 (PROPUESTA, número provisional). Bases de la calculadora por grupo de días (#43/#60 3b).
+      // Lectura interna; escrituras solo por la RPC grupos_dias_guardar_calculadora. El motor no la lee.
+      hotel_calculadora_grupo_bases: {
+        // generales: migración 298 (null = usa los generales del hotel).
+        Row: { id: number; grupo_id: string; tipo: string; bases: Json; generales: Json | null; version: number; updated_at: string; updated_by: string | null };
+        Insert: Record<string, never>; // solo por RPC
+        Update: Record<string, never>;
+        Relationships: [
+          {
+            foreignKeyName: "hotel_calculadora_grupo_bases_grupo_id_fkey";
+            columns: ["grupo_id"];
+            isOneToOne: false;
+            referencedRelation: "hotel_temporada_grupos";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      hotel_grupo_tarifa_propuesta: {
+        Row: {
+          id: number; grupo_id: string; tipo_habitacion: string; alimentacion: string;
+          neto_sencilla: number | null; neto_doble: number | null; neto_triple: number | null; neto_multiple: number | null;
+          neto_nino: number | null; neto_nino2: number | null; neto_infante: number | null;
+          nota_infante: string | null; notas: string | null;
+          edad_infante_min: number | null; edad_infante_max: number | null; edad_nino_min: number | null; edad_nino_max: number | null;
+          origen_tarifa_id: number | null; origen_huella: string | null; confirmado_por: string | null; confirmado_en: string;
+        };
+        Insert: Record<string, never>; // solo por RPC
+        Update: Record<string, never>;
         Relationships: [];
       };
       // Migración 203 (PROPUESTA — no aplicada todavía en ningún entorno).
@@ -2715,6 +2917,8 @@ export type Database = {
           procedencia_mixta: boolean;
           // Migración 256: tramos [{desde,hasta}] donde un servicio opcional se ofrece (null = todas las fechas del viaje del paquete).
           fechas_disponibles: Json | null;
+          // Migración 302 (#43/#60 entrega 6): entrada de la estadía que justifica el «desde» de una porción con grupos (salida = entrada + noches).
+          desde_entrada: string | null;
           // Migración 226: precio de un MENOR DE 2 AÑOS (fee de infante del vuelo
           // + servicios con su precio de infante + hotel de la clase del menor).
           // En filas de servicio persona = PVP del infante. NULL = la fila se
@@ -2771,6 +2975,7 @@ export type Database = {
           procedencia_temporadas?: Json | null;
           procedencia_mixta?: boolean;
           fechas_disponibles?: Json | null;
+          desde_entrada?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["tarifario_resultado"]["Insert"]>;
         Relationships: [];
@@ -3325,6 +3530,9 @@ export type Database = {
           asesor: string | null;
           creado_por: string | null;
           numero_contrato: string | null;
+          clave_envio: string | null;
+          huella_envio: string | null;
+          actor_envio: string | null;
           share_token: string;
           // Nullable durante la fase aditiva (migración 153); la 154 la
           // cierra a NOT NULL. Todo INSERT nuevo debe estamparla igual.
@@ -3367,6 +3575,9 @@ export type Database = {
           id?: number;
           codigo?: string;
           tipo?: string;
+          clave_envio?: string | null;
+          huella_envio?: string | null;
+          actor_envio?: string | null;
           share_token?: string;
           created_at?: string;
           estado?: string;
@@ -3532,6 +3743,17 @@ export type Database = {
       };
       // ── #50 (migración 222): sello de la modalidad PVP/NETO de la hija manual ──
       // Solo lectura para service_role; las escribe `p50_priv.sellar_hija`.
+      // Migración 286 (#97): acuerdo de comisión del aliado (solo inserción). Solo lectura con service_role.
+      comision_plan: {
+        Row: {
+          cotizacion_id: number; version: number; tenant: string; economico_rev: number; aliado_id: number; tipo_asesor: "agencia" | "freelance"; moneda: "COP" | "USD";
+          pvp_total: number; bnc: number; recobro_total: number; recobro_aliado: number; base_comision: number; pct_comision: number; pct_origen: "aliado" | "general" | "defecto";
+          comision_ordinaria: number; total_aliado: number; creado_por_id: string | null; creado_en: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       cotizacion_neto: {
         Row: {
           cotizacion_id: number;
@@ -3879,8 +4101,9 @@ export type Database = {
         Relationships: [];
       };
       hotel_reglas_descuento: {
-        Row: { id: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa: boolean; created_at: string };
-        Insert: { id?: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa?: boolean; created_at?: string };
+        // 301: autorizada=false / propuesta = cambio RETENIDO (crea combinaciones sin configurar); el motor solo lee autorizada.
+        Row: { id: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa: boolean; created_at: string; autorizada: boolean; propuesta: Json | null };
+        Insert: { id?: number; hotel_id: number; tipo: "ebb" | "long_stay"; umbral: number; pct: number; activa?: boolean; created_at?: string; autorizada?: boolean; propuesta?: Json | null };
         Update: Partial<Database["public"]["Tables"]["hotel_reglas_descuento"]["Insert"]>;
         Relationships: [];
       };
@@ -3958,7 +4181,7 @@ export type Database = {
         Row: Omit<
           Database["public"]["Tables"]["ventas"]["Row"],
           "costo_hotel" | "costo_aereo" | "costo_receptivo" | "costo_asistencia" | "otros_costos"
-          | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra"
+          | "impuesto" | "comision_b2b" | "comision_estado" | "modo_compra" | "reserva_token"
           | "recobro_total" | "recobro_empresa" | "recobro_aliado" | "trm_contrato" | "b2b_usuario_id"
           // Migración 147: fuera por sensibles. `observaciones` no vuelve.
           | "observaciones" | "cliente_tipo_documento" | "titular_tipo_documento"
@@ -4050,6 +4273,8 @@ export type Database = {
           descripcion: string | null;
           recargo_individual: number | null;
           tipo_tarifa: string | null;
+          // Migración 302: entrada del «desde» DOBLE de la combinación (porción con grupos).
+          desde_entrada_doble: string | null;
         };
         Relationships: [];
       };
@@ -4112,6 +4337,8 @@ export type Database = {
           estado_pago: string | null;
           cxp_aereas_total: number | null;
           cxp_aereas_pagadas: number | null;
+          // Migración 285 (#75): identidad del contrato, de la misma fila de la vista.
+          contrato_uid: string | null;
         };
         Relationships: [];
       };
@@ -4122,6 +4349,8 @@ export type Database = {
         Row: {
           id: number;
           numero_contrato: string;
+          // Migración 285 (#75): identidad del contrato, en la misma sentencia que los tramos.
+          contrato_uid: string | null;
           aerolinea: string | null;
           record: string | null;
           direccion: string | null;
@@ -4140,6 +4369,74 @@ export type Database = {
       };
     };
     Functions: {
+      // Migración 284 (#75): uid de los contratos que la pantalla ve (respeta puede_ver_contrato). Solo para sesión de usuario.
+      contratos_identidades: {
+        Args: { p_numeros: string[] };
+        Returns: { numero_contrato: string; contrato_uid: string }[];
+      };
+      // Migración 284 (#75): uid de las sillas (de un bloqueo, o de todos si p_bloqueo es null) para roles operativos que no leen `ventas` (control_vuelo).
+      sillas_identidades: {
+        Args: { p_bloqueo?: number | null };
+        Returns: { silla_id: number; numero_contrato: string; contrato_uid: string }[];
+      };
+      // Migración 288 (#75): escritor de la app sobre las CxP PREVISTAS de un contrato pendiente (solo service_role); {aplicado:false} si el contrato no está pendiente.
+      // Migración 288 (#75, 1b): edición de servicios de un pendiente en UNA transacción (ítems + precio/resumen + previstas + CxP históricas). Solo service_role.
+      pendiente_aplicar_servicios: {
+        Args: {
+          p_numero: string; p_items_borrar: number[]; p_items_nuevos: Json; p_ventas: Json;
+          p_prev_eliminar: number[]; p_prev_actualizar: Json; p_prev_insertar: Json; p_cxp_eliminar: number[]; p_cxp_actualizar: Json;
+        };
+        Returns: Json;
+      };
+      // Migración 288 (#75, 1b): reintenta la confirmación por pago (abonos suficientes, contrato pendiente). Misma autorización que confirmar a mano.
+      // Migración 288 (#75, 1b): paso final de una conversión de cotización (service_role): evalúa el mínimo con los pagos previos aplicados y confirma si corresponde.
+      confirmar_tras_conversion: {
+        Args: { p_numero: string; p_actor: string };
+        Returns: Json;
+      };
+      // Migración 288 (#75, 1b): solo un booleano — ¿abonos suficientes con el contrato aún pendiente? (para avisar y ofrecer el reintento).
+      // Migración 288 (#75, parte 3): ¿contrato NETO de aliado? (la vista básica no expone comision_estado). Solo booleano, solo contratos visibles.
+      contrato_es_neto: {
+        Args: { p_numero: string };
+        Returns: boolean;
+      };
+      estado_confirmacion_pago: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
+      reintentar_confirmacion_pago: {
+        Args: { p_numero: string };
+        Returns: Json;
+      };
+      prevista_cxp_aplicar: {
+        Args: { p_numero: string; p_eliminar: number[]; p_actualizar: Json; p_insertar: Json };
+        Returns: Json;
+      };
+      // Migración 285 (#75): precomprobación de solo lectura ANTES de subir un soporte (service_role).
+      soporte_verificar_identidad: {
+        Args: { p_numero: string };
+        Returns: undefined;
+      };
+      soporte_registrar: {
+        Args: { p_numero: string; p_actor: string; p_path: string; p_nombre: string; p_mime: string; p_size: number; p_sha: string };
+        Returns: Json;
+      };
+      soporte_reemplazar: {
+        Args: { p_id: number; p_actor: string; p_path: string; p_nombre: string; p_mime: string; p_size: number; p_sha: string };
+        Returns: Json;
+      };
+      soporte_retirar: {
+        Args: { p_id: number; p_actor: string; p_nota: string | null };
+        Returns: Json;
+      };
+      avisos_reclamar: {
+        Args: { p_usuario: string; p_limite?: number };
+        Returns: { id: number; tipo: string; numero_contrato: string; creado_en: string }[];
+      };
+      avisos_marcar_leidos: {
+        Args: { p_usuario: string; p_ids?: number[] | null };
+        Returns: number;
+      };
       cargar_neta_solicitud: {
         Args: { p_cotizacion: number; p_item_ref: string; p_neta: number; p_moneda: string; p_pct_mk: number; p_precio_venta: number; p_detalle: Json; p_vigencia: string | null;
           p_modo: string; p_adultos: number; p_ninos: number; p_infantes: number; p_neta_adulto: number; p_neta_nino: number; p_neta_infante: number };
@@ -4251,6 +4548,51 @@ export type Database = {
       // de la vista previa), comprobado con el hotel bloqueado.
       generar_tarifas_hotel_calculadora: {
         Args: { p_hotel_id: number; p_filas: Json; p_previas: Json; p_reemplazar_todo?: boolean; p_motivo?: string | null };
+        Returns: Json;
+      };
+      // Migración 295 (#43/#60 incremento 3, PROPUESTA — no aplicada). Editor de grupos de días
+      // (preparación inactiva): leer, guardar grupos, guardar propuesta y borrar grupo. Las escrituras
+      // comparan la huella y rechazan con SQLSTATE PT409 si la configuración cambió.
+      grupos_dias_config: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_guardar: { Args: { p_temporada_id: number; p_huella: string; p_grupos: Json }; Returns: Json };
+      grupos_dias_guardar_propuesta: {
+        Args: { p_temporada_id: number; p_huella: string; p_modo: string; p_grupo_id: string | null; p_filas: Json };
+        Returns: Json;
+      };
+      grupos_dias_borrar: { Args: { p_grupo_id: string; p_huella: string }; Returns: Json };
+      // Migración 297 (PROPUESTA): lectura de la 295 + bases por grupo; borrado que exige las versiones revisadas.
+      grupos_dias_config_bases: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_borrar_con_bases: { Args: { p_grupo_id: string; p_huella: string; p_bases: Json }; Returns: Json };
+      // Migración 299 (PROVISIONAL): venta por grupos — alcance (lectura), aplicar, descartar borrador, volver a «todos los días».
+      grupos_dias_alcance: { Args: { p_temporada_id: number }; Returns: Json };
+      grupos_dias_activar: { Args: { p_temporada_id: number; p_huella: string; p_habilitaciones: Json }; Returns: Json };
+      // Migración 300 (PROPUESTA). p_base_id NULL + p_reglas [] = desvincular.
+      promocion_guardar_reglas: { Args: { p_promocion_id: number; p_base_id: number; p_reglas: Json; p_previas: Json }; Returns: Json };
+      // Migración 301 (PROVISIONAL): combinación con EBB / Long Stay y reglas con retención.
+      promocion_guardar_combinacion: { Args: { p_promocion_id: number; p_combinacion: Json; p_cambios?: Json | null }; Returns: Json };
+      regla_descuento_guardar: { Args: { p_hotel: number; p_id: number | null; p_tipo: string; p_umbral: number; p_pct: number; p_activa: boolean }; Returns: Json };
+      regla_descuento_aplicar: { Args: { p_id: number }; Returns: Json };
+      regla_descuento_descartar: { Args: { p_id: number }; Returns: undefined };
+      promociones_combinacion_estado: { Args: { p_hotel: number }; Returns: Json };
+      promocion_cambio_proponer: { Args: { p_promocion_id: number; p_cambios: Json }; Returns: Json };
+      promocion_cambio_activar: { Args: { p_promocion_id: number; p_combinacion?: Json | null }; Returns: Json };
+      promocion_cambio_descartar: { Args: { p_promocion_id: number }; Returns: undefined };
+      grupos_dias_descartar: { Args: { p_temporada_id: number; p_huella: string }; Returns: Json };
+      grupos_dias_volver_todos: { Args: { p_temporada_id: number; p_huella: string; p_elecciones: Json }; Returns: Json };
+      // Migración 298 (PROPUESTA): como la de la 297 + parámetros de la fórmula propios del grupo (null = los del hotel).
+      grupos_dias_guardar_calculadora_grupo: {
+        Args: {
+          p_temporada_id: number; p_huella: string; p_grupo_id: string; p_tipo: string;
+          p_calc_version: number; p_bases_version: number | null; p_bases: Json; p_generales: Json | null; p_filas: Json;
+        };
+        Returns: Json;
+      };
+      // Migración 297 (PROPUESTA): propuesta del grupo + bases de la calculadora, atómico.
+      grupos_dias_guardar_calculadora: {
+        Args: {
+          p_temporada_id: number; p_huella: string; p_grupo_id: string; p_tipo: string;
+          p_calc_version: number; p_bases_version: number | null; p_bases: Json; p_filas: Json;
+        };
         Returns: Json;
       };
       // Migración 203 (PROPUESTA). Historial paginado por cursor y búsqueda en
@@ -4406,6 +4748,18 @@ export type Database = {
       // RPC SECURITY DEFINER, SOLO service_role. Errores: `EDICION_39_<X>: …`.
       crear_cotizacion_manual: {
         Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json };
+        Returns: number;
+      };
+      // Migración 286 (#97): lo mismo + acuerdo de comisión del aliado (aliado por id, BNC explícita), en una sola transacción. SOLO service_role.
+      // Migración 286 (#97): ¿rige la regla NETO nueva (corte definitivo fijado)? SOLO service_role.
+      p97_regla_neto_activa: { Args: Record<string, never>; Returns: boolean };
+      // Migración 286 (#97): materializa UNA vez la comisión exigible desde el plan sellado cuando el contrato está confirmado (la llama la confirmación de #75). Idempotente.
+      materializar_comision_b2b: { Args: { p_numero: string }; Returns: number | null };
+      // Migración 286 (#97): interruptor EXPLÍCITO del ciclo de vida de la comisión (el manual nace pendiente solo con el ciclo encendido). SOLO service_role.
+      p97_ciclo_comision_activo: { Args: Record<string, never>; Returns: boolean };
+      p97_dependencias_comision_faltantes: { Args: Record<string, never>; Returns: string | null };
+      crear_cotizacion_manual_con_acuerdo: {
+        Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json; p_aliado_id: number; p_bnc: number };
         Returns: number;
       };
       // ── Paquete 100 % dinámico (migración 274, #82). Errores: `DIN_82_<X>: …` ─────
@@ -4581,6 +4935,16 @@ export type Database = {
       siguiente_numero_contrato_para_tenant: {
         Args: { p_tenant: string };
         Returns: string;
+      };
+      // Migración 287: reserva de consecutivo (Mayorista puede devolver un DTM liberado + ticket; Minorista y secuencia devuelven ticket nulo).
+      reservar_numero_contrato: {
+        Args: { p_tenant: string };
+        Returns: { numero: string; token: string | null }[];
+      };
+      // Migración 287: motivos por los que un DTM pendiente NO puede liberarse para reutilización (solo superadmin; vacío = candidato).
+      contrato_reuso_preview: {
+        Args: { p_numero: string };
+        Returns: string[];
       };
       eliminar_contrato: {
         Args: { p_numero: string; p_reusar: boolean };
@@ -5056,6 +5420,11 @@ export type Database = {
           p_pct: number; p_recobro: number; p_pct_recobro: number; p_aplica_retencion: boolean; p_pct_retencion: number;
         };
         Returns: number;
+      };
+      // Migración 291 (#75) — reemisión de tarifas de un NETO pendiente sin pagos (ítems + comisión descontada + total exigible, una transacción).
+      reemitir_neto_pendiente: {
+        Args: { p_numero: string; p_items: { descripcion: string; adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number }[]; p_forzar_margen?: boolean };
+        Returns: Json;
       };
       // Migración 186 — Dashboard: agregados en base (evita descargar filas
       // completas de ventas/abonos/cupos/CxP/retenciones solo para sumarlas

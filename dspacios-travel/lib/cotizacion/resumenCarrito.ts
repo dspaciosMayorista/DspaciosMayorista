@@ -70,6 +70,15 @@ export function construirResumenCarrito(e: {
   modalidad: "pvp" | "neto";
   moneda: string;
   total: number;
+  /** #14-A: recobro de cada unidad (unidades de moneda). Va DENTRO de la tarifa de adulto como un servicio oculto que cubre a sus adultos: se reparte por igual y el residuo sale en el «ajuste». `total` ya lo incluye. */
+  recobroPorUnidad?: Readonly<Record<string, number>>;
+  /**
+   * #14-A (NETO): tarifa NETO de cada pasajero (centavos), ya calculada con la regla aprobada, por `${ref}|${clave}|${posición}` (posición = orden del pasajero dentro de su clase en la unidad).
+   * Con esto el resumen NO usa las tarifas PVP: cada cupo parte de su NETO. Una clave ausente se rechaza (nunca se mezcla PVP con NETO).
+   */
+  netoPorCupo?: Readonly<Record<string, number>>;
+  /** #14-A (NETO): importe NETO de cada servicio (centavos) por id. Obligatorio para cada servicio cuando hay `netoPorCupo`. */
+  netoServicio?: Readonly<Record<string, number>>;
 }): ResultadoResumenCarrito {
   if (!e.unidades.length) return { ok: false, motivo: "La cotización no tiene hoteles con tarifa por persona." };
   const porUnidad = new Map<string, ServicioCobertura[]>(e.unidades.map((u) => [u.ref, []]));
@@ -87,7 +96,13 @@ export function construirResumenCarrito(e: {
     const cubre = elegidos ?? (s.pax === unidad.paxTotal ? ("todos" as const) : null);
     if (!cubre) return { ok: false, motivo: `«${s.nombre}» cubre ${s.pax} de los ${unidad.paxTotal} pasajeros de ${unidad.hotel ?? "el hotel"}.` };
     if (Array.isArray(cubre) && cubre.length !== s.pax) return { ok: false, rechazar: true, motivo: `«${s.nombre}» cubre ${s.pax} pasajeros y se seleccionaron ${cubre.length}: corrige la selección.` };
-    porUnidad.get(unidad.ref)!.push({ id: s.id, nombre: s.nombre, modo: "total", precioCentavos: cent(s.precio), cubre });
+    let precioServicio = cent(s.precio);
+    if (e.netoPorCupo) {
+      const n = e.netoServicio?.[s.id];
+      if (n === undefined || !Number.isSafeInteger(n) || n < 0) return { ok: false, motivo: `«${s.nombre}» no tiene un importe NETO calculado: el detalle por pasajero en NETO no se genera.` };
+      precioServicio = n;
+    }
+    porUnidad.get(unidad.ref)!.push({ id: s.id, nombre: s.nombre, modo: "total", precioCentavos: precioServicio, cubre });
   }
   const unidades: UnidadResumen[] = [];
   for (const u of e.unidades) {
@@ -106,7 +121,17 @@ export function construirResumenCarrito(e: {
           return { ok: false, rechazar: true, motivo: `Los pasajeros de ${u.hotel ?? "el hotel"} cambiaron (${c.etiqueta}): vuelve a seleccionar los pasajeros que cubre cada servicio.` };
         }
       }
-      for (const n of ordinales ?? Array.from({ length: c.cantidad }, (_, i) => i + 1)) cupos.push({ id: `${c.clave}#${n}`, tipo: c.tipo, baseCentavos: cent(c.tarifa) });
+      let posicion = 0;
+      for (const n of ordinales ?? Array.from({ length: c.cantidad }, (_, i) => i + 1)) {
+        let base = cent(c.tarifa);
+        if (e.netoPorCupo) {
+          const neto = e.netoPorCupo[`${u.ref}|${c.clave}|${posicion}`];
+          if (neto === undefined || !Number.isSafeInteger(neto) || neto < 0) return { ok: false, motivo: `No hay tarifa NETO para un pasajero de ${u.hotel ?? "el hotel"} (${c.etiqueta}); no se genera el detalle por pasajero.` };
+          base = neto;
+        }
+        posicion++;
+        cupos.push({ id: `${c.clave}#${n}`, tipo: c.tipo, baseCentavos: base });
+      }
     }
     if (usaSeleccion) {
       // Ordinales activos de una clave que ya no existe: el carrito quedó desfasado → se rechaza, no se ignora.
@@ -122,7 +147,14 @@ export function construirResumenCarrito(e: {
         if (x.cubre.some((id) => !vivos.has(id))) return { ok: false, rechazar: true, motivo: `«${x.nombre}» cubre un pasajero que no existe en la cotización. Vuelve a seleccionar los pasajeros cubiertos.` };
       }
     }
+    const recobroUnidad = e.recobroPorUnidad?.[u.ref] ?? 0;
+    if (recobroUnidad > 0) {
+      const adultos = cupos.filter((c) => c.tipo === "adulto").map((c) => c.id);
+      if (!adultos.length) return { ok: false, motivo: `${u.hotel ?? "El hotel"} no tiene adultos a quienes cargar el recobro.` };
+      servicios.push({ id: `oculto:${u.ref}`, nombre: "", modo: "total", precioCentavos: cent(recobroUnidad), cubre: adultos, oculto: true });
+    }
     if (u.grupoIncluido > 0) {
+      if (e.netoPorCupo) return { ok: false, motivo: `${u.hotel ?? "El hotel"} tiene un servicio incluido por grupo: en NETO no hay una regla aprobada para repartirlo por pasajero.` };
       if (u.infantes > 0) return { ok: false, motivo: `${u.hotel ?? "El hotel"} tiene un servicio incluido por grupo y viajan infantes: no se puede repartir por pasajero.` };
       servicios.push({ id: `grupo:${u.ref}`, nombre: "Servicios incluidos del paquete", modo: "total", precioCentavos: cent(u.grupoIncluido), cubre: "todos" });
     }

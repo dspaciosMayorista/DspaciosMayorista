@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 
 export type PlanInfo = { nombre?: string | null; descripcion?: string | null; nota_especial?: string | null };
 export type PlanesInfo = Record<string, PlanInfo>;
@@ -15,6 +16,7 @@ export function RegimenInfo({
 }) {
   const [open, setOpen] = useState(false);
   const tiene = !!(info && (info.descripcion?.trim() || info.nota_especial?.trim()));
+  useEscapeCerrar(open && tiene, () => setOpen(false)); // Escape cierra la descripción, como el clic afuera
 
   return (
     <span className={`relative inline-flex items-center gap-1 ${className}`}>

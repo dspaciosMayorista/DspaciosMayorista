@@ -1,6 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
+import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
@@ -70,6 +71,7 @@ type CotizadaTarjeta = Extract<Awaited<ReturnType<typeof import("./cotizarTarjet
 import type { OpcionUnidadConfirmada } from "./busquedaUnidadActions";
 import { claveBusquedaUnidad, claveReservaUnidad, revalidarReservaUnidad } from "@/lib/tarifario/identidadReservaUnidad";
 import { BuscadorReceptivos } from "./BuscadorReceptivos";
+import { TextoCategoriaHotel, TextosCategoriaProvider, type TextosCategoriaPorHotel } from "./TextoCategoriaHotel";
 import { ExploraReceptivos } from "./ExploraReceptivos";
 import { ModoComparativaBooking } from "@/lib/cotizacion/comparativaBooking";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
@@ -78,7 +80,7 @@ import { LoadingScreen } from "@/components/LoadingScreen";
 import type { FilaTarifario, CapHotel } from "./TarifarioPublic";
 import type { FilaResumen } from "@/lib/tarifario/resumen";
 import { tieneAcomodacionResumen } from "@/lib/tarifario/resumenCliente";
-import { desdeDoble, origenDesdeDoble } from "@/lib/tarifario/desdeDoble";
+import { desdeDoble, origenDesdeDoble, estadiaDesdeDoble, textoEstadiaDesde } from "@/lib/tarifario/desdeDoble";
 import type { DescripcionPaqueteRaw } from "@/lib/tarifario/descripcionPaquete";
 import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
 import { EtiquetaOferta } from "./EtiquetaOferta";
@@ -127,6 +129,8 @@ type HotelCard = {
   destino: string | null;
   foto: string | null;
   desde: number | null;
+  /** #43/#60 entrega 6: estadía que justifica el «desde» (porción con grupos); null = como siempre. */
+  desdeEstadia?: { entrada: string; salida: string; noches: number } | null;
   estrellas: number | null;
   clasificacion: string | null;
   descripcion: string | null;
@@ -459,9 +463,11 @@ function PanelFiltrosResto({
 // "cuál modelo es" adentro de la tarjeta misma.
 export function TarjetaHotelCard({
   onClick, foto, fotos, hotelNombre, destino, estrellas = null, clasificacion = null,
-  adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, moneda,
+  adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, desdeEstadia = null, moneda,
   badgeEsquina, controlesFechas = null, precioFechas = null, etiquetaDescuento = null, calculando = false,
 }: {
+  /** #43/#60 entrega 6: noches y entrada de la estadía que produce el «desde» (porción con grupos). */
+  desdeEstadia?: { entrada: string; noches: number } | null;
   onClick: () => void;
   foto: string | null;
   /** Galería completa (portada primero); sin ella, solo `foto`. */
@@ -528,6 +534,7 @@ export function TarjetaHotelCard({
             <div data-testid="precio-desde">
               <div className="text-[10px] uppercase tracking-wide text-gray-400">desde</div>
               <div className="text-xl font-extrabold tracking-tight" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde, moneda)}</div>
+              {desdeEstadia && <div data-testid="estadia-desde" className="text-[11px] text-gray-500">por persona · {textoEstadiaDesde(desdeEstadia)}</div>}
               <div className="text-[10px] text-gray-400">por persona</div>
             </div>
           ) : <span className="text-sm text-gray-400">Consultar</span>}
@@ -598,6 +605,7 @@ export function VistaBooking({
   infoPorHotel = {},
   planesInfo = {},
   capPorHotel = {},
+  textosCategoria = {},
   soloAcom = null,
   filtroTexto = "",
   filtroCategoria = "",
@@ -690,6 +698,8 @@ export function VistaBooking({
   // EXACTA buscada, nunca el rango genérico de exploración que usa
   // `condicionPorOferta`).
   restriccionPorPaquete?: Record<number, { condicionNoNeutra: boolean; restriccionNoNeutra: boolean }>;
+  /** #45 (303): descripción y «qué incluye» por categoría DENTRO de cada hotel (solo texto). */
+  textosCategoria?: TextosCategoriaPorHotel;
 }) {
   // Submódulos de la vista Booking.
   const [sub, setSub] = useState<"bloqueo" | "porcion_terrestre" | "receptivos">("bloqueo");
@@ -1071,6 +1081,8 @@ export function VistaBooking({
     // «Desde» (TASKS #92): SIEMPRE la tarifa DOBLE publicable de las filas que esta tarjeta realmente ofrece (ya filtradas por
     // paquete, salida, hotel y vigencia) y de SU moneda; sin DOBLE queda null → «Consultar». Nunca sencilla/triple/niño/infante.
     for (const c of arr) c.desde = desdeDoble(c.filas, c.moneda);
+    // #43/#60 entrega 6: la estadía que justifica ese mismo «desde» (porción con grupos); null = la tarjeta de siempre.
+    for (const c of arr) c.desdeEstadia = estadiaDesdeDoble(c.filas, c.moneda);
     return arr;
   }, [filas, fotosPorHotel, infoPorHotel, sub, cuposPorBloqueo, origenPorBloqueo, origenPorSalida, origenSel, destinoSel, destinoPorcionBusqueda, salidaSel, soloAcom]);
 
@@ -1827,6 +1839,7 @@ export function VistaBooking({
   const iconoBloqueoCls = (activo: boolean) => `pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 ${activo ? "text-[var(--brand-success)]" : "text-slate-400"}`;
 
   return (
+    <TextosCategoriaProvider textos={textosCategoria}>
     <div>
       {subtabsSlot && createPortal(subtabsBotones, subtabsSlot)}
 
@@ -2071,6 +2084,7 @@ export function VistaBooking({
               tieneCondicion={t.card.tieneCondicion}
               descripcion={t.card.descripcion}
               desde={t.card.desde}
+              desdeEstadia={t.card.desdeEstadia ?? null}
               moneda={t.card.moneda}
               badgeEsquina={(() => {
                 // Cupos disponibles (solo para bloqueos con datos)
@@ -2199,6 +2213,7 @@ export function VistaBooking({
         <ReceptivoModal receptivo={receptivoAbierto} onClose={() => setReceptivoAbierto(null)} />
       )}
     </div>
+    </TextosCategoriaProvider>
   );
 }
 
@@ -2323,6 +2338,7 @@ export function HotelModal({
   // Subelección de servicios de ESTE paquete (se vacía si cambia el paquete).
   const seleccionServicios = useSeleccionServicios(opcion?.paqueteId ?? null);
   const serviciosTarjeta: ServiciosTarjeta = { addons, seleccion: seleccionServicios.seleccion, quitar: seleccionServicios.quitar };
+  useEscapeCerrar(true, onClose); // Escape = «Cerrar»
 
   return (
     <>
@@ -2417,7 +2433,9 @@ export function HotelModal({
                   opcion={opcion}
                   hotel={hotel}
                   ventana={ventanaPorPaquete[opcion.paqueteId] ?? { min: null, max: null }}
-                  fechasIniciales={seleccion?.tipo === "porcion" && seleccion.paqueteId === opcion.paqueteId ? { ida: seleccion.fechaIda, regreso: seleccion.fechaRegreso } : undefined}
+                  fechasIniciales={seleccion?.tipo === "porcion" && seleccion.paqueteId === opcion.paqueteId ? { ida: seleccion.fechaIda, regreso: seleccion.fechaRegreso }
+                    // #43/#60 entrega 6: sin fechas elegidas, la cotización abre con la estadía que justifica el «desde» anunciado (se recalcula en vivo).
+                    : seleccion == null && hotel.desdeEstadia && origenDesde?.paquete_id === opcion.paqueteId ? { ida: hotel.desdeEstadia.entrada, regreso: hotel.desdeEstadia.salida } : undefined}
                   planesInfo={planesInfo}
                   cap={cap}
                   servicios={serviciosTarjeta}
@@ -2861,6 +2879,7 @@ export function TarjetaUnidadBusqueda({
             </select>
           </label>
         </div>
+        <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
 
         {errorAgregar && <p className="text-xs text-red-600">{errorAgregar}</p>}
 
@@ -3011,6 +3030,7 @@ function HotelBernaloCotizarModal({
     openDrawer();
     onClose();
   }
+  useEscapeCerrar(true, onClose); // Escape = «Cerrar»
   return (
     <>
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
@@ -3234,6 +3254,7 @@ function Selector({
           )}
         </div>
       </div>
+      <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
 
       {eligioOtra && <p role="status" data-testid="modal-seleccion-ajustada" className="text-xs text-amber-700">Tu elección anterior no está disponible en esta salida: te mostramos {catEff} · {regEff}.</p>}
       {cc && <div data-testid="modal-precio-fechas" className="text-xs text-gray-500">Importes calculados para la salida que elegiste{comboCot?.descuento && <span className="ml-2"><EtiquetaDescuentoHotel descuento={comboCot.descuento} /></span>}</div>}
@@ -4085,7 +4106,8 @@ function SelectorPorFechas({
           <p className="mt-1 text-[11px] text-gray-400">Rango del paquete: {ventana.min ?? "—"} → {ventana.max ?? "—"}</p>
         )}
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
-        {combos && descuentoHotel && <div className="mt-2"><EtiquetaDescuentoHotel descuento={descuentoHotel} /></div>}
+        {/* Entrega 5: el combo elegido trae su etiqueta si la precedencia decidió distinto por acomodación. */}
+        {combos && (comboCot && "descuentoHotel" in comboCot ? comboCot.descuentoHotel : descuentoHotel) && <div className="mt-2"><EtiquetaDescuentoHotel descuento={comboCot && "descuentoHotel" in comboCot ? comboCot.descuentoHotel : descuentoHotel} /></div>}
         {serviciosGrupo.length > 0 && (
           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
             Este plan incluye {serviciosGrupo.join(", ")} con tarifa por grupo: su valor depende del
@@ -4138,6 +4160,7 @@ function SelectorPorFechas({
             </div>
             {nochesCot != null && <div className="self-end pb-2 text-xs text-gray-400">{nochesCot} noche(s)</div>}
           </div>
+          <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
           <div className="mt-1"><CondicionHotelBadges condicion={condicion} /></div>
           <EditorPax pvp={pvp} pvpMenor2={pvpMenor2Cot} pvpInfanteSinFijo={pvpInfanteSinFijoCot} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} onAgregar={agregarItem}
             servicios={servicios ? {

@@ -19,6 +19,11 @@ let contextoAsistencia = { puede: false };
 export function __setContextoAsistencia(ctx) {
   contextoAsistencia = ctx;
 }
+let contextoRecobro = { tipo: "ninguno" };
+export function __setContextoRecobro(ctx) { contextoRecobro = ctx; }
+export const __llamadasContextoRecobro = { n: 0 };
+export async function getContextoRecobroCarrito() { __llamadasContextoRecobro.n++; return contextoRecobro; }
+
 export async function getContextoAsistenciaB2B() {
   return contextoAsistencia;
 }

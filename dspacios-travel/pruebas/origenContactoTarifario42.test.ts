@@ -96,6 +96,10 @@ mock.module("@/lib/cotizacion/asistidaB2BServidor", {
     prepararAsistenciaB2B: async () => ({ ok: true, contexto: asistencia }),
     listarAliadosParaAsistencia: async () => ({ ok: true, aliados: [] }),
     verificarAliadoVivoParaConversion: async () => ({ ok: false, error: "no aplica en esta prueba" }),
+    // #14-A: el aliado directo y el actor se resuelven en servidor; aquí no aplican (esta prueba solo mira el ORIGEN del contacto CRM).
+    resolverAliadoDirecto: async () => ({ ok: true, contexto: null }),
+    resolverActorAsistencia: async () => ({ ok: false, error: "no aplica en esta prueba" }),
+    leerPctParticipacionParametro: async () => ({ ok: false, error: "no aplica en esta prueba" }),
   },
 });
 mock.module("next/headers", { namedExports: { headers: async () => new Map([["host", "localhost"]]) } });

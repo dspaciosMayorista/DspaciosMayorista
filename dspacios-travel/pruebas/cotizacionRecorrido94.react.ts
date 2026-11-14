@@ -4,6 +4,7 @@
 // coberturaServicios94.react.ts) entra por la acción real `crearSolicitudReserva` (base en memoria, nada remoto), la cotización queda guardada, se REABRE desde ese
 // JSON y se imprime con el componente real `ContratoDocumento`. Se exige el mismo reparto y el mismo total en la acción, el documento y la reapertura.
 import { test, describe, mock, beforeEach } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import nodeModule from "node:module";
 
@@ -193,7 +194,7 @@ const sinEspacios = (t: string) => t.replace(/\s+/g, "");
 // Igual que app/cotizacion/[id]/page.tsx: el documento se arma SOLO con lo guardado en la cotización.
 const imprimir = (d: Detalle) => renderToStaticMarkup(createElement(ContratoDocumento as never, {
   venta: d.venta, pasajeros: d.pasajeros ?? [], hoteles: d.hoteles ?? [], vuelos: d.vuelos ?? [], items: d.items ?? [], habitacionesBernalo: [], composicionBernalo: [],
-  totalPagado: 0, esCotizacion: true, codigo: "COT-77", vigenciaHasta: null, agencia: null, incluye: d.incluye ?? null, noIncluye: d.noIncluye ?? null,
+  totalPagado: 0, esCotizacion: true, codigo: "COT-77", vigenciaHasta: null, agencia: AGENCIA_PRUEBA, incluye: d.incluye ?? null, noIncluye: d.noIncluye ?? null,
   tituloPaquete: d.tituloPaquete ?? null, resumenPrecios: d.resumenPrecios ?? null, paqueteSnapshot: null,
 } as never));
 
@@ -235,7 +236,7 @@ describe("#94 recorrido: capturar → guardar → reabrir → imprimir con el mi
     // Estructura de siempre: una fila por grupo (Ítem · Adultos · Niños · Tarifa Adulto · Tarifa Niño · Valor total), Ítem = «Paquete Turístico {Destino}».
     const filas = [...html.matchAll(/<tr[^>]*data-testid="resumen-grupo"[^>]*>(.*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").replace(/\s+/g, "")));
     assert.deepEqual(filas.map((f) => [f[0], f[1], f[3], f[5]]), [
-      ["PaqueteTurísticoCARTAGENA", "1", $(500_000), $(500_000)], ["PaqueteTurísticoCARTAGENA", "1", $(400_000), $(400_000)], ["PaqueteTurísticoCARTAGENA", "1", $(400_000), $(400_000)],
+      ["PaqueteTurísticoCartagenaEsencial", "1", $(500_000), $(500_000)], ["PaqueteTurísticoCartagenaEsencial", "1", $(400_000), $(400_000)], ["PaqueteTurísticoCartagenaEsencial", "1", $(400_000), $(400_000)],
     ], "tres filas separadas: tienen servicios distintos aunque dos coincidan en tarifa");
     assert.ok(sinEspacios(t).includes(sinEspacios($(1_300_000))), "el total");
     assert.equal(sinEspacios(t).includes(sinEspacios($(200_000))), false, "no se muestra el importe de un servicio");
@@ -307,6 +308,19 @@ describe("#94 composición interna: concilia hotel + servicios del carrito con e
     for (const n of [1_104_000, 90_000, 142_000, 1_336_000]) assert.ok(sinEspacios(t).includes(sinEspacios(formatMoneda(n, "COP"))), String(n));
     assert.match(ficha(guardada, 1_336_000), /data-testid="composicion-cuadra"/);
     assert.doesNotMatch(ficha(guardada, 1_336_000), /composicion-difiere/);
+  });
+
+  test("#14-A: con recobro la conciliación lo suma (sin componente propio) y CUADRA; sin informarlo diría que difiere (hallado en la ficha de la app compilada)", async () => {
+    montar();
+    await emitir();
+    const guardada = leerComposicionCotizacion(JSON.parse(JSON.stringify(db.cotizacion_composicion[0].composicion)));
+    assert.ok(guardada);
+    const conRecobro = (total: number, recobro?: number) => renderToStaticMarkup(createElement(ComposicionPrecio as never, { guardada, totalCotizacion: total, ...(recobro === undefined ? {} : { recobro }) } as never)).replace(/&nbsp;| /g, " ");
+    const h = conRecobro(1_436_000, 100_000);
+    assert.match(h, /data-testid="composicion-cuadra"/);
+    assert.doesNotMatch(h, /composicion-difiere/);
+    assert.ok(sinEspacios(plano(h)).includes(sinEspacios(`recobro (dentro de la tarifa de adulto) ${formatMoneda(100_000, "COP")}`)));
+    assert.match(conRecobro(1_436_000), /composicion-difiere/, "sin el recobro el total de la cotización no concilia");
   });
 
   test("si el total vigente no coincide con hotel + servicios se avisa (nunca se oculta la diferencia)", async () => {

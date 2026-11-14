@@ -3,6 +3,7 @@
 import { Unlock } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { liberarRetencionVencida } from "../actions";
+import type { IdentidadContrato } from "@/lib/contrato/identidad";
 
 /**
  * "Liberar" de una retención en plazo SIN contrato ya vencida (migración 201).
@@ -12,7 +13,7 @@ import { liberarRetencionVencida } from "../actions";
  * (el error se muestra en el mismo diálogo).
  */
 export function LiberarRetencion({
-  sillaId, bloqueoId, version, numeroVisible, numeroHistorico, pasajero, plazo,
+  sillaId, bloqueoId, version, numeroVisible, numeroHistorico, pasajero, plazo, identidad,
 }: {
   sillaId: number;
   bloqueoId: number;
@@ -22,6 +23,8 @@ export function LiberarRetencion({
   numeroHistorico: number | null;
   pasajero: string;
   plazo: string;
+  /** Identidad del contrato de la silla tal como la leyó la página ({} si no tiene contrato). */
+  identidad: IdentidadContrato;
 }) {
   return (
     <ConfirmDialog
@@ -35,7 +38,7 @@ export function LiberarRetencion({
       }
       confirmLabel="Liberar silla"
       destructive
-      onConfirm={() => liberarRetencionVencida(sillaId, bloqueoId, version)}
+      onConfirm={() => liberarRetencionVencida(sillaId, bloqueoId, version, identidad)}
       trigger={
         <button type="button" className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 hover:underline">
           <Unlock className="h-3 w-3" /> Liberar

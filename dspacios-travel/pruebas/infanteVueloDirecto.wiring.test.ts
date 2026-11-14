@@ -29,7 +29,7 @@ describe("actions.ts — guardarInfanteVuelo: el cliente nunca autoriza, solo ma
   test("exporta guardarInfanteVuelo con la firma (bloqueoId, sillaResponsableId, infanteId, input) — nunca numeroContrato/responsableId directos", () => {
     assert.match(
       src,
-      /export async function guardarInfanteVuelo\(\s*bloqueoId: number,\s*sillaResponsableId: number,\s*infanteId: number \| null,\s*input: InfanteVueloInput\s*\)/,
+      /export async function guardarInfanteVuelo\(\s*bloqueoId: number,\s*sillaResponsableId: number,\s*infanteId: number \| null,\s*input: InfanteVueloInput,\s*identidad: IdentidadContrato\s*\)/,
       "la firma debe recibir la silla concreta del responsable, nunca un numero_contrato o responsable_id sueltos"
     );
     assert.doesNotMatch(
@@ -59,7 +59,7 @@ describe("actions.ts — guardarInfanteVuelo: el cliente nunca autoriza, solo ma
 
   test("revalida ambas superficies (vuelos/[id] y vuelos/pasajeros) tras guardar", () => {
     const inicio = src.indexOf('.rpc("guardar_infante_vuelo"');
-    const bloque = src.slice(inicio, inicio + 500);
+    const bloque = src.slice(inicio, inicio + 650);
     assert.match(bloque, /revalidatePath\(`\/dashboard\/vuelos\/\$\{bloqueoId\}`\)/);
     assert.match(bloque, /revalidatePath\("\/dashboard\/vuelos\/pasajeros"\)/);
   });
@@ -67,7 +67,7 @@ describe("actions.ts — guardarInfanteVuelo: el cliente nunca autoriza, solo ma
   test("propaga el error del RPC sin inventar uno propio (fail-closed: el mensaje real del server llega al asesor)", () => {
     const inicio = src.indexOf('.rpc("guardar_infante_vuelo"');
     const bloque = src.slice(inicio, inicio + 700);
-    assert.match(bloque, /if \(error\) return \{ ok: false, error: error\.message \};/);
+    assert.match(bloque, /if \(error\) return \{ ok: false, error: mensajeSiIdentidad\(error\) \?\? error\.message \};/);
   });
 });
 
@@ -99,7 +99,7 @@ describe("InfanteVueloForm.tsx — el formulario nunca decide negocio, solo junt
     const inicio = src.indexOf("const r = await guardarInfanteVuelo");
     assert.ok(inicio > -1);
     const linea = src.slice(inicio, inicio + 200);
-    assert.match(linea, /guardarInfanteVuelo\(bloqueoId, sillaResponsableId, modo === "editar" && inicial \? inicial\.id : null, form\)/);
+    assert.match(linea, /guardarInfanteVuelo\(bloqueoId, sillaResponsableId, modo === "editar" && inicial \? inicial\.id : null, form, identidad\)/);
   });
 });
 

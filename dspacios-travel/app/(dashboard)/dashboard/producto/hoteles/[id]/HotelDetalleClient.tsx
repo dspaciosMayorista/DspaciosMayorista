@@ -3,7 +3,7 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useRef, useState, useTransition, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarRange, Pencil, Settings, Table2, Trash2 } from "lucide-react";
+import { CalendarDays, CalendarRange, Pencil, Settings, Table2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatFechaLarga } from "@/lib/utils";
@@ -13,13 +13,25 @@ import {
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { ComboHotel } from "@/components/ComboHotel";
 import {
-  crearTemporada, actualizarTemporada, eliminarTemporada, copiarTemporadasDesdeHotel,
+  crearTemporada, actualizarTemporada, eliminarTemporada, copiarTemporadasDesdeHotel, activarCambioPromocion,
   crearTarifa, actualizarTarifa, eliminarTarifa,
 } from "../actions";
 import { pctInicialParaFormulario, restriccionImplicitaHotel } from "@/lib/cotizacion/condicionPagoCatalogo";
 import { etiquetasRestriccion } from "@/lib/cotizacion/etiquetasCondicion";
 import { etiquetaFilaTarifa } from "@/lib/calc/promoCalculadora";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
+import { GruposDiasPanel } from "./GruposDiasPanel";
+import { PromocionesDinamicasBox } from "./PromocionesDinamicasBox";
+import type { PromoDinamica } from "@/lib/hoteles/promocionesDinamicas";
+import { textoDias, type GrupoCfg } from "@/lib/hoteles/alcanceGrupos";
+import { EleccionDiasControl, ReglasPromoPanel, type BaseParaReglas, type ReglaGuardada } from "./PromocionReglas";
+import { CombinacionEditor } from "./CombinacionPromo";
+import { validarCamposPromo, type EleccionDias } from "@/lib/hoteles/promocionesVigencia";
+import {
+  ETIQUETA_REGLA_NOCHE, ETIQUETA_UNIDAD, REGLAS_NOCHE_GRATIS, UNIDADES_MONTO, esReglaNocheGratis, esUnidadMonto,
+  type ReglaNocheGratis, type UnidadMonto,
+} from "@/lib/calc/promocionesGrupo";
 
 type RangoFechas = { fecha_inicio: string; fecha_fin: string };
 type Temporada = {
@@ -28,6 +40,12 @@ type Temporada = {
   tipo?: string | null; descuento_valor?: number | null; min_noches?: number;
   rangos?: unknown; blackouts?: unknown; regimen_restringido?: string | null;
   condicion_pago_tipo?: string | null; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null;
+  // #43/#60: grupos de días preparados (inactivos), incrustados en la misma lectura de vigencias.
+  hotel_temporada_grupos?: GrupoCfg[] | null;
+  // #43/#60 entrega 4 (migración 300): elecciones de la promoción y reglas por grupo (misma lectura).
+  promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null;
+  dias_promo?: number[] | null; hotel_promocion_reglas?: ReglaGuardada[] | null;
+  hotel_promocion_combinacion?: { estado: string } | { estado: string }[] | null; // entrega 5
 };
 
 const CONDICIONES_PAGO_HOTEL: { value: string; label: string }[] = [
@@ -48,7 +66,7 @@ function asRangos(v: unknown): RangoFechas[] {
 const TIPOS_TEMP: { value: string; label: string }[] = [
   { value: "tarifa", label: "Temporada / tarifa de reemplazo" },
   { value: "descuento_pct", label: "Promo: descuento %" },
-  { value: "descuento_monto", label: "Promo: descuento $ por pax" },
+  { value: "descuento_monto", label: "Promo: descuento de monto fijo" },
   { value: "promo_noche_gratis", label: "Promo: N noches, 1 gratis" },
 ];
 const TIPO_BADGE: Record<string, string> = {
@@ -67,6 +85,9 @@ type Tarifa = {
   // de la tarifa). Opcionales: filas de hoteles todavía sin la migración 179
   // corrida en su entorno no traen estas columnas del `select("*")`.
   precio_final_autoritativo?: boolean;
+  // #43/#60 (299): tarifa de un grupo de días que se vende. Se edita SOLO desde «Grupos de días».
+  grupo_id?: string | null;
+  grupo_dias?: number[] | null;
   temporada_base?: string | null;
   notas?: string | null;
 };
@@ -91,9 +112,11 @@ const ICONO_PESTANA = { configuracion: Settings, temporadas: CalendarRange, tari
 
 export function HotelDetalleClient({
   hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles, adultsOnly = false, mostrarTarifaPersona = true,
-  moneda = "COP", pestanaInicial, configuracion, calculadora, tarifasExtra,
+  moneda = "COP", pestanaInicial, configuracion, calculadora, tarifasExtra, promosDinamicas = [],
 }: {
   hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[];
+  // Promociones dinámicas por grupo explicadas (solo lectura; null = el rol no ve netos).
+  promosDinamicas?: PromoDinamica[] | null;
   otrosHoteles: { id: number; nombre: string }[]; adultsOnly?: boolean;
   // Oculta ÚNICAMENTE la sección de tarifas por persona (`TarifasBox`) cuando
   // el hotel tiene activo el editor de fase 2 Bernalo (`modelo_tarifario`
@@ -168,7 +191,7 @@ export function HotelDetalleClient({
         {configuracion}
       </div>
       <div role="tabpanel" id="panel-hotel-temporadas" aria-labelledby="tab-hotel-temporadas" hidden={activa !== "temporadas"} className="mx-auto max-w-5xl space-y-8">
-        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} />
+        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} permiteGrupos={mostrarTarifaPersona} />
         {/* Cada bloque del servidor va como ÚNICO hijo de su contenedor: junto a otros hijos dentro de un arreglo estático,
            React 19 (dev) avisa "Each child in a list should have a unique key" por los elementos que llegan del servidor. */}
         <div>{calculadora}</div>
@@ -177,13 +200,19 @@ export function HotelDetalleClient({
         {mostrarTarifaPersona && (
           <TarifasBox hotelId={hotelId} categorias={categorias} regimenes={regimenes} temporadas={temporadas} tarifas={tarifas} vencidasNombres={vencidasNombres} adultsOnly={adultsOnly} moneda={moneda} />
         )}
+        {mostrarTarifaPersona && <PromocionesDinamicasBox promos={promosDinamicas} moneda={moneda} />}
         <div>{tarifasExtra}</div>
       </div>
     </div>
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda, permiteGrupos = false }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string; permiteGrupos?: boolean }) {
+  // #43/#60: editor de grupos de días (preparación inactiva). Sin controles en hoteles por unidad.
+  const [gruposAbierta, setGruposAbierta] = useState<Temporada | null>(null);
+  const [gruposLocales, setGruposLocales] = useState<Record<number, GrupoCfg[]>>({});
+  const gruposDe = (t: Temporada) => gruposLocales[t.id] ?? t.hotel_temporada_grupos ?? [];
+  const nombreRepetido = (t: Temporada) => temporadas.filter((o) => o.nombre.trim() === t.nombre.trim()).length > 1;
   const [editId, setEditId] = useState<number | null>(null);
   const [nombre, setNombre] = useState("");
   const [ini, setIni] = useState("");
@@ -203,17 +232,36 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
   const [aviso, setAviso] = useState("");
+  // Entrega 5: el cambio de una promoción que se vende crea una coincidencia sin configurar: se pide la combinación y se reenvía
+  // el MISMO cambio junto con ella (una transacción). Mientras tanto no se guardó nada.
+  // P3: el cambio quedó guardado como pendiente; se ofrece configurarlo y activarlo ya (si se cierra, sigue en «Promociones»).
+  const [pideComb, setPideComb] = useState<{ id: number; nombre: string; familias: ("ebb" | "long_stay")[] } | null>(null);
+  const [previas, setPrevias] = useState<FechasVigencia | null>(null);
+  // #43/#60 entrega 4: elecciones explícitas (sin valor por defecto) y la fila guardada para saber si es heredada.
+  const [unidad, setUnidad] = useState<UnidadMonto | "">("");
+  const [reglaNG, setReglaNG] = useState<ReglaNocheGratis | "">("");
+  const [diasPromo, setDiasPromo] = useState<EleccionDias>(null);
+  const [guardada, setGuardada] = useState<Temporada | null>(null);
+  const [reglasAbierta, setReglasAbierta] = useState<Temporada | null>(null);
 
   const esPromo = tipo !== "tarifa";
   const esDescuento = tipo === "descuento_pct" || tipo === "descuento_monto";
   const esNocheGratis = tipo === "promo_noche_gratis";
   const esAnticipoSaldo = condicionPagoTipo === "anticipo_saldo";
   const editando = editId != null;
+  const mismoTipo = guardada != null && (guardada.tipo ?? "tarifa") === tipo;
+  const ngHeredada = mismoTipo && tipo === "promo_noche_gratis" && guardada!.noche_gratis_regla == null;
+  const montoHeredado = mismoTipo && tipo === "descuento_monto" && guardada!.descuento_unidad == null;
+  const basesReglas: BaseParaReglas[] = temporadas.filter((t) => (t.tipo ?? "tarifa") === "tarifa" && !nombreRepetido(t))
+    .map((t) => ({ id: t.id, nombre: t.nombre, prioridad: t.prioridad ?? 1, grupos: gruposDe(t) }));
+  const promoConReglas = (t: Temporada) => t.tipo === "descuento_pct" || (t.tipo === "descuento_monto" && (t.descuento_unidad === "persona_noche" || t.descuento_unidad === "habitacion_noche"));
 
   function reset() {
     setEditId(null); setNombre(""); setIni(""); setFin(""); setPrioridad("1"); setMinNoches("1");
     setCompraIni(""); setCompraFin(""); setTipo("tarifa"); setDescuento(""); setRegimenRestringido("");
     setRangosExtra([]); setBlackouts([]); setCondicionPagoTipo("sin_condicion"); setCondicionPagoPct(""); setCondicionPagoDias("");
+    setPrevias(null); setPideComb(null);
+    setUnidad(""); setReglaNG(""); setDiasPromo(null); setGuardada(null);
     setErr("");
   }
 
@@ -237,12 +285,32 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
     setCondicionPagoTipo(t.condicion_pago_tipo ?? "sin_condicion");
     setCondicionPagoPct(pctInicialParaFormulario(t.condicion_pago_pct_inicial));
     setCondicionPagoDias(t.condicion_pago_dias_saldo != null ? String(t.condicion_pago_dias_saldo) : "");
+    setPrevias(fechasGuardadas(t)); // lo guardado: sus fechas antiguas sin cambios no se vuelven a juzgar
+    setGuardada(t);
+    setUnidad(esUnidadMonto(t.descuento_unidad) ? t.descuento_unidad : "");
+    setReglaNG(esReglaNocheGratis(t.noche_gratis_regla) ? t.noche_gratis_regla : "");
+    setDiasPromo(t.noche_gratis_regla || t.descuento_unidad === "persona_estadia" ? (t.dias_promo?.length ? t.dias_promo : "todos") : null);
     setErr("");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function guardar() {
     if (!nombre.trim()) { setErr("Ponle un nombre."); return; }
+    // Mismas reglas de fechas que el servidor (lib/hoteles/validarFechasVigencia.ts): aviso inmediato y sin ida al servidor.
+    // El servidor las vuelve a aplicar siempre; esto no las reemplaza.
+    const fechas = validarFechasVigencia(
+      { inicio: ini, fin, rangos: rangosExtra, blackouts, compraInicio: compraIni, compraFin },
+      { anioVigente: anioVigenteBogota(), previas: editId == null ? null : previas },
+    );
+    if (!fechas.ok) { setErr(fechas.error); return; }
+    // Misma regla que el servidor (lib/hoteles/promocionesVigencia.ts): las promociones nuevas eligen, sin valor por defecto.
+    const campos = {
+      tipo, descuentoUnidad: tipo === "descuento_monto" && unidad ? unidad : null,
+      nocheGratisRegla: tipo === "promo_noche_gratis" && reglaNG ? reglaNG : null,
+      diasPromo: (tipo === "promo_noche_gratis" && reglaNG) || (tipo === "descuento_monto" && unidad === "persona_estadia") ? diasPromo : null,
+    };
+    const vp = validarCamposPromo(campos, editId == null ? null : guardada);
+    if (!vp.ok) { setErr(vp.error); return; }
     setErr(""); setAviso("");
     const payload = {
       hotelId, nombre, inicio: ini, fin,
@@ -255,11 +323,13 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
       condicionPagoTipo,
       condicionPagoPctInicial: condicionPagoPct === "" ? null : Number(condicionPagoPct),
       condicionPagoDiasSaldo: condicionPagoDias === "" ? null : Number(condicionPagoDias),
+      descuentoUnidad: campos.descuentoUnidad, nocheGratisRegla: campos.nocheGratisRegla, diasPromo: campos.diasPromo,
     };
     start(async () => {
       const r = editId == null ? await crearTemporada(payload) : await actualizarTemporada(editId, payload);
       if (!r.ok) { setErr(r.error); return; }
       if (r.aviso) setAviso(r.aviso);
+      if (r.cambioPendiente?.familias.length) setPideComb({ id: r.cambioPendiente.promocionId, nombre, familias: r.cambioPendiente.familias });
       reset();
     });
   }
@@ -278,11 +348,23 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
           <span className="text-[11px] text-gray-400">P{t.prioridad ?? 1}</span>
           {(tp === "descuento_pct" || tp === "descuento_monto") && t.descuento_valor != null && (
             <span className="text-[11px] font-medium text-[var(--brand-success)]">
-              {tp === "descuento_pct" ? `−${t.descuento_valor}%` : `−${formatNetoTarifa(t.descuento_valor, moneda)}/pax`}
+              {tp === "descuento_pct" ? `−${t.descuento_valor}%` : esUnidadMonto(t.descuento_unidad) ? `−${formatNetoTarifa(t.descuento_valor, moneda)} · ${ETIQUETA_UNIDAD[t.descuento_unidad].toLowerCase()}` : `−${formatNetoTarifa(t.descuento_valor, moneda)}/pax (unidad anterior)`}
             </span>
           )}
           {tp === "promo_noche_gratis" && (
-            <span className="text-[11px] font-medium text-[var(--brand-success)]">1 noche gratis (mín. {t.min_noches ?? 1}N)</span>
+            <span className="text-[11px] font-medium text-[var(--brand-success)]">
+              1 noche gratis (mín. {t.min_noches ?? 1}N) · {esReglaNocheGratis(t.noche_gratis_regla) ? ETIQUETA_REGLA_NOCHE[t.noche_gratis_regla].toLowerCase() : "promedio (anterior)"}
+            </span>
+          )}
+          {[t.hotel_promocion_combinacion].flat().some((c) => c?.estado === "pendiente") && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-800" data-combinacion-pendiente>Pendiente: configura su combinación con EBB / Long Stay (Promociones) — no se vende</span>}
+          {t.dias_promo?.length ? <span className="text-[11px] text-gray-500">· {tp === "promo_noche_gratis" ? "bonifica" : "entrada"} {textoDias(t.dias_promo)}</span> : null}
+          {t.promo_base_id != null && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600" data-reglas-promo>
+              sobre {temporadas.find((b) => b.id === t.promo_base_id)?.nombre ?? "su base"}: {(t.hotel_promocion_reglas ?? []).map((r) => {
+                const g = temporadas.find((b) => b.id === t.promo_base_id)?.hotel_temporada_grupos?.find((x) => x.id === r.grupo_id);
+                return `${g?.nombre ?? "todos"} −${tp === "descuento_pct" ? `${r.valor}%` : formatNetoTarifa(r.valor, moneda)}${r.dias ? ` (${textoDias(r.dias)})` : ""}`;
+              }).join(" · ")}
+            </span>
           )}
           {t.regimen_restringido && (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">solo {t.regimen_restringido}</span>
@@ -310,6 +392,25 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
           )}
         </span>
         <span className="flex items-center gap-3">
+          {permiteGrupos && (t.tipo ?? "tarifa") === "tarifa" && (
+            <>
+              {gruposDe(t).length > 0 && (
+                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600" data-estado-grupos
+                  title={gruposDe(t).some((g) => g.activo) ? "Esta vigencia se vende por grupos de días" : "Grupos preparados: no cambian lo que hoy se vende"}>
+                  {gruposDe(t).map((g) => `${g.nombre} ${textoDias(g.dias)}`).join(" · ")} · {gruposDe(t).some((g) => g.activo) ? "se vende por grupos" : "preparado"}
+                </span>
+              )}
+              <button type="button" onClick={() => setGruposAbierta(t)} disabled={nombreRepetido(t)}
+                title={nombreRepetido(t) ? "El nombre se repite en otra vigencia: solo una vigencia con nombre único puede tener grupos" : "Grupos de días: preparar, aplicar a la venta o volver a todos los días"}
+                className="flex items-center gap-1 text-xs text-[var(--brand-accent)] hover:underline disabled:cursor-not-allowed disabled:opacity-40">
+                <CalendarDays className="h-3.5 w-3.5" aria-hidden /> Grupos de días
+              </button>
+            </>
+          )}
+          {permiteGrupos && promoConReglas(t) && (
+            <button type="button" onClick={() => setReglasAbierta(t)} className="text-xs text-[var(--brand-accent)] hover:underline"
+              title="Promoción por grupo: base vinculada, valor y días por grupo">Reglas por grupo</button>
+          )}
           <button type="button" onClick={() => editar(t)} className="text-xs text-[var(--brand-accent)] hover:underline">Editar</button>
           <DelBtn onDel={() => eliminarTemporada(t.id, hotelId)} />
         </span>
@@ -319,6 +420,16 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
 
   return (
     <section>
+      {reglasAbierta && (
+        <ReglasPromoPanel hotelId={hotelId} bases={basesReglas} onCerrar={() => setReglasAbierta(null)}
+          promo={{ id: reglasAbierta.id, nombre: reglasAbierta.nombre, tipo: reglasAbierta.tipo ?? "tarifa", prioridad: reglasAbierta.prioridad ?? 1,
+            descuento_valor: reglasAbierta.descuento_valor ?? null, descuento_unidad: reglasAbierta.descuento_unidad ?? null,
+            promo_base_id: reglasAbierta.promo_base_id ?? null, reglas: reglasAbierta.hotel_promocion_reglas ?? [] }} />
+      )}
+      {gruposAbierta && (
+        <GruposDiasPanel temporadaId={gruposAbierta.id} nombreVigencia={gruposAbierta.nombre} onCerrar={() => setGruposAbierta(null)}
+          onGruposCambiados={(gs) => setGruposLocales((m) => ({ ...m, [gruposAbierta.id]: gs }))} />
+      )}
       <h2 className="mb-1 text-sm font-semibold text-gray-700">Temporadas y promociones</h2>
       <p className="mb-3 text-xs text-gray-500">
         Las fechas <b>pueden cruzarse</b>: gana la de mayor <b>prioridad</b>. La <b>vigencia de compra</b> define
@@ -348,7 +459,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
           </div>
           {esDescuento && (
             <div>
-              <label className={lbl}>{tipo === "descuento_pct" ? "Descuento %" : "Descuento $/pax"}</label>
+              <label className={lbl}>{tipo === "descuento_pct" ? "Descuento %" : unidad ? `Descuento $ (${ETIQUETA_UNIDAD[unidad].toLowerCase()})` : "Descuento $"}</label>
               <Input type="number" min={0} value={descuento} onChange={(e) => setDescuento(e.target.value)} placeholder={tipo === "descuento_pct" ? "20" : "50000"} />
             </div>
           )}
@@ -384,11 +495,48 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
             &quot;Sin condición especial&quot; lo es, sin selector aparte).
           </p>
         )}
+        {tipo === "descuento_monto" && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2" data-promo-monto>
+            <label className={lbl}>Unidad del descuento
+              <select value={unidad} onChange={(e) => { setUnidad(e.target.value as UnidadMonto | ""); setDiasPromo(null); }} className={`${sel} mt-1 w-full`}>
+                <option value="">{montoHeredado ? "Unidad anterior ($ por pax)" : "Elige la unidad…"}</option>
+                {UNIDADES_MONTO.map((u) => <option key={u} value={u}>{ETIQUETA_UNIDAD[u]}</option>)}
+              </select>
+            </label>
+            {unidad === "persona_estadia" && (
+              <EleccionDiasControl nombre="dias-entrada" valor={diasPromo} onChange={setDiasPromo} etiquetaTodos="Todos los días de entrada" />
+            )}
+            <p className="text-xs text-gray-500 sm:col-span-2">
+              Si el monto supera la tarifa de su unidad, <b>no aplica</b> (igual = 0); aplica a todo pasajero con tarifa.
+              {unidad === "persona_estadia" && " Se descuenta una sola vez por persona, según el día de entrada."}
+              {(unidad === "persona_noche" || unidad === "habitacion_noche") && " Por noche: después de guardarla, vincúlala a su base en «Reglas por grupo» (sin reglas no aplica)."}
+            </p>
+          </div>
+        )}
         {esNocheGratis && (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2" data-promo-noche-gratis>
+            <label className={lbl}>Noche que se bonifica
+              <select value={reglaNG} onChange={(e) => { setReglaNG(e.target.value as ReglaNocheGratis | ""); if (!e.target.value) setDiasPromo(null); }} className={`${sel} mt-1 w-full`}>
+                <option value="">{ngHeredada ? "Promedio (anterior)" : "Elige qué noche…"}</option>
+                {REGLAS_NOCHE_GRATIS.map((r) => <option key={r} value={r}>{ETIQUETA_REGLA_NOCHE[r]}</option>)}
+              </select>
+            </label>
+            {reglaNG && (
+              <EleccionDiasControl nombre="dias-bonifica" valor={diasPromo} onChange={setDiasPromo} etiquetaTodos="Todos los días" />
+            )}
+          </div>
+        )}
+        {esNocheGratis && !reglaNG && ngHeredada && (
           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
             Se regala SIEMPRE exactamente 1 noche (nunca escala con más noches): una estadía de {Math.max(1, Number(minNoches) || 1)}
             {" "}o más noches paga el equivalente a 1 noche menos del total (se descuenta 1/N del total, sin importar si son{" "}
             {Math.max(1, Number(minNoches) || 1)}, {Math.max(1, Number(minNoches) || 1) + 1} o más noches).
+          </p>
+        )}
+        {esNocheGratis && reglaNG && (
+          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            Con {Math.max(1, Number(minNoches) || 1)} o más noches se bonifica <b>exactamente una</b>: {ETIQUETA_REGLA_NOCHE[reglaNG].toLowerCase()}
+            {reglaNG === "ultima" ? " si su día está permitido (si no, no aplica)" : " entre las noches permitidas"}. La salida no cuenta como noche.
           </p>
         )}
 
@@ -403,6 +551,16 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
         {aviso && <p className="mt-2 rounded-lg bg-[var(--brand-accent)]/10 px-3 py-2 text-xs text-[var(--brand-primary)]">{aviso}</p>}
+        {pideComb && (
+          <CombinacionEditor promocion={pideComb.nombre} familias={pideComb.familias} pendiente={pending}
+            onCancelar={() => setPideComb(null)}
+            onGuardar={(c) => start(async () => {
+              const r = await activarCambioPromocion(pideComb.id, c);
+              if (!r.ok) { setErr(r.error); return; }
+              setPideComb(null);
+              setAviso(r.aviso ?? "Cambio activado.");
+            })} />
+        )}
 
         <ul className="mt-3 divide-y divide-gray-100">
           {activas.map((t) => filaTemp(t))}
@@ -440,7 +598,11 @@ function CopiarDeHotel({ hotelId, otrosHoteles }: { hotelId: number; otrosHotele
     setMsg("");
     start(async () => {
       const r = await copiarTemporadasDesdeHotel(hotelId, Number(origen));
-      if (r.ok) { setMsg(`✓ ${r.copiadas} copiada(s)`); setOrigen(""); router.refresh(); }
+      if (r.ok) {
+        // Las vigencias que no cumplen las reglas de fechas no se copian ni se corrigen: se dice cuáles son.
+        setMsg(`✓ ${r.copiadas} copiada(s)${r.omitidas?.length ? ` · ${r.omitidas.length} omitida(s) por sus fechas: ${r.omitidas.join(" · ")}` : ""}${r.avisos?.length ? ` · ${r.avisos.join(" · ")}` : ""}`);
+        setOrigen(""); router.refresh();
+      }
       else setMsg(r.error);
     });
   }
@@ -574,6 +736,8 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
 
   // La temporada (vigencia) y el régimen ya van en el encabezado de cada grupo; la fila conserva la categoría, la
   // etiqueta Base/Promo, la condición de la tarifa y todas las acomodaciones.
+  // #43/#60 (299): nombre del grupo de una tarifa por grupo (viene en la misma lectura de vigencias).
+  const nombreGrupo = (id: string) => temporadas.flatMap((x) => x.hotel_temporada_grupos ?? []).find((g) => g.id === id)?.nombre ?? null;
   const filaTarifa = (t: Tarifa) => (
     <tr key={t.id} className="border-t border-gray-50 align-top">
       <td className="px-2 py-2 text-gray-700" data-label="Categoría">
@@ -593,6 +757,11 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             );
           })()}
           {t.temporada_base && <span className="text-[10px] text-gray-400">desde {t.temporada_base}</span>}
+          {t.grupo_id && (
+            <span className="rounded-full bg-[var(--brand-success)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--brand-primary)]" data-grupo>
+              {nombreGrupo(t.grupo_id) ?? "Grupo"} · {textoDias(t.grupo_dias ?? [])}
+            </span>
+          )}
         </div>
         {/* Condición de la TARIFA (ej. "No reembolsable.") — distinta de la
             condición de PAGO de la temporada (cuánto/cuándo se paga). */}
@@ -622,6 +791,9 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
         </>
       )}
       <td className="px-1 py-1 text-right" data-label="Acciones">
+        {t.grupo_id ? (
+          <span className="text-[10px] text-gray-500">Se edita en «Grupos de días»</span>
+        ) : (
         <div className="flex items-center justify-end gap-1">
           <button
             type="button"
@@ -638,6 +810,7 @@ function TarifasBox({ hotelId, categorias, regimenes, temporadas, tarifas, venci
             etiqueta={`Eliminar tarifa ${t.tipo_habitacion ?? ""} · ${t.alimentacion ?? ""} · ${t.temporada ?? ""}`}
           />
         </div>
+        )}
       </td>
     </tr>
   );

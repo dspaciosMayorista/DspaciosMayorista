@@ -36,6 +36,27 @@ export function nombreVigenciaVencida(nombre: string, vigencias: TemporadaRango[
   return filas.every((v) => !!v.compra_fin && v.compra_fin < hoy);
 }
 
+/** #43/#60 (299): vigencias que se VENDEN por grupos de días. La calculadora general no escribe sus tarifas ni las
+ * de promociones calculadas desde ellas (`temporada_base`): se cambian por grupo y se aplican en «Grupos de días».
+ * Misma regla que `generar_tarifas_hotel_calculadora` en la base. */
+export function vigenciasConGrupos(vigencias: TemporadaRango[]): Set<string> {
+  return new Set(vigencias.filter((v) => (v.tipo ?? "tarifa") === "tarifa" && (v.grupos?.length ?? 0) > 0).map((v) => v.nombre.trim()));
+}
+export function separarFilasConGrupos<T extends { temporada: string; temporada_base?: string | null }>(
+  filas: T[],
+  vigencias: TemporadaRango[],
+): { generables: T[]; conGrupos: string[] } {
+  const nombres = vigenciasConGrupos(vigencias);
+  const conGrupos = new Set<string>();
+  const generables: T[] = [];
+  for (const f of filas) {
+    const t = f.temporada.trim(), b = (f.temporada_base ?? "").trim();
+    if (nombres.has(t) || (b && nombres.has(b))) conGrupos.add(nombres.has(t) ? t : `${t} (desde ${b})`);
+    else generables.push(f);
+  }
+  return { generables, conGrupos: [...conGrupos].sort() };
+}
+
 /** Separa las filas cuya temporada es una vigencia vencida (se conservan sin
  * reescribir) de las que sí se generan. */
 export function separarFilasVencidas<T extends { temporada: string }>(

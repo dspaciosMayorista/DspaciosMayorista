@@ -123,7 +123,7 @@ describe("B7 · ninguna salida por error deja un contrato fantasma", () => {
   test("convertirCotizacionCarrito revierte el contrato del grupo que falló", () => {
     const cuerpo = cuerpoFuncion(reservarActions, ANCLA_CARRITO);
     assert.match(cuerpo, /fallarYRevertirGrupo\(/);
-    assert.match(cuerpo, /revertirContratoIncompleto\(\{ rpc: rpcFinanciero \}, numero, tenantCotizacion\)/);
+    assert.match(cuerpo, /revertirContratoIncompleto\(\{ rpc: \(fn, a\) => rpcFinanciero\(idc, fn, a\) \}, numero, tenantCotizacion\)/);
   });
 
   test("los costos ya no se calculan dentro de un catch que se los traga", () => {
@@ -206,7 +206,7 @@ describe("B7 R2 · confirmarVenta se niega a confirmar con la escritura financie
   test("lee financiero_estado ANTES de marcar 'confirmado' y rechaza si sigue 'pendiente'", () => {
     // Desde W7 (migración 197) la confirmación es UNA transacción de la base:
     // confirmarVenta solo llama a confirmar_venta y el candado vive allí.
-    const cuerpo = cuerpoFuncion(reservarActions, "export async function confirmarVenta(numeroContrato: string)");
+    const cuerpo = cuerpoFuncion(reservarActions, "export async function confirmarVenta(numeroContrato: string, identidad: IdentidadContrato)");
     assert.match(cuerpo, /sb\.rpc\("confirmar_venta", \{ p_numero: numeroContrato \}\)/, "confirmarVenta debe delegar en confirmar_venta");
     assert.doesNotMatch(cuerpo, /\.update\(\{ estado: "confirmado" \}\)/, "ya no confirma la venta con un UPDATE suelto");
     const sql = leer("supabase/migrations/20260601000197_confirmar_venta_atomica.sql");

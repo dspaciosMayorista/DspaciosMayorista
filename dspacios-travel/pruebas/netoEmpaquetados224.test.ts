@@ -225,6 +225,9 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci�
     // #90 D: lee SOLO `id`/`ruta`/`moneda` del vuelo vinculado (la moneda real de la fuente); nunca columnas de costo. Lo llaman el panel y el
     // generador del armado (sin venta) y la cotización de la oferta #63 (service-role).
     ["lib/reservar/fuentesMoneda90.ts", { cliente: "sesion", roles: "armado interno (sin venta) o service-role" }],
+    // #85: vuelos del contrato en el portal B2B. Cliente de servicio que lee SOLO columnas operativas del empaquetado vinculado (record, ruta, vuelos, fechas y horas) para contratos PROPIOS ya
+    // autorizados por cargarConjuntoPortal; sin tarifas, fee, notas ni estados de pago. Protegido por pruebas/portalVuelos85.test.ts (selección explícita, sin columnas financieras, DTO sin record, participación excluida).
+    ["lib/portal/vuelosPortalServidor.ts", { cliente: "servicio", roles: "service-role: columnas operativas de vuelos, contratos propios ya autorizados (sin tarifas ni notas)" }],
     ["lib/tarifario/datos.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/composicionIncluidos.ts", { cliente: "servicio", roles: "service-role (solo fecha_ida de empaquetados: no lee precios ni costos)" }],
     ["lib/tarifario/datosBernalo.ts", { cliente: "servicio", roles: "service-role" }],

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { crearBlackout, eliminarBlackout } from "./blackouts-actions";
+import { alternarVisibles, estadoVisibles } from "@/lib/paquetes/seleccionMasiva";
 
 export type Blackout = { id: number; fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias?: string[] | null; motivo: string | null };
 
@@ -64,6 +65,7 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
               {categorias.length > 0 && (
                 <div>
                   <p className="mb-1 text-xs font-medium text-gray-600">Categorías a cerrar</p>
+                  <MarcarTodas opciones={categorias} marcadas={cats} onChange={setCats} />
                   <div className="flex flex-wrap gap-3">
                     {categorias.map((c) => (
                       <label key={c} className="flex items-center gap-1 text-sm text-gray-600">
@@ -76,6 +78,7 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
               )}
               <div>
                 <p className="mb-1 text-xs font-medium text-gray-600">Acomodaciones a cerrar</p>
+                <MarcarTodas opciones={ACOM_ROOMS} marcadas={acoms} onChange={setAcoms} />
                 <div className="flex flex-wrap gap-3">
                   {ACOM_ROOMS.map((a) => (
                     <label key={a} className="flex items-center gap-1 text-sm text-gray-600">
@@ -118,5 +121,19 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
         </div>
       )}
     </section>
+  );
+}
+
+// #50: casilla «Seleccionar todos» de una lista corta de opciones. Solo cambia la selección del formulario.
+function MarcarTodas<T extends string>({ opciones, marcadas, onChange }: { opciones: readonly T[]; marcadas: readonly T[]; onChange: (v: T[]) => void }) {
+  const sel = new Set(marcadas);
+  const estado = estadoVisibles(sel, opciones);
+  if (opciones.length < 2) return null;
+  return (
+    <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500">
+      <input type="checkbox" checked={estado.checked} ref={(el) => { if (el) el.indeterminate = estado.indeterminate; }}
+        onChange={() => { const n = alternarVisibles(sel, opciones); onChange(opciones.filter((o) => n.has(o))); }} />
+      {estado.etiqueta}
+    </label>
   );
 }

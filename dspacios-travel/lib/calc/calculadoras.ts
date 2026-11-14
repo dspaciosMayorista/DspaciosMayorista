@@ -727,7 +727,7 @@ export function analizarMixta(p: MixtaParams, ctx?: ContextoCalculadora): { fila
 
   // Vigencias promocionales con precio por noche que esta calculadora deriva.
   const promosPct = ctx
-    ? [...new Set(ctx.vigencias.filter((v) => (v.tipo ?? "tarifa") === "descuento_pct").map((v) => v.nombre.trim()))].sort()
+    ? [...new Set(ctx.vigencias.filter((v) => (v.tipo ?? "tarifa") === "descuento_pct" && v.promo_base_id == null).map((v) => v.nombre.trim()))].sort()
     : [];
   const esPromoPct = new Set(promosPct);
 

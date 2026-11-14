@@ -92,7 +92,9 @@ describe("corrección puntual — actualizarTemporada: lectura previa autoritati
     const cuerpo = cuerpoDeFuncion("actualizarTemporada");
     assert.match(
       cuerpo,
-      /\.select\("nombre,\s*hotel_id"\)/,
+      // #43: la misma lectura previa ahora trae además las fechas guardadas (para no juzgar de nuevo lo que no cambia); sigue
+      // empezando por nombre + hotel_id, que es lo que este invariante protege.
+      /\.select\("nombre,\s*hotel_id(,\s*[a-z_]+)*"\)/,
       "actualizarTemporada no lee hotel_id en la consulta previa — sin esto no hay identidad autoritativa antes del update"
     );
   });
@@ -101,10 +103,10 @@ describe("corrección puntual — actualizarTemporada: lectura previa autoritati
     const cuerpo = cuerpoDeFuncion("actualizarTemporada");
     assert.match(
       cuerpo,
-      /const\s*\{\s*data:\s*actual\s*,\s*error:\s*eActual\s*\}\s*=\s*await\s+sb\s*\n?\s*\.from\("hotel_temporadas"\)\s*\n?\s*\.select\("nombre,\s*hotel_id"\)/,
+      /const\s*\{\s*data:\s*actual\s*,\s*error:\s*eActual\s*\}\s*=\s*await\s+sb\s*\n?\s*\.from\("hotel_temporadas"\)\s*\n?\s*\.select\("nombre,\s*hotel_id(,\s*[a-z_]+)*"\)/,
       "no destructura error de la lectura previa (eActual) — un fallo técnico en esa consulta quedaría indistinguible de 'sin datos'"
     );
-    const idxLectura = cuerpo.indexOf(".select(\"nombre, hotel_id\")");
+    const idxLectura = cuerpo.search(/\.select\("nombre,\s*hotel_id(,\s*[a-z_]+)*"\)/);
     const idxUpdate = cuerpo.indexOf(".update(payloadTemporada(");
     assert.ok(idxLectura >= 0 && idxUpdate > idxLectura, "no se pudo ubicar el orden lectura → update");
     const entreLecturaYUpdate = cuerpo.slice(idxLectura, idxUpdate);

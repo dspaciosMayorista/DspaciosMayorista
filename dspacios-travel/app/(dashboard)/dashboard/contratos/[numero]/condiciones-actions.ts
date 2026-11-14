@@ -16,10 +16,11 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { revalidatePath } from "next/cache";
 
 async function sesionSuperadmin(): Promise<{ userId: string } | null> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo lee la sesión/rol
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return null;
   const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).maybeSingle();
@@ -42,6 +43,7 @@ export async function registrarOverrideRestriccion(
   contratoCondicionId: unknown,
   restriccionAfectada: unknown,
   motivo: unknown,
+  identidad: IdentidadContrato,
 ): Promise<{ ok: boolean; error?: string }> {
   const sesion = await sesionSuperadmin();
   if (!sesion) {
@@ -60,7 +62,7 @@ export async function registrarOverrideRestriccion(
   if (!motivoTexto) return { ok: false, error: "El motivo de la excepción es obligatorio." };
   if (motivoTexto.length > 2000) return { ok: false, error: "El motivo es demasiado largo." };
 
-  const admin = createAdminClient();
+  const admin = createAdminClient(parseIdentidad(identidad));
   const rpc = await admin.rpc("registrar_override_restriccion", {
     p_numero_contrato: numero,
     p_contrato_condicion_id: condicionId,
@@ -68,7 +70,7 @@ export async function registrarOverrideRestriccion(
     p_motivo: motivoTexto,
     p_usuario_id: sesion.userId,
   });
-  if (rpc.error) return { ok: false, error: mensajeSeguro(rpc.error.message) };
+  if (rpc.error) return { ok: false, error: mensajeSiIdentidad(rpc.error) ?? mensajeSeguro(rpc.error.message) };
 
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true };

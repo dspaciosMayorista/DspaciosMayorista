@@ -9,6 +9,7 @@ import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import Link from "next/link";
 import { ETIQUETA_FALTA_DESTINO } from "@/lib/programas/destinoFijo";
 import type { CabeceraInput } from "./actions";
+import { MAX_NOCHES_VIAJE } from "@/lib/reglas/duracionViaje";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
 
@@ -149,7 +150,8 @@ export function CabeceraForm({
         </div>
         <div>
           <label className={lbl}>Noches</label>
-          <Input type="number" value={f.noches ?? ""} onChange={(e) => set("noches", numOrNull(e.target.value))} />
+          <Input type="number" max={MAX_NOCHES_VIAJE} value={f.noches ?? ""} onChange={(e) => set("noches", numOrNull(e.target.value))} />
+          {(f.noches ?? 0) > MAX_NOCHES_VIAJE && <p role="alert" className="mt-1 text-xs text-red-600">La estadía máxima es de {MAX_NOCHES_VIAJE} noches.</p>}
         </div>
         <div>
           <label className={lbl}>Moneda</label>

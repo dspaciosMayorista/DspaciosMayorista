@@ -145,8 +145,8 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
   // los tipos de TypeScript en runtime. ──
   describe("frontera unknown — ambas Server Actions tratan sus argumentos públicos como unknown (revisión 4)", () => {
     test("guardarTramosContrato/actualizarEstadoEmisionContrato declaran sus parámetros públicos como unknown", () => {
-      assert.match(src, /export async function guardarTramosContrato\(numeroContratoIn: unknown, tramosIn: unknown\): Promise<ResultTramos>/);
-      assert.match(src, /export async function actualizarEstadoEmisionContrato\(\s*numeroContratoIn: unknown,\s*estadoEmisionIn: unknown,\s*notaIn: unknown\s*\): Promise<Result>/);
+      assert.match(src, /export async function guardarTramosContrato\(numeroContratoIn: unknown, tramosIn: unknown, identidad: IdentidadContrato\): Promise<ResultTramos>/);
+      assert.match(src, /export async function actualizarEstadoEmisionContrato\(\s*numeroContratoIn: unknown,\s*estadoEmisionIn: unknown,\s*notaIn: unknown,\s*identidad: IdentidadContrato\s*\): Promise<Result>/);
     });
 
     test("ambas funciones parsean con las funciones puras de frontera-tramos.ts antes de tocar el RPC", () => {
@@ -163,7 +163,7 @@ describe("contrato-vuelos-actions.ts — server actions del editor", () => {
   });
 
   test("errores del RPC se propagan como { ok: false, error }, nunca se tragan en silencio, y nunca crudos (revisión 3, punto 6)", () => {
-    const matches = src.match(/if \(error\) return \{ ok: false, error: mensajeSeguro\(error, "[a-z_]+"\) \};/g) ?? [];
+    const matches = src.match(/if \(error\) return \{ ok: false, error: mensajeSiIdentidad\(error\) \?\? mensajeSeguro\(error, "[a-z_]+"\) \};/g) ?? [];
     assert.ok(matches.length >= 2, "ambas funciones (tramos y estado de emisión) deben propagar el error del RPC, saneado con mensajeSeguro()");
     assert.doesNotMatch(src, /error: error\.message/, "error.message crudo NUNCA debe llegar directo al navegador");
   });
@@ -367,6 +367,8 @@ describe("editor page — nunca expone cliente/pasajeros/precios/costos", () => 
     assert.match(src, /from\("ventas_vuelo_sistema"\)/);
     assert.match(src, /from\("contrato_vuelos_editor"\)/);
     assert.doesNotMatch(src, /from\("ventas"\)/);
+    // #75: la identidad sale de la misma fila de ventas_vuelo_sistema (migración 285).
+    assert.match(src, /identidadDe\(resumen\?\.numero_contrato, resumen\?\.contrato_uid\)/);
   });
 
   test("gate de rol con ROLES_EDITOR_VUELOS_CONTRATO antes de renderizar cualquier dato", () => {

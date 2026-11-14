@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { Trash2, Link2, Undo2, Sparkles, Plus } from "lucide-react";
 import { formatCOP } from "@/lib/utils";
+import { identidadDe, unirIdentidades, type IdentidadContrato } from "@/lib/contrato/identidad";
+import { alternarVisibles, estadoVisibles } from "@/lib/paquetes/seleccionMasiva";
 import { importarExtracto, cruzar, deshacerCruce, eliminarLineaExtracto, eliminarLineasExtracto, eliminarPeriodoExtracto, registrarMovimientoDirecto } from "./actions";
 import { listarCuentasMovimiento } from "../libro-diario/actions";
 
@@ -16,7 +18,7 @@ type LineaGasto = { cuentaTexto: string; tercero: string; valor: string };
 const LINEA_GASTO_VACIA: LineaGasto = { cuentaTexto: "", tercero: "", valor: "" };
 
 export type ExtractoItem = { id: number; fecha: string; descripcion: string; valor: number; periodo: string };
-export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null; categoria: "cartera" | "proveedor" };
+export type SistemaItem = { ref: string; tipo: string; descripcion: string; fecha: string | null; valor: number; numeroContrato: string | null; /** Identidad del contrato del ítem (vacía si no hay contrato o no se pudo leer); se une y se reenvía a la acción. */ identidad: IdentidadContrato; categoria: "cartera" | "proveedor" };
 export type Cruce = { id: number; total: number; nota: string; fecha: string; extracto: ExtractoItem[]; sistema: SistemaItem[] };
 
 const abs = (n: number) => Math.abs(n);
@@ -239,6 +241,9 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
 
   function toggleExt(id: number) { setSelExt((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); }
   function toggleSis(ref: string) { setSelSis((p) => { const n = new Set(p); n.has(ref) ? n.delete(ref) : n.add(ref); return n; }); }
+  // #50: solo las filas que pasan los filtros; lo ya elegido fuera del filtro se conserva y se avisa. Solo cambia la selección.
+  const refsSisVis = useMemo(() => sisVis.map((s) => s.ref), [sisVis]);
+  const estadoSis = estadoVisibles(selSis, refsSisVis);
 
   const todoExtVisibleSel = extVis.length > 0 && extVis.every((e) => selExt.has(e.id));
   function toggleTodoExtVisible() {
@@ -280,6 +285,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     setError(null);
     setAviso(null);
     const items = sistema.filter((s) => selSis.has(s.ref)).map((s) => ({ ref: s.ref, descripcion: `${s.tipo}: ${s.descripcion}`, fecha: s.fecha, valor: s.valor, numeroContrato: s.numeroContrato }));
+    const identidadItems = unirIdentidades(...sistema.filter((s) => selSis.has(s.ref)).map((s) => s.identidad));
     const esGasto = !sumasCuadran && tipoDif === "gasto";
     const gastoLineasPayload = esGasto
       ? gastoLineas.map((l) => ({ cuentaCodigo: cuentaMovPorLabel.get(l.cuentaTexto.trim())!.codigo, tercero: l.tercero, valor: Number(l.valor) || 0 }))
@@ -289,7 +295,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
         extractoIds: [...selExt], sistema: items, nota,
         diferenciaCaja: !sumasCuadran && tipoDif === "caja",
         gastoLineas: gastoLineasPayload,
-      });
+      }, identidadItems);
       if (!r.ok) { setError(r.error); return; }
       if (r.aviso) setAviso(r.aviso);
       setSelExt(new Set()); setSelSis(new Set()); setNota(""); setTipoDif(null); setGastoLineas([{ ...LINEA_GASTO_VACIA }]); router.refresh();
@@ -304,6 +310,11 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
     manualLineas.every((l) => l.cuentaTexto.trim() && cuentaMovPorLabel.has(l.cuentaTexto.trim()) && Number(l.valor) > 0) &&
     Math.abs(manualTotal - totExt) <= 1;
 
+  // El "contrato de referencia" es texto libre: solo se declara identidad si ese número es uno que la página ya leyó (ítems del sistema o cruces).
+  const conocidas = unirIdentidades(...sistema.map((s) => s.identidad), ...cruces.flatMap((c) => c.sistema.map((s) => s.identidad)));
+  const refTrim = contratoRefManual.trim();
+  const identidadReferencia = refTrim ? identidadDe(refTrim, conocidas[refTrim]) : identidadDe(null, null);
+
   function registrarManual() {
     setError(null);
     setAviso(null);
@@ -313,7 +324,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
         nota: notaManual,
         contratoReferencia: contratoRefManual,
         lineas: manualLineas.map((l) => ({ cuentaCodigo: cuentaMovPorLabel.get(l.cuentaTexto.trim())!.codigo, tercero: l.tercero, valor: Number(l.valor) || 0 })),
-      });
+      }, identidadReferencia);
       if (!r.ok) { setError(r.error); return; }
       if (r.aviso) setAviso(r.aviso);
       setSelExt(new Set()); setModoManual(false); setNotaManual(""); setContratoRefManual(""); setManualLineas([{ ...LINEA_GASTO_VACIA }]); router.refresh();
@@ -508,6 +519,16 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
             valorMin={sisValorMin} setValorMin={setSisValorMin} valorMax={sisValorMax} setValorMax={setSisValorMax}
             orden={ordenSis} setOrden={setOrdenSis}
           />
+          {sisVis.length > 0 && (
+            <div className="mb-1 flex items-center justify-between gap-2 px-1 py-1 text-xs">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-gray-500">
+                <input type="checkbox" checked={estadoSis.checked} ref={(el) => { if (el) el.indeterminate = estadoSis.indeterminate; }}
+                  onChange={() => setSelSis((p) => alternarVisibles(p, refsSisVis))} aria-label={`${estadoSis.etiqueta} (visibles)`} />
+                {estadoSis.etiqueta} (visibles)
+              </label>
+              {estadoSis.ocultas > 0 && <span className="text-gray-400">{estadoSis.ocultas} seleccionado{estadoSis.ocultas === 1 ? "" : "s"} fuera del filtro</span>}
+            </div>
+          )}
           {sisVis.length === 0 ? <Vacio>Sin movimientos para estos filtros.</Vacio> : sisVis.map((s) => (
             <ItemFila key={s.ref} sel={selSis.has(s.ref)} sugerido={sugIdsSis.has(s.ref)} onClick={() => toggleSis(s.ref)} fecha={s.fecha} desc={`${s.tipo} · ${s.descripcion}`} valor={s.valor} contrato={s.numeroContrato} />
           ))}
@@ -537,7 +558,7 @@ export function ConciliacionesClient({ extracto, sistema, cruces }: { extracto: 
                     )}
                     {c.nota && <span className="text-gray-400"> · {c.nota}</span>}
                   </span>
-                  <button onClick={() => start(async () => { await deshacerCruce(c.id); router.refresh(); })} className="inline-flex items-center gap-1 text-xs text-red-500 hover:underline">
+                  <button onClick={() => start(async () => { await deshacerCruce(c.id, unirIdentidades(...c.sistema.map((s) => s.identidad))); router.refresh(); })} className="inline-flex items-center gap-1 text-xs text-red-500 hover:underline">
                     <Undo2 size={13} /> Deshacer
                   </button>
                 </div>

@@ -64,7 +64,7 @@ import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTe
 // próximo que toque esto debería evaluar extraerlo a un helper compartido.
 
 const COLUMNAS_RESUMEN =
-  "modulo, paquete_id, paquete_nombre, bloqueo_id, bloqueo_label, empaquetado_id, salida_id, hotel_id, hotel_nombre, servicio_id, servicio_nombre, destino_id, destino_nombre, categoria, regimen, fecha_ida, fecha_regreso, noches, moneda, precio_sencilla, precio_doble, precio_triple, precio_multiple, precio_nino, precio_nino2, precio_infante, desde_adulto, desde_general, descripcion, recargo_individual, tipo_tarifa";
+  "modulo, paquete_id, paquete_nombre, bloqueo_id, bloqueo_label, empaquetado_id, salida_id, hotel_id, hotel_nombre, servicio_id, servicio_nombre, destino_id, destino_nombre, categoria, regimen, fecha_ida, fecha_regreso, noches, moneda, precio_sencilla, precio_doble, precio_triple, precio_multiple, precio_nino, precio_nino2, precio_infante, desde_adulto, desde_general, descripcion, recargo_individual, tipo_tarifa, desde_entrada_doble";
 
 export type FilaResumen = {
   modulo: "bloqueo" | "porcion_terrestre" | "servicios" | "dinamico";
@@ -104,6 +104,8 @@ export type FilaResumen = {
   descripcion: string | null;
   recargo_individual: number | null;
   tipo_tarifa: string | null;
+  /** #43/#60 entrega 6 (302): entrada de la estadía que justifica el «desde» DOBLE (porción con grupos; null = sin justificación). */
+  desde_entrada_doble?: string | null;
 };
 
 const PAGE = 1000;
@@ -410,7 +412,9 @@ export async function cargarResumenTarifario(
   const filasAddon = filas.filter((f) => f.modulo === "servicios");
 
   const hotelIds = [...new Set(filasVisibles.filter((f) => f.hotel_id != null).map((f) => f.hotel_id as number))];
-  const servicioIds = [...new Set(filasVisibles.filter((f) => f.servicio_id != null).map((f) => f.servicio_id as number))];
+  // #89: las portadas también cubren los servicios opcionales de Bloqueo/Porción (`filasAddon`): la búsqueda en vivo
+  // de receptivos y las tarjetas de add-ons los muestran con `fotosPorServicio`, aunque no estén en `filasVisibles`.
+  const servicioIds = [...new Set([...filasVisibles, ...filasAddon].filter((f) => f.servicio_id != null).map((f) => f.servicio_id as number))];
   const paqIdsPorcion = [...new Set(
     filasVisibles.filter((f) => f.modulo === "porcion_terrestre" && f.paquete_id != null).map((f) => f.paquete_id as number)
   )];

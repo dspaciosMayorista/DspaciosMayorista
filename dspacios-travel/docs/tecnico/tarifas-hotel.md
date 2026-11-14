@@ -127,3 +127,38 @@ sin redondear, **0 = gratis se muestra, `null` = "—"**), `agruparTarifasPorVig
 importes) y `normalizarPestanaHotel`. Antes la tabla, la vista previa de la calculadora y el historial usaban `formatCOP`
 aunque el hotel fuera USD y un `0` se escondía como "—". Pruebas: `pruebas/tarifasVistaHotel22.test.ts`,
 `pruebas/hotelPestanas22.react.ts`.
+
+## Grupos de días por vigencia (#43/#60) — esquema INACTIVO (migración 293, provisional, sin aplicar)
+- `hotel_temporada_grupos` (uuid; `temporada_id` → `hotel_temporadas.id` restrict; `nombre`; `dias smallint[]` 1=lun…7=dom;
+  `activo` con `CHECK (not activo)`). `tarifa_hotel.grupo_id` (FK restrict) + `grupo_dias` (copia de los días de esa versión,
+  la fija el trigger). NULL = «todos los días» = todo el dato actual.
+- Inactivo por diseño: una tarifa solo puede apuntar a un grupo activo, y ningún grupo puede estarlo. **Ningún código de la app
+  lee la tabla todavía**; el motor no cambia. Activar = migración futura que quite el `CHECK`, con el motor por noche listo.
+- Concurrencia: orden único de candados grupo → vigencia → candado consultivo del hotel → hotel; los datos de la vigencia se leen bajo su candado (carreras en `test_293_concurrencia.sh`).
+- Controles (triggers): sin solape de días por vigencia, vigencia de nombre único en su hotel, sin grupos en hoteles por unidad,
+  tarifa del mismo hotel/vigencia que su grupo, sin mezclar filas «todos los días» y por grupo. Índice único parcial solo para
+  filas con grupo. RLS y permisos iguales a `tarifa_hotel`. El historial (203) conserva `grupo_id`/`grupo_dias` por versión.
+- Scripts: `supabase/scripts/{preflight,postcheck,rollback,test}_293_vigencia_grupos_dias.*`. Diseño completo:
+  `vigencias-por-dia-43-60-especificacion.md` y su historial (§AA).
+
+## Motor por noche con grupos de días (#43/#60 incremento 2, en local, sin desplegar)
+- `resolverNetoNocheDetallado` (`lib/calc/paquetes.ts`) recorre por nivel de prioridad y decide con `decidirNivel`
+  (`lib/calc/empatesPrioridad.ts`). Sin grupos activos = recorrido de siempre. Con grupos: día no cubierto ⇒ la vigencia no
+  aplica; grupo que cubre sin tarifa ⇒ no se vende (sin rescate); empate con grupos ⇒ sin precio + registro deduplicado
+  por instancia (`lib/calc/registroConflictos.ts`, TTL 10 min, máx. 500). «Desde» (`liquidarHotelMasBarato*`) falla
+  cerrado con grupos activos hasta la entrega 6.
+- Mapa de netos único: `lib/calc/netosPorTemporada.ts` (clave nombre o nombre + grupo, `claveNeto` de `gruposDias.ts`).
+- Lectura de grupos incrustada en la de vigencias (`hotel_temporada_grupos(id, dias, activo)`) en `cotizar.ts`, `computo.ts`,
+  `vigencia.ts` y `paquetes/actions.ts`: cero solicitudes nuevas. **Exige la 293 aplicada antes de desplegar.**
+- Pruebas: `pruebas/motorGrupos43*.test.ts`, `pruebas/gruposDiasZona43.test.ts` (correr en Linux con distintas `TZ`),
+  `supabase/scripts/test_293_lectura_postgrest.sh`. Detalle: historial §AC.
+
+## Editor de grupos de días y propuesta de tarifas (#43/#60 incremento 3, en local; migración 295 provisional, sin aplicar)
+- Ficha del hotel → pestaña Temporadas → «Grupos de días» por vigencia de tarifa (no en promociones ni en hoteles por
+  unidad). `GruposDiasPanel.tsx` + `grupos-actions.ts` (4 acciones, una RPC cada una, sin `revalidatePath`) +
+  `lib/hoteles/alcanceGrupos.ts` (vista previa y mensajes, puro).
+- Las tarifas por grupo se guardan como **propuesta** en `hotel_grupo_tarifa_propuesta` (el motor no la lee; escrituras
+  solo por las RPC `grupos_dias_*`). Los grupos siguen inactivos (candado 293). Activar es la entrega 3c.
+- Concurrencia: huella de vigencia + grupos + propuestas + tarifas de origen + promociones vinculadas, comparada bajo
+  candados (grupos → vigencia → tarifas FOR SHARE → candado del hotel); obsoleta ⇒ PT409 / HTTP 409 «recarga».
+- Pruebas: `supabase/scripts/test_295_*.sh`, `pruebas/gruposDias295*.ts`, `pruebas/grupos295.pg.mjs`. Detalle: historial §AE.

@@ -1,12 +1,14 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Tenant } from "@/lib/tenant";
-import { interpretarRespuestaNumeroContrato, type SiguienteNumeroResult } from "./numeracionPuro";
+import { interpretarReservaNumeroContrato, type SiguienteNumeroResult } from "./numeracionPuro";
 
 export type { SiguienteNumeroResult };
 
 /**
- * ÚNICO punto de generación de numero_contrato — migración 159. Devuelve el
+ * ÚNICO punto de generación de numero_contrato desde la aplicación — migración 159 (+287: devuelve además el
+ * ticket de reserva `reservaToken`, que el creador DEBE enviar como `reserva_token` en el INSERT de `ventas`
+ * cuando no es nulo; el trigger de la 287 lo valida y lo descarta). Devuelve el
  * número YA COMPLETO (con su prefijo de tenant aplicado: DTM-0001 para
  * mayorista, MIN-00-#### para minorista). El caller NUNCA debe volver a
  * anteponerle un prefijo (nada de numeroConTenant() en los caminos que usan
@@ -36,12 +38,13 @@ export async function siguienteNumeroContrato(tenant: Tenant): Promise<Siguiente
     return { ok: false, error: "No se pudo generar el número de contrato. Intenta de nuevo o contacta a soporte." };
   }
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc("siguiente_numero_contrato_para_tenant", { p_tenant: tenant });
+  // 287: `reservar_numero_contrato` (Mayorista: DTM liberado reutilizable + ticket, o secuencia; Minorista: igual que antes).
+  const { data, error } = await admin.rpc("reservar_numero_contrato", { p_tenant: tenant });
   // El detalle técnico (nombre de función/secuencia, SQLSTATE, motivo exacto
   // del rechazo) solo se registra server-side — nunca se propaga a la Server
   // Action ni, por lo tanto, al navegador (ver numeracionPuro.ts).
   if (error) {
-    console.error(`[siguienteNumeroContrato] RPC siguiente_numero_contrato_para_tenant(${tenant}) falló:`, error.message, error);
+    console.error(`[siguienteNumeroContrato] RPC reservar_numero_contrato(${tenant}) falló:`, error.message, error);
   }
-  return interpretarRespuestaNumeroContrato(data, error);
+  return interpretarReservaNumeroContrato(data, error);
 }

@@ -41,6 +41,7 @@ for (const [momento, instante] of MOMENTOS) {
     reloj(instante);
     const bd = usarBD(semilla());
     const fila = {
+      identidad: {},
       ...CXP, fecha_obligacion: null, fecha_vencimiento: "2026-10-10", aplica_retencion: null, pct_retencion: null,
       clasificacion: "costo" as const, base_gravable: null, iva_proveedor: null, pagos: [], pagado: 0, retenido: 0, saldo: 1_000_000,
     };
@@ -63,7 +64,7 @@ for (const [momento, instante] of MOMENTOS) {
   test(`Contrato → Proveedores a las ${momento}: el panel de pago propone ${DIA_BOGOTA} y lo guarda igual`, async () => {
     reloj(instante);
     const bd = usarBD(semilla());
-    const m = await montar(h(GestionTabs, {
+    const m = await montar(h(GestionTabs, { identidad: {},
       numero: "DTM-0451", precioVenta: 3_000_000, impuesto: 0, clienteNombre: "Cliente", clienteDocumento: "CC 1",
       asesorNombre: "Asesor", asesorPct: 0, verFinanzas: true,
       costos: { costo_hotel: 1_000_000, costo_aereo: 0, costo_receptivo: 0, costo_asistencia: 0, otros_costos: 0 },
@@ -90,7 +91,7 @@ for (const [momento, instante] of MOMENTOS) {
 test("fecha elegida a mano a las 19:30 Bogotá: el pago y su asiento la conservan", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semilla());
-  const r = await registrarPagoProveedor(5, 150_000, "2026-09-12");
+  const r = await registrarPagoProveedor(5, 150_000, "2026-09-12", undefined, {});
   assert.deepEqual(r, { ok: true });
   assert.equal(bd.filas("cxp_pagos")[0].fecha, "2026-09-12");
   assert.equal(asientos(bd, "pago_proveedor")[0].fecha, "2026-09-12");
@@ -99,7 +100,7 @@ test("fecha elegida a mano a las 19:30 Bogotá: el pago y su asiento la conserva
 test("la Server Action sin fecha (llamada directa) usa el día de Bogotá a las 19:30", async () => {
   reloj(DESPUES_DEL_CORTE);
   const bd = usarBD(semilla());
-  await registrarPagoProveedor(5, 150_000, "");
+  await registrarPagoProveedor(5, 150_000, "", undefined, {});
   assert.equal(bd.filas("cxp_pagos")[0].fecha, DIA_BOGOTA);
   assert.equal(asientos(bd, "pago_proveedor")[0].fecha, DIA_BOGOTA);
 });

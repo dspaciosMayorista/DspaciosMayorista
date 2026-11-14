@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatearHora, parseHora } from "@/lib/calc/trasladoFranjas";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -30,6 +31,15 @@ export function formatMoneda(value: number, moneda?: string | null): string {
   return (moneda ?? "COP").toUpperCase() === "USD" ? formatUSD(value) : formatCOP(value);
 }
 
+/**
+ * Importes de DOCUMENTOS de cobro (cuenta de cobro, estado de cuenta): en USD muestra los CENTAVOS (USD $1,337.67), porque lo exigible no se puede redondear al dólar
+ * (formatUSD, el formato global de precios, imprime dólares enteros y NO cambia). En COP es idéntico a formatMoneda.
+ */
+export function formatMonedaDocumento(value: number, moneda?: string | null): string {
+  if ((moneda ?? "COP").toUpperCase() !== "USD") return formatCOP(value);
+  return "USD " + new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+}
+
 /** Formatea fecha ISO a texto legible en español */
 export function formatFecha(iso: string): string {
   return new Date(iso).toLocaleDateString("es-CO", {
@@ -50,6 +60,13 @@ export function formatFechaLarga(iso: string | null | undefined): string {
     month: "long",
     year: "numeric",
   });
+}
+
+/** Hora de vuelo para mostrar en 24 h «HH:mm» (13:10:00 → 13:10). Solo formatea: sin conversión de zona. Texto no interpretable se deja tal cual; vacío → null. */
+export function formatHora24(valor: unknown): string | null {
+  if (typeof valor !== "string" || !valor.trim()) return null;
+  const min = parseHora(valor);
+  return min == null ? valor.trim() : formatearHora(min);
 }
 
 /** Etiqueta de destino con su código IATA entre paréntesis: "CARTAGENA (CTG)" */

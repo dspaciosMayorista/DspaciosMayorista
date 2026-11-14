@@ -45,6 +45,8 @@ function cadena(tabla: string, op: string, resultado: () => unknown) {
   const c: Record<string, unknown> = {};
   for (const m of ["eq", "in", "or", "order", "limit", "select"]) c[m] = (...a: unknown[]) => { detalle.push([m, ...a]); return c; };
   c.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(resultado()).then(ok, ko);
+  // #43/#60 entrega L: actualizarBloqueo lee las fechas guardadas (una fila) antes de validar la estadía máxima.
+  c.maybeSingle = () => Promise.resolve(resultado()).then((r) => { const x = r as { data: unknown; error: unknown }; return { ...x, data: Array.isArray(x.data) ? x.data[0] ?? null : x.data }; });
   return c;
 }
 
@@ -117,13 +119,13 @@ test("moverPasajeroSilla sin modo, con modo inventado o sin opciones NO llega a 
     { modo: "SOLO_DATOS", operacionId: OP },
   ];
   for (const o of sinModo) {
-    const r = await acciones.moverPasajeroSilla(7, 3, 4, o as never);
+    const r = await acciones.moverPasajeroSilla(7, 3, 4, o as never, {});
     assert.equal(r.ok, false);
     if (!r.ok) assert.match(r.error, /Elige cómo recibirá/);
   }
-  const sinOp = await acciones.moverPasajeroSilla(7, 3, 4, { modo: "con_cupo", operacionId: "" });
+  const sinOp = await acciones.moverPasajeroSilla(7, 3, 4, { modo: "con_cupo", operacionId: "" }, {});
   assert.equal(sinOp.ok, false);
-  assert.equal((await acciones.moverPasajeroSilla(7, 3, 3, { modo: "con_cupo", operacionId: OP })).ok, false, "mismo record");
+  assert.equal((await acciones.moverPasajeroSilla(7, 3, 3, { modo: "con_cupo", operacionId: OP }, {})).ok, false, "mismo record");
   assert.deepEqual(rpcs, []);
 });
 
@@ -134,7 +136,7 @@ for (const modo of ["solo_datos", "con_cupo"] as const) {
               tramos_actualizados: 2, contrato_manual: false },
       error: null,
     };
-    const r = await acciones.moverPasajeroSilla(7, 3, 4, { modo, motivo: " x ", operacionId: OP });
+    const r = await acciones.moverPasajeroSilla(7, 3, 4, { modo, motivo: " x ", operacionId: OP }, {});
     assert.deepEqual(r, { ok: true, repetida: false, movidas: 2, contrato: "DTM-0451", avisoTarifaDistinta: false, avisoRecordContrato: false,
                           tramosActualizados: 2, contratoManual: false });
     assert.deepEqual(rpcs, [{ fn: "mover_pasajero", args: {
@@ -147,14 +149,14 @@ for (const modo of ["solo_datos", "con_cupo"] as const) {
 
 test("tarifa distinta: la base pide confirmación; la acción lo marca y no revalida", async () => {
   rpcRespuesta = { data: null, error: { code: "P0001", message: "TARIFA_DISTINTA: La tarifa neta del record destino es distinta. Confirma para continuar; el costo del contrato no se recalcula." } };
-  const r = await acciones.moverPasajeroSilla(7, 3, 4, { modo: "con_cupo", operacionId: OP });
+  const r = await acciones.moverPasajeroSilla(7, 3, 4, { modo: "con_cupo", operacionId: OP }, {});
   assert.equal(r.ok, false);
   if (!r.ok) {
     assert.equal(r.requiereConfirmarTarifa, true);
     assert.match(r.error, /^La tarifa neta del record destino es distinta/);
   }
   assert.deepEqual(__revalidadas(), []);
-  await acciones.moverPasajeroSilla(7, 3, 4, { modo: "con_cupo", aceptaTarifaDistinta: true, operacionId: OP });
+  await acciones.moverPasajeroSilla(7, 3, 4, { modo: "con_cupo", aceptaTarifaDistinta: true, operacionId: OP }, {});
   assert.equal(rpcs[1]!.args.p_acepta_tarifa_distinta, true);
 });
 
@@ -166,7 +168,7 @@ test("errores de la base: bloqueo ocupado (55P03), migración faltante y mensaje
   r = await acciones.cambiarSillas({ origenId: 10, destinoId: 6, cantidad: 1, motivo: "", operacionId: OP });
   assert.ok(!r.ok && /migración de base de datos \(194 a 197\)/.test(r.error));
   rpcRespuesta = { data: null, error: { code: "P0001", message: "El record PFX001 no tiene cupo libre suficiente (necesita 1, tiene 0)." } };
-  const m = await acciones.moverPasajeroSilla(7, 3, 4, { modo: "solo_datos", operacionId: OP });
+  const m = await acciones.moverPasajeroSilla(7, 3, 4, { modo: "solo_datos", operacionId: OP }, {});
   assert.ok(!m.ok && m.error.startsWith("El record PFX001 no tiene cupo libre"));
   assert.deepEqual(__revalidadas(), []);
 });
@@ -196,13 +198,13 @@ test("cambiarEstadoSilla: solo estados manuales de la matriz y con motivo", asyn
 });
 
 test("contrato manual, liberar y editar delegan en su RPC", async () => {
-  await acciones.asignarContratoManual(41, "\t00-0541\n", 3, "V9");
-  await acciones.quitarContratoManual(41, 3, "V9", "2026-10-10");
-  await acciones.borrarPasajeroSilla(41, 3, "V9");
+  await acciones.asignarContratoManual(41, "\t00-0541\n", 3, "V9", {});
+  await acciones.quitarContratoManual(41, 3, "V9", "2026-10-10", {});
+  await acciones.borrarPasajeroSilla(41, 3, "V9", {});
   await acciones.editarPasajeroSilla(41, 3, {
     pasajero_nombres: "ANA", pasajero_apellidos: "", tipo_doc: "CC", numero_doc: "1", nacimiento: "1990-01-02",
     asesor: "", hotel: "", acomodacion: "", plazo: "",
-  }, { numero_contrato: null, contrato_manual: "EXT-9", updated_at: "V9" });
+  }, { numero_contrato: null, contrato_manual: "EXT-9", updated_at: "V9" }, {});
   assert.deepEqual(rpcs.map((r) => r.fn), ["asignar_contrato_manual", "quitar_contrato_manual", "liberar_silla", "editar_pasajero_silla"]);
   assert.equal(rpcs[0]!.args.p_referencia, "\t00-0541\n", "el recorte y la resolución los hace la base");
   assert.deepEqual(rpcs[0]!.args.p_esperado, { updated_at: "V9" }, "201: asignar manda la versión vista (firma con versión)");
@@ -221,7 +223,7 @@ test("editarPasajeroSilla: sin el contrato visto no llega a la base; el rechazo 
   assert.equal((sinVisto as { ok: boolean }).ok, false);
   assert.deepEqual(rpcs, [], "sin estado esperado no se edita a ciegas");
   rpcRespuesta = { data: null, error: { code: "P0001", message: "La silla cambió mientras la editabas: ahora es del contrato DTM-0451. No se guardó nada; recarga la página." } };
-  const r = await acciones.editarPasajeroSilla(41, 3, datos, { numero_contrato: null, contrato_manual: null, updated_at: "V9" });
+  const r = await acciones.editarPasajeroSilla(41, 3, datos, { numero_contrato: null, contrato_manual: null, updated_at: "V9" }, {});
   assert.deepEqual(r, { ok: false, error: "La silla cambió mientras la editabas: ahora es del contrato DTM-0451. No se guardó nada; recarga la página." });
   assert.deepEqual(__revalidadas(), []);
 });
@@ -236,7 +238,7 @@ test("liberar y asignar sin la versión vista no llegan a la base (nunca a ciega
 
 test("un error al liberar se devuelve y no revalida", async () => {
   rpcRespuesta = { data: null, error: { code: "42501", message: "Sin permiso sobre el contrato de esta silla." } };
-  const r = await acciones.borrarPasajeroSilla(41, 3, "V9");
+  const r = await acciones.borrarPasajeroSilla(41, 3, "V9", {});
   assert.deepEqual(r, { ok: false, error: "Sin permiso sobre el contrato de esta silla." });
   assert.deepEqual(__revalidadas(), []);
 });
@@ -427,16 +429,16 @@ test("actions.ts ya no escribe sillas ni historial directamente en las operacion
 // Migración 201: quitar pide el plazo en la misma acción y editar reemplaza la
 // referencia manual en una sola RPC; ambas con la versión que vio la pantalla.
 test("quitar y editar el contrato manual: versión, plazo y referencia; validan antes de llamar a la base", async () => {
-  await acciones.quitarContratoManual(41, 3, "V9", null);
-  await acciones.editarContratoManual(41, " EXT-NUEVO ", 3, "V9");
+  await acciones.quitarContratoManual(41, 3, "V9", null, {});
+  await acciones.editarContratoManual(41, " EXT-NUEVO ", 3, "V9", {});
   assert.deepEqual(rpcs, [
     { fn: "quitar_contrato_manual", args: { p_silla_id: 41, p_plazo: null, p_esperado: { updated_at: "V9" } } },
     { fn: "editar_contrato_manual", args: { p_silla_id: 41, p_referencia: " EXT-NUEVO ", p_esperado: { updated_at: "V9" } } },
   ]);
   rpcs.length = 0;
-  assert.equal((await acciones.quitarContratoManual(41, 3, "", "2026-10-10")).ok, false, "sin versión");
-  assert.equal((await acciones.quitarContratoManual(41, 3, "V9", "10/10/2026")).ok, false, "plazo con formato inválido");
-  assert.equal((await acciones.editarContratoManual(41, "   ", 3, "V9")).ok, false, "referencia vacía");
-  assert.equal((await acciones.editarContratoManual(41, "EXT-1", 3, "")).ok, false, "sin versión");
+  assert.equal((await acciones.quitarContratoManual(41, 3, "", "2026-10-10", {})).ok, false, "sin versión");
+  assert.equal((await acciones.quitarContratoManual(41, 3, "V9", "10/10/2026", {})).ok, false, "plazo con formato inválido");
+  assert.equal((await acciones.editarContratoManual(41, "   ", 3, "V9", {})).ok, false, "referencia vacía");
+  assert.equal((await acciones.editarContratoManual(41, "EXT-1", 3, "", {})).ok, false, "sin versión");
   assert.deepEqual(rpcs, [], "ninguna llamada a la base con datos inválidos");
 });

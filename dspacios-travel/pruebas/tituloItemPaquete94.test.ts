@@ -5,6 +5,13 @@ import { tituloItemPaquete, tituloPaqueteEditado, tituloPaqueteTuristico } from 
 
 describe("tituloItemPaquete", () => {
   test("San Andrés conserva letras y tilde", () => assert.equal(tituloItemPaquete("San Andrés"), "Paquete Turístico San Andrés"));
+  test("#52: con nombre comercial manda el nombre; vacío o espacios caen al destino", () => {
+    assert.equal(tituloItemPaquete("SAN ANDRES", "San Andrés Puente Festivo"), "Paquete Turístico San Andrés Puente Festivo");
+    assert.equal(tituloItemPaquete("SAN ANDRES", "  Escapada   Caribe "), "Paquete Turístico Escapada Caribe");
+    assert.equal(tituloItemPaquete("SAN ANDRES", "   "), "Paquete Turístico SAN ANDRES");
+    assert.equal(tituloItemPaquete("SAN ANDRES", null), "Paquete Turístico SAN ANDRES");
+    assert.equal(tituloItemPaquete(null, null), "Paquete Turístico");
+  });
   test("San Jose conserva las «s»", () => assert.equal(tituloItemPaquete("San Jose"), "Paquete Turístico San Jose"));
   test("espacios iniciales, finales y repetidos se normalizan (también tabuladores y saltos)", () => {
     assert.equal(tituloItemPaquete("  San   Andrés  "), "Paquete Turístico San Andrés");

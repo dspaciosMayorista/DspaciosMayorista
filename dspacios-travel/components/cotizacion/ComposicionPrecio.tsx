@@ -39,6 +39,15 @@ function Hotel({ nombre, c, totalCotizacion }: { nombre: string | null; c: Compo
                   <td className="px-4 py-1.5 text-right tabular-nums">{formatMoneda(Math.round(x.venta * l.pax * 100) / 100, m)}</td>
                 </tr>
               )),
+              ...(l.habitacion ? [
+                <tr key={`${l.clave}-hab`} className="text-gray-600" data-testid="composicion-descuento-habitacion">
+                  <td colSpan={5} className="py-1.5 pl-8 pr-4 text-xs">
+                    Descuento por habitación: {formatMoneda(l.habitacion.descuento, m)} por habitación
+                    (reparto por ocupante: {l.habitacion.repartoDescuento.map((x) => formatMoneda(x, m)).join(" + ")}) ·
+                    neto exacto por habitación {formatMoneda(l.habitacion.netoPorHabitacion, m)} × {l.habitacion.habitaciones} = {formatMoneda(l.habitacion.netoHotelLinea, m)}
+                  </td>
+                </tr>,
+              ] : []),
               ...(l.componentes ? [] : [<tr key={`${l.clave}-n`}><td colSpan={5} className="py-1.5 pl-8 pr-4 text-xs text-amber-700" data-testid="composicion-sin-componentes">{l.nota ?? "Sin componentes verificables."}</td></tr>]),
             ])}
             {c.adicionales.map((x, i) => (
@@ -70,7 +79,7 @@ const ROTULO_SERVICIO = { tour: "Servicio / tour", vuelo: "Vuelo (manual)", otro
 
 // Composición del precio tal como se guardó al cotizar (privada: lleva netas y markup). Solo se monta para roles con acceso a costos.
 // Concilia TODOS los componentes: composición de cada hotel + servicios del carrito (se cobran fuera del hotel) = total de la cotización.
-export function ComposicionPrecio({ guardada, totalCotizacion }: { guardada: ComposicionCotizacion | null; totalCotizacion: number | null }) {
+export function ComposicionPrecio({ guardada, totalCotizacion, recobro = 0 }: { guardada: ComposicionCotizacion | null; totalCotizacion: number | null; /** #14-A: recobro del carrito. Va DENTRO de la tarifa de adulto y no tiene componente propio: se suma aquí para que la conciliación cuadre con el precio (vista interna, solo roles con acceso a costos). */ recobro?: number }) {
   if (!guardada) {
     return (
       <p className="mt-6 rounded-xl border border-gray-200 bg-white px-5 py-3 text-sm text-gray-500" data-testid="composicion-no-conservada">
@@ -82,7 +91,7 @@ export function ComposicionPrecio({ guardada, totalCotizacion }: { guardada: Com
   const m = guardada.hoteles[0].composicion.moneda;
   const sumaHoteles = guardada.hoteles.reduce((t, h) => t + h.composicion.total, 0);
   const sumaServicios = servicios.reduce((t, x) => t + x.total, 0);
-  const suma = Math.round((sumaHoteles + sumaServicios) * 100) / 100;
+  const suma = Math.round((sumaHoteles + sumaServicios + recobro) * 100) / 100;
   const mezcla = servicios.some((x) => x.moneda !== m);
   // Total contra el que se concilia: el de la cotización viva si llega; si no, el que se guardó junto a la composición.
   const total = totalCotizacion ?? guardada.total ?? null;
@@ -120,7 +129,7 @@ export function ComposicionPrecio({ guardada, totalCotizacion }: { guardada: Com
       )}
       <div className="mt-3 space-y-1 rounded-lg bg-gray-50 px-4 py-3 text-xs text-gray-600" data-testid="composicion-concilia">
         <p>
-          {guardada.hoteles.length > 1 ? "Hoteles" : "Hotel"} {formatMoneda(sumaHoteles, m)}{servicios.length > 0 && <> + servicios del carrito {formatMoneda(sumaServicios, m)}</>} = <b>{formatMoneda(suma, m)}</b>
+          {guardada.hoteles.length > 1 ? "Hoteles" : "Hotel"} {formatMoneda(sumaHoteles, m)}{servicios.length > 0 && <> + servicios del carrito {formatMoneda(sumaServicios, m)}</>}{recobro > 0 && <> + recobro (dentro de la tarifa de adulto) {formatMoneda(recobro, m)}</>} = <b>{formatMoneda(suma, m)}</b>
           {total != null && <> · precio de la cotización {formatMoneda(total, m)}</>}
         </p>
         {mezcla && <p className="text-amber-700" data-testid="composicion-monedas">Hay servicios en una moneda distinta de la del hotel: la suma no es comparable.</p>}

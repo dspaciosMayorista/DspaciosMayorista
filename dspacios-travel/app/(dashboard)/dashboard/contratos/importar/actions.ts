@@ -26,7 +26,7 @@ function lotes<T>(arr: T[], n: number): T[][] {
 async function tenantMinoristaOFalla(): Promise<
   { ok: true; tenant: "minorista" } | { ok: false; error: string }
 > {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — importador solo Minorista (MIN-), números no reutilizables
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "No autenticado." };
   const { data: perfil } = await sb.from("usuarios").select("rol").eq("id", user.id).single();
@@ -46,6 +46,7 @@ async function tenantMinoristaOFalla(): Promise<
 // ── IMPORTACIÓN CRUZADA (Relación de utilidades × Resumen de pagos) ─────────
 // REGLA: un contrato SOLO se guarda si su número aparece en LAS DOS hojas.
 // Si está en una sola, se OMITE por completo (ni venta ni abonos).
+// identidad:n/a — importador solo Minorista (MIN-), números no reutilizables
 export async function importarHistorico(textoRelacion: string, textoResumen: string): Promise<Result> {
   const gate = await tenantMinoristaOFalla();
   if (!gate.ok) return gate;
@@ -75,7 +76,7 @@ export async function importarHistorico(textoRelacion: string, textoResumen: str
   if (!enAmbos.length)
     return { ok: false, error: "Ningún contrato aparece en AMBAS hojas; no hay nada que importar. Revisa que los números coincidan." };
 
-  const sb = createAdminClient();
+  const sb = createAdminClient(); // identidad:n/a — importador solo Minorista (MIN-), números no reutilizables
 
   // (a) Venta = merge de ambas hojas (costos de Relación + titular/asesor/doc de Resumen).
   // El "vendedor" de Resumen de pagos es un freelance externo que se gana una

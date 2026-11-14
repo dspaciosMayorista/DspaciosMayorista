@@ -44,7 +44,7 @@ async function render() {
   root = createRoot(container);
   await act(async () =>
     root!.render(h(LiberarRetencion, {
-      sillaId: 41, bloqueoId: 3, version: VERSION, numeroVisible: 2, numeroHistorico: 5, pasajero: "ANA PEREZ", plazo: "2026-10-02",
+      sillaId: 41, bloqueoId: 3, version: VERSION, numeroVisible: 2, numeroHistorico: 5, pasajero: "ANA PEREZ", plazo: "2026-10-02", identidad: {},
     }))
   );
 }

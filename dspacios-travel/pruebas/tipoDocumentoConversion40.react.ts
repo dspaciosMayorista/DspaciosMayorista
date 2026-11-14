@@ -98,9 +98,9 @@ for (const modo of ["comisionable", "neta"] as const) {
       agenciaNombre: String(v.agencia_nombre ?? ""), agenciaAsesor: "", freelanceNombre: "", asesorNombre: "Asesor", planNombre: "", observaciones: "",
       precioVenta: String(v.precio_venta), pax: String(v.pax),
     };
-    assert.equal((await actualizarVenta(String(v.numero_contrato), base)).ok, true); // llamador viejo: sin campo de tipo
+    assert.equal((await actualizarVenta(String(v.numero_contrato), base, {})).ok, true); // llamador viejo: sin campo de tipo
     assert.equal(v.cliente_tipo_documento, "CE");
-    assert.equal((await actualizarVenta(String(v.numero_contrato), { ...base, clienteTipoDocumento: "CE" })).ok, true);
+    assert.equal((await actualizarVenta(String(v.numero_contrato), { ...base, clienteTipoDocumento: "CE" }, {})).ok, true);
     assert.equal(v.cliente_tipo_documento, "CE");
   });
 }

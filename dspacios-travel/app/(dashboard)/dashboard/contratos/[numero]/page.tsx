@@ -5,6 +5,11 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { identidadDe } from "@/lib/contrato/identidad";
+import { AvisoContratoCambio } from "./AvisoContratoCambio";
+import { ConfirmacionPagoPendiente } from "./ConfirmacionPagoPendiente";
+import { ObligacionesPrevistasPanel, type ObligacionPrevista } from "@/components/contrato/ObligacionesPrevistasPanel";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
 import { GestionTabs } from "./GestionTabs";
@@ -24,6 +29,7 @@ import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import CondicionesContratoPanel from "@/components/contrato/CondicionesContratoPanel";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
+import { SoportesPagoInterno, type SoporteInterno } from "./SoportesPagoInterno";
 import { desgloseNetoB2B, esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 
@@ -184,12 +190,36 @@ export default async function ContratoDetallePage({
   const fiscal = fiscalFromParams(paramsRows ?? []);
 
   if (!venta) notFound();
+  // #75: la identidad sale de la MISMA fila que se acaba de leer (`select("*")` de ventas / ventas_basica incluye contrato_uid); se pasa a cada componente.
+  const identidad = identidadDe(venta.numero_contrato, venta.contrato_uid);
+
+  // 288 (#75): en un contrato PENDIENTE se distingue lo PREVISTO de lo exigible y se avisa si los abonos ya cubren el mínimo pero la confirmación quedó pendiente.
+  // Las previstas llevan costos: solo las ve quien ya ve finanzas. Antes de aplicar la 288 estas lecturas no devuelven nada y la ficha queda como siempre.
+  let previstas: ObligacionPrevista[] = [];
+  let confirmacionPendiente = false;
+  if (venta.estado === "pendiente" && verFinanzas) {
+    if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const { data: pv } = await createAdminClient().from("contrato_obligaciones_previstas").select("clave, payload").eq("numero_contrato", numero).eq("clase", "cxp").is("materializada_en", null).order("id");
+      previstas = (pv ?? []).map((r) => {
+        const pl = (r.payload ?? {}) as Record<string, unknown>;
+        return { clave: r.clave, servicio: (pl.servicio as string) ?? null, proveedor: (pl.proveedor as string) ?? null, tipo_proveedor: (pl.tipo_proveedor as string) ?? null, valor_total: Number(pl.valor_total) || 0, moneda: (pl.moneda as string) ?? null };
+      });
+    }
+    const { data: ec } = await sb.rpc("estado_confirmacion_pago", { p_numero: numero });
+    confirmacionPendiente = (ec as { confirmacion_pendiente?: boolean } | null)?.confirmacion_pendiente === true;
+  }
 
   // Datos financieros del contrato (costos, impuesto). Solo existen si quien
   // mira tiene acceso financiero: la consulta de arriba trae la vista
   // `ventas_basica` para los demás, que NO incluye estas columnas. Se separa en
   // su propia variable para que TypeScript impida leerlas por descuido — si un
   // día alguien las pinta sin gate, el build falla en vez de filtrarlas.
+  // Soportes de pago del aliado (#86). La RLS de la tabla (migración 281) decide qué filas ve cada persona; no se deduce nada por rol aquí.
+  const soportesPago = puedeEditar
+    ? ((await sb.from("contrato_soportes_pago")
+        .select("id, nombre_original, mime, size_bytes, subido_en, vigente, motivo_retiro, retirado_en, nota_retiro, reemplaza_id")
+        .eq("numero_contrato", numero).is("archivado_en", null).order("id", { ascending: false })).data ?? []) as SoporteInterno[]
+    : [];
   const fin = verFinanzas
     ? (venta as Database["public"]["Tables"]["ventas"]["Row"])
     : null;
@@ -246,10 +276,13 @@ export default async function ContratoDetallePage({
   // Condiciones PERMANENTES del contrato — mismo resolver que usa el PDF
   // (ContratoDocumento.tsx), así que lo que ve el asesor aquí es exactamente
   // lo que trae el documento descargable.
+  // Parte 3 (#75): ¿contrato NETO de aliado? La vista básica no trae comision_estado; la base responde solo un booleano (y solo de contratos que quien llama puede ver).
+  const { data: esNetoRpc } = await sb.rpc("contrato_es_neto", { p_numero: numero });
+  const esNetoContrato = esNetoRpc === true;
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida },
+    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida, netoTotalExigible: esNetoContrato ? cobro.total : null },
   );
 
   // Formulario de excepción por fila restringida, YA ARMADO aquí (Server
@@ -266,6 +299,7 @@ export default async function ContratoDetallePage({
       if (l.esRestringidaEfectiva) {
         overridesPorLinea[l.id] = (
           <OverrideRestriccionForm
+            identidad={identidad}
             numeroContrato={numero}
             contratoCondicionId={l.id}
             restriccion={l.restriccion}
@@ -287,6 +321,9 @@ export default async function ContratoDetallePage({
 
   return (
     <div className="mx-auto max-w-4xl p-4 md:p-8">
+      <AvisoContratoCambio numero={venta.numero_contrato} uid={venta.contrato_uid ?? null} />
+      {confirmacionPendiente && <div className="mt-3"><ConfirmacionPagoPendiente numero={venta.numero_contrato} identidad={identidad} /></div>}
+      {previstas.length > 0 && <div className="mt-3"><ObligacionesPrevistasPanel filas={previstas} /></div>}
       <Link href="/dashboard/contratos" className="text-sm text-gray-400 hover:text-gray-600">
         ← Contratos
       </Link>
@@ -301,7 +338,7 @@ export default async function ContratoDetallePage({
             <p className="mt-0.5 text-xs text-gray-500" data-testid="ficha-contrato-titular">Cliente: aliado · Titular de la reserva: {venta.titular_nombre}</p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-3">
-            <EstadoVenta numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
+            <EstadoVenta identidad={identidad} numero={venta.numero_contrato} estado={venta.estado} plazo={venta.plazo} puedeConfirmar={verFinanzas} />
             {/* Trazabilidad venta → empaquetado (revisión de PR #268, defecto 4):
                 el vuelo de este contrato vino de una tarifa de Sistema, no de un
                 bloqueo negociado — navega directo al Empaquetado de origen. */}
@@ -378,6 +415,7 @@ export default async function ContratoDetallePage({
           siquiera podría precargarlos. */}
       {fin && (
         <EditarVentaForm
+          identidad={identidad}
           numero={venta.numero_contrato}
           inicial={{
             cliente: venta.cliente ?? "",
@@ -414,6 +452,7 @@ export default async function ContratoDetallePage({
       )}
       {venta.estado === "pendiente" && puedeEditar && !esNeto && (
         <ServiciosContratoEditor
+          identidad={identidad}
           numero={venta.numero_contrato}
           pax={venta.pax ?? 0}
           serviciosDisp={serviciosDisp}
@@ -437,6 +476,7 @@ export default async function ContratoDetallePage({
 
       {/* Flujo de la venta */}
       <GestionTabs
+        identidad={identidad}
         numero={numero}
         precioVenta={venta.precio_venta}
         impuesto={fin?.impuesto ?? 0}
@@ -473,9 +513,12 @@ export default async function ContratoDetallePage({
         puedeEditar={puedeEditar}
       />
 
-      <AdjuntosContrato numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
+      <AdjuntosContrato identidad={identidad} numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
+
+      <SoportesPagoInterno soportes={soportesPago} abonos={(abonos ?? []).length} />
 
       <EditarAsesorPasajeros
+        identidad={identidad}
         numero={numero}
         asesores={asesoresVenta ?? []}
         asesorActual={venta.asesor_firma_nombre ?? venta.asesor ?? ""}
@@ -488,6 +531,7 @@ export default async function ContratoDetallePage({
       />
 
       <VouchersPanel
+        identidad={identidad}
         numero={numero}
         vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
         puedeGenerar={(esSuperadmin || saldo <= 0) && puedeEditar}
@@ -497,6 +541,7 @@ export default async function ContratoDetallePage({
 
       {esSuperadmin && (
         <ContenidoContratoEditor
+          identidad={identidad}
           numero={numero}
           moneda={venta.moneda ?? "COP"}
           precioVenta={venta.precio_venta ?? 0}
@@ -525,7 +570,7 @@ export default async function ContratoDetallePage({
         />
       )}
 
-      {esSuperadmin && <EliminarContrato numero={numero} />}
+      {esSuperadmin && <EliminarContrato numero={numero} identidad={identidad} />}
     </div>
   );
 }

@@ -60,15 +60,17 @@ describe("la etiqueta no cambia el total (motor en vivo)", () => {
 describe("dónde se muestra", () => {
   const leer = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
   test("cotización por fechas: Reservar, Vista Booking (solo tras cotizar) y composición de la cotización", () => {
-    assert.match(leer("app/(dashboard)/dashboard/reservar/nuevo/ReservaForm.tsx"), /<EtiquetaDescuentoHotel descuento=\{descuentoHotel\}/);
-    assert.match(leer("app/tarifario/VistaBooking.tsx"), /combos && descuentoHotel && .*EtiquetaDescuentoHotel/);
+    // #43/#60 entrega 5: si la precedencia decidió distinto por acomodación, el combo elegido trae su propia etiqueta y manda sobre la general.
+    assert.match(leer("app/(dashboard)/dashboard/reservar/nuevo/ReservaForm.tsx"), /<EtiquetaDescuentoHotel descuento=\{combo && "descuentoHotel" in combo \? combo\.descuentoHotel : descuentoHotel\}/);
+    assert.match(leer("app/tarifario/VistaBooking.tsx"), /combos && \(comboCot && "descuentoHotel" in comboCot \? comboCot\.descuentoHotel : descuentoHotel\) && .*EtiquetaDescuentoHotel/);
     assert.match(leer("components/cotizacion/ComposicionPrecio.tsx"), /c\.descuentoHotel && .*EtiquetaDescuentoHotel/);
   });
   test("tarjeta de búsqueda por fechas: la etiqueta va con las demás etiquetas del hotel y sale de r.descuentoHotel", () => {
     const c = leer("app/tarifario/BuscadorBooking.tsx");
     assert.ok(c.includes("<EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : r.descuentoHotel} />"), "tras revalidar, la etiqueta es la de la revalidación (par con el precio nuevo)");
     assert.ok(c.indexOf("<EtiquetasHotel adultsOnly") < c.indexOf("<EtiquetaDescuentoHotel descuento={tarifaHotel"), "va con las demás etiquetas del hotel");
-    assert.ok(leer("lib/reservar/cotizar.ts").includes("descuentoHotel: res.descuentoHotel?.etiqueta ?"));
+    // Entrega 5: la etiqueta de la búsqueda sale de descuentoMostrado (por acomodación de la composición consultada si difiere).
+    assert.ok(leer("lib/reservar/cotizar.ts").includes("descuento: descuentoMostrado(res.descuentoHotel, combo.descuentoPorAcom,"));
   });
   test("el documento de la cotización NO lleva la etiqueta", () => {
     for (const f of ["components/contrato/ContratoDocumento.tsx", "lib/reservar/hotelSnapPersona.ts", "app/(dashboard)/dashboard/reservar/actions.ts"]) assert.doesNotMatch(leer(f), /descuento_hotel/, f);

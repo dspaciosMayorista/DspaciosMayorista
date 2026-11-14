@@ -19,9 +19,11 @@ export function tituloPaqueteTuristico(destino: string | null | undefined, ida: 
   return `${base} ${noches + 1} días/${noches} ${noches === 1 ? "noche" : "noches"}`;
 }
 
-/** Ítem por defecto de «Valores y Pagos» en la cotización normal: «Paquete Turístico {Destino del paquete}». Nunca el hotel, la categoría ni los servicios. */
-export function tituloItemPaquete(destino: string | null | undefined): string {
-  const d = (destino ?? "").replace(/\s+/g, " ").trim();
+/** Ítem por defecto de «Valores y Pagos»: «Paquete Turístico {nombre comercial}» o, sin nombre, «Paquete Turístico {Destino}». Nunca el hotel, la categoría ni los servicios. */
+export function tituloItemPaquete(destino: string | null | undefined, nombreComercial?: string | null): string {
+  // #52 (decisión del dueño 2026-11-12): «Paquete Turístico {nombre comercial}»; sin nombre comercial, el destino. Nunca hotel, categoría ni servicios.
+  const n = (nombreComercial ?? "").replace(/\s+/g, " ").trim();
+  const d = n || (destino ?? "").replace(/\s+/g, " ").trim();
   return `Paquete Turístico${d ? ` ${d}` : ""}`;
 }
 

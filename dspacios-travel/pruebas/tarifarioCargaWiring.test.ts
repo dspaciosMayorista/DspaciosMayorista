@@ -349,10 +349,11 @@ describe("Navegación del dashboard — no precarga rutas pesadas en segundo pla
 
   test("mapa, módulos y alertas del inicio desactivan prefetch", () => {
     const src = leer("app/(dashboard)/dashboard/page.tsx");
+    // Lote operativo #59: la tarjeta de cupos enlaza al inventario de vuelos (cuarto enlace, también sin prefetch).
     assert.equal(
       [...src.matchAll(/prefetch=\{false\}/g)].length,
-      3,
-      "los tres generadores de accesos directos deben evitar solicitudes anticipadas"
+      4,
+      "los cuatro generadores de accesos directos deben evitar solicitudes anticipadas"
     );
   });
 });

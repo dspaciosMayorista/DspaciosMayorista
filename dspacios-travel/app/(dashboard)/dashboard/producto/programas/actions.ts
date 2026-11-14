@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { validarNochesViaje, validarNochesAlEditar } from "@/lib/reglas/duracionViaje";
 import { revalidatePath } from "next/cache";
 import { parsearPrograma } from "@/lib/programasImport";
 import { limpiarAlojamientoPrevisto } from "@/lib/programas";
@@ -175,6 +176,7 @@ export async function crearPrograma(input: CabeceraInput): Promise<Result> {
   if (!input.nombre.trim()) return { ok: false, error: "El nombre es obligatorio." };
   const v = validarCondicionYRestriccionPrograma(input);
   if (!v.ok) return v;
+  if (input.noches != null) { const vN = validarNochesViaje(Number(input.noches)); if (!vN.ok) return vN; } // entrega L
   const sb = await createClient();
   const { data, error } = await sb
     .from("programas")
@@ -191,6 +193,10 @@ export async function guardarCabecera(id: number, input: CabeceraInput): Promise
   const v = validarCondicionYRestriccionPrograma(input);
   if (!v.ok) return v;
   const sb = await createClient();
+  // Entrega L: si cambian las noches, respetan la estadía máxima (un programa antiguo que ya tenía más se conserva hasta que el dueño decida).
+  { const { data: prev } = await sb.from("programas").select("noches").eq("id", id).maybeSingle();
+    const vN = validarNochesAlEditar(input.noches == null ? null : Number(input.noches), prev?.noches ?? null);
+    if (!vN.ok) return vN; }
   // Cambiar el total de días de un publicado no puede dejarlo con días sobrantes o faltantes.
   const incompleto = await errorItinerarioPublicado(sb, id, { total: input.dias });
   if (incompleto) return { ok: false, error: incompleto };
@@ -478,6 +484,13 @@ export async function guardarSalidas(
   if (!validacion.ok) return { ok: false, error: validacion.error };
 
   const sb = await createClient();
+  // Entrega L: una salida nueva o con noches cambiadas respeta la estadía máxima; una que ya existía igual se conserva.
+  { const { data: prev } = await sb.from("programa_salidas").select("fecha_desde, noches").eq("programa_id", programaId);
+    const previas = new Map((prev ?? []).map((p) => [String(p.fecha_desde ?? ""), p.noches as number | null]));
+    for (const s of salidas.filter(salidaTieneContenido)) {
+      const vN = validarNochesAlEditar(num(s.noches), previas.get(String(oNull(s.fechaDesde) ?? "")));
+      if (!vN.ok) return { ok: false, error: `Salida ${s.etiqueta || s.fechaDesde || ""}: ${vN.error}` };
+    } }
   const filas = salidas
     .filter(salidaTieneContenido)
     .map((s, i) => ({

@@ -168,11 +168,11 @@ test("reservar/actions.ts: las filas derivadas (aliados_b2b, CxP, asientos) here
   // apuntar a otra agencia ni por error de construcción), así que la prueba
   // verifica el parámetro, no el campo de la fila.
   assert.match(fn, /registrarFinancieroContrato\([\s\S]{0,300}numeroContrato: numero, tenant,/, "la escritura financiera de reservarDesdeTarifarioInterno no recibe el tenant validado");
-  assert.match(fn, /depsFinanciero\(numero, tenant, hoyISO\)/, "el asiento automático de CxP no recibe el tenant explícito");
+  assert.match(fn, /depsFinanciero\(idc, numero, tenant, hoyISO\)/, "el asiento automático de CxP no recibe el tenant explícito");
 
   const carrito = src.slice(src.indexOf("export async function convertirCotizacionCarrito"));
   assert.match(carrito, /registrarFinancieroContrato\([\s\S]{0,300}tenant: tenantCotizacion/, "convertirCotizacionCarrito no pasa el tenant de la cotización a la escritura financiera");
-  assert.match(carrito, /depsFinanciero\(numero, tenantCotizacion, hoyServidor\)/, "convertirCotizacionCarrito no pasa el tenant explícito al asiento automático");
+  assert.match(carrito, /depsFinanciero\(idc, numero, tenantCotizacion, hoyServidor\)/, "convertirCotizacionCarrito no pasa el tenant explícito al asiento automático");
 });
 
 test("reservar/actions.ts: actualizarVigenciaCotizacion y descartarCotizacion filtran por tenant salvo superadmin", () => {
@@ -224,7 +224,7 @@ test("manual-actions.ts: crearCotizacionManual falla cerrado con contextoCotizac
   assert.match(crear, /if\s*\(!usuario\)\s*return\s*\{\s*ok:\s*false/, "crearCotizacionManual no falla cerrado sin usuario de sesión");
   assert.match(
     crear,
-    /admin\.rpc\(\s*"crear_cotizacion_manual",\s*\{\s*\n\s*p_usuario_id:\s*usuario\.id,\s*\n\s*p_tenant:\s*tenantCotizacion,/,
+    /argsBase\s*=\s*\{\s*\n\s*p_usuario_id:\s*usuario\.id,\s*\n\s*p_tenant:\s*tenantCotizacion,/,
     "crearCotizacionManual no delega en la RPC con el usuario de la sesión y el tenant validado"
   );
   const idxRpcCrear = crear.indexOf('admin.rpc("crear_cotizacion_manual"');
@@ -332,6 +332,8 @@ test("convertir_cotizacion_a_contrato: la última migración que la define es la
   const definen = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
+    // La 288 (#75) la ENVUELVE (el cuerpo vigente sigue siendo el de la 198, copiado verbatim como p75_priv.convertir_cotizacion_base y verificado por md5 en la propia 288).
+    .filter((f) => !f.startsWith("20260601000288_"))
     .filter((f) => readFileSync(join(dir, f), "utf8").includes("create or replace function public.convertir_cotizacion_a_contrato("));
   assert.deepEqual(
     definen,

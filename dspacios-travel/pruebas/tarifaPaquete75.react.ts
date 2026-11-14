@@ -3,6 +3,7 @@
 // Tarifa del PAQUETE por pasajero: una sola fila comercial con el vuelo y los servicios repartidos entre los pasajeros que cubren (centavos, residuo determinista),
 // en el documento REAL de la cotización (PVP y NETO) y en cada opción de la comparativa (PVP y NETO desde el plan B2B congelado). Nada se muestra dos veces.
 import { test, describe } from "node:test";
+import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createElement, type ComponentType } from "react";
@@ -33,8 +34,8 @@ const lineaManual = (m: Parameters<typeof tramosVueloManual>[0], id: number) => 
 const tramos = (m: Parameters<typeof tramosVueloManual>[0], id: number) => tramosVueloManual(m, true).map((t, i) => ({ id: id * 10 + i, numero_contrato: "", ...t }));
 
 function html(items: unknown[], vuelos: unknown[], netoTotalExigible: number | null = null, paqueteSnapshot: unknown = null) {
-  const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos, items, totalPagado: 0, agencia: null, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible, paqueteSnapshot };
-  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, props));
+  const props = { venta, pasajeros: [], hoteles: HOTELES, vuelos, items, totalPagado: 0, agencia: AGENCIA_PRUEBA, condiciones: null, habitacionesBernalo: [], esCotizacion: true, codigo: "COT-1", vigenciaHasta: "2030-10-10", netoTotalExigible, paqueteSnapshot };
+  return renderToStaticMarkup(createElement(ContratoDocumento as ComponentType<Record<string, unknown>>, { ...props, agencia: (props as { agencia?: unknown }).agencia ?? AGENCIA_PRUEBA }));
 }
 const plano = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 const sinEspacios = (t: string) => t.replace(/\s+/g, "");

@@ -1,6 +1,7 @@
 "use client";
 
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { TextoCategoriaHotel } from "./TextoCategoriaHotel";
 import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
 import Image from "next/image";
@@ -962,6 +963,7 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
             </select>
           </label>
         </div>
+        <TextoCategoriaHotel hotelId={r.hotelId} categoria={catEff} />
 
         <div className="flex items-end justify-between">
           <div>

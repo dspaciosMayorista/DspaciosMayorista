@@ -1,6 +1,9 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { validarFechasViaje, validarFechasAlEditar } from "@/lib/reglas/duracionViaje";
+import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
+import { candidatosNumeroContrato, normalizarReferenciaManual } from "@/lib/vuelos/contratoManual";
 import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeBloqueo, generarTarifario } from "../paquetes/actions";
 import {
@@ -27,6 +30,9 @@ import {
 } from "@/lib/vuelos/operaciones";
 
 type Result = { ok: true; id?: number } | { ok: false; error: string };
+
+// Error de una RPC de silla/contrato: primero el rechazo por identidad (el contrato cambió desde que se abrió la pantalla), luego el mensaje de negocio.
+const msgRpc = (e: Parameters<typeof mensajeErrorRpc>[0]) => mensajeSiIdentidad(e) ?? mensajeErrorRpc(e).error;
 
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -69,7 +75,7 @@ export type BloqueoInput = {
  * (`crear_bloqueo`, migración 195, con autorización AUT-1): nunca queda un
  * record con cupos sin sus sillas.
  */
-export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
+export async function crearBloqueo(input: BloqueoInput): Promise<Result> { // identidad:n/a — record nuevo con sillas libres
   if (!esModalidadEmision(input.modalidadEmision)) {
     return { ok: false, error: "Selecciona la modalidad de emisión (serie o grupo)." };
   }
@@ -78,7 +84,9 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> {
   if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
   const cupos = Number(input.cuposTotal);
   if (!Number.isInteger(cupos) || cupos < 0) return { ok: false, error: "Los cupos deben ser un número entero mayor o igual a 0." };
-  const sb = await createClient();
+  const vNoches = validarFechasViaje(input.fechaIda, input.fechaRegreso); // entrega L: estadía máxima del viaje
+  if (!vNoches.ok) return vNoches;
+  const sb = await createClient(); // identidad:n/a — crea un record nuevo con sillas libres; no toca contratos
   const { data, error } = await sb.rpc("crear_bloqueo", { p_datos: datosBloqueoDeInput(input), p_cupos: cupos });
   if (error) return { ok: false, error: mensajeErrorMonedaBloqueo(mensajeErrorRpc(error).error) };
   const id = Number((data as { id?: number } | null)?.id);
@@ -134,10 +142,14 @@ function datosBloqueoDeInput(input: BloqueoInput): DatosBloqueo {
 // `moneda` es opcional al editar: un Bloqueo sin acreditar se puede seguir editando sin tocarla; si viene, cambia la moneda (el trigger de
 // la 231 deja la constancia y la invalidación del tarifario se dispara por la base).
 export type BloqueoEditInput = Omit<BloqueoInput, "cuposTotal" | "modalidadEmision" | "moneda"> & { moneda?: MonedaVuelo };
-export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Promise<Result> {
+export async function actualizarBloqueo(id: number, input: BloqueoEditInput): Promise<Result> { // identidad:n/a — solo bloqueos_vuelo
   const monedaOk = validarMonedaBloqueoEdicion(input.moneda, input);
   if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo bloqueos_vuelo, no es tabla de contrato
+  // Entrega L: si cambian las fechas, respetan la estadía máxima (un record antiguo que ya tenía más se conserva hasta que el dueño decida).
+  { const { data: prev } = await sb.from("bloqueos_vuelo").select("fecha_ida, fecha_regreso").eq("id", id).maybeSingle();
+    const vNoches = validarFechasAlEditar(input.fechaIda, input.fechaRegreso, prev?.fecha_ida, prev?.fecha_regreso);
+    if (!vNoches.ok) return vNoches; }
   const { error } = await sb
     .from("bloqueos_vuelo")
     .update({
@@ -180,11 +192,11 @@ export type CambioOperacionalInput = {
   nota: string;
 };
 
-export async function registrarCambioOperacional(
+export async function registrarCambioOperacional( // identidad:n/a — solo bloqueos_vuelo
   bloqueoId: number,
   input: CambioOperacionalInput
 ): Promise<Result> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo bloqueos_vuelo y su historial, no son tablas de contrato
 
   const { data: actual } = await sb
     .from("bloqueos_vuelo")
@@ -273,12 +285,12 @@ export type ControlBloqueoInput = {
 // RPC no es `security definer`, corre con el rol de la sesión y queda sujeto
 // a las mismas policies de `bloqueos_vuelo`/`bloqueo_cambios` de siempre.
 // `revalidatePath` solo se llama DESPUÉS de confirmar que no hubo error.
-export async function actualizarControlBloqueo(bloqueoId: number, input: ControlBloqueoInput): Promise<Result> {
+export async function actualizarControlBloqueo(bloqueoId: number, input: ControlBloqueoInput): Promise<Result> { // identidad:n/a — solo bloqueos_vuelo
   if (!esModalidadEmision(input.modalidadEmision)) return { ok: false, error: "Modalidad de emisión inválida." };
   if (!esEstadoEmision(input.estadoEmision)) return { ok: false, error: "Estado de emisión inválido." };
   if (!esEstadoPago(input.estadoPago)) return { ok: false, error: "Estado de pago inválido." };
 
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — solo bloqueos_vuelo y su historial, no son tablas de contrato
   const { error } = await sb.rpc("actualizar_control_bloqueo", {
     p_bloqueo_id: bloqueoId,
     p_modalidad_emision: input.modalidadEmision,
@@ -338,10 +350,10 @@ function parseEstadoPagoCSV(s?: string): EstadoPago | null {
   return esEstadoPago(t) ? t : null;
 }
 
-export async function cargarBloqueosMasivo(
+export async function cargarBloqueosMasivo( // identidad:n/a — records nuevos con sillas libres
   rows: Record<string, string>[]
 ): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — crea records nuevos con sillas libres; no toca contratos
   const [{ data: destinos }, { data: provs }, { data: rangos }] = await Promise.all([
     sb.from("destinos").select("id, nombre"),
     sb.from("proveedores").select("id, nombre"),
@@ -385,6 +397,9 @@ export async function cargarBloqueosMasivo(
       tarifaNeta: numCsv(r.tarifa_neta), tarifaParaEmpaquetar: numCsv(r.tarifa_para_empaquetar), feeInfante: numCsv(r.fee_infante),
     });
     if (!monedaFila.ok) { errores.push(`Fila ${linea} (${record}): ${monedaFila.error}`); continue; }
+
+    const vNoches = validarFechasViaje(parseFechaCSV(r.fecha_ida), parseFechaCSV(r.fecha_regreso)); // entrega L
+    if (!vNoches.ok) { errores.push(`Fila ${linea} (${record}): ${vNoches.error}`); continue; }
 
     // Cada fila es atómica (crear_bloqueo, migración 195): el record y sus
     // sillas se crean juntos o no se crea nada. Un error de la fila se reporta
@@ -430,7 +445,7 @@ export type TrasladoResult =
  * mismas filas, Y pierde N y X gana N; la suma no cambia. Solo mismo destino,
  * mismo proveedor y vuelo destino no salido.
  */
-export async function cambiarSillas(input: {
+export async function cambiarSillas(input: { // identidad:n/a — solo cupos libres, la base rechaza sillas con contrato
   origenId: number;
   destinoId: number;
   cantidad: number;
@@ -446,7 +461,7 @@ export async function cambiarSillas(input: {
   if (!esOperacionId(input.operacionId))
     return { ok: false, error: "Falta el identificador de la operación; recarga la página." };
 
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — trasladar_cupos mueve solo cupos libres, la base rechaza sillas con contrato
   const { data, error } = await sb.rpc("trasladar_cupos", {
     p_origen: input.origenId,
     p_destino: input.destinoId,
@@ -463,11 +478,11 @@ export async function cambiarSillas(input: {
 export type EstadoSillaManual = EstadoManual;
 
 /**
- * Cambio MANUAL de estado según la matriz DIR-1. Solo sillas sin contrato ni
- * pasajero, con motivo. Devuelta es definitiva; No vendida → Devuelta exige
+ * Cambio MANUAL de estado según la matriz DIR-1. Solo sillas SIN contrato (orgánico
+ * ni manual; la base rechaza el resto, por eso no lleva identidad), con motivo. Devuelta es definitiva; No vendida → Devuelta exige
  * confirmar que es una devolución real a la aerolínea.
  */
-export async function cambiarEstadoSilla(
+export async function cambiarEstadoSilla( // identidad:n/a — la base rechaza sillas con contrato
   sillaId: number,
   estado: EstadoSillaManual,
   bloqueoId: number,
@@ -478,7 +493,7 @@ export async function cambiarEstadoSilla(
   if (!esEstadoManual(estado))
     return { ok: false, error: "Ese cambio de estado no se hace a mano: usa reservar, confirmar venta, liberar silla o retirar cupo." };
   if (!(motivo ?? "").trim()) return { ok: false, error: "Escribe el motivo del cambio de estado." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — cambiar_estado_silla rechaza en la base toda silla con contrato
   const { error } = await sb.rpc("cambiar_estado_silla", {
     p_silla_id: sillaId,
     p_estado: estado,
@@ -501,16 +516,39 @@ export async function asignarContratoManual(
   sillaId: number,
   contratoManual: string,
   bloqueoId: number,
-  version: string
+  version: string,
+  identidad: IdentidadContrato
 ): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (!(contratoManual ?? "").trim()) return { ok: false, error: "Escribe el número de contrato manual." };
   if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("asignar_contrato_manual", { p_silla_id: sillaId, p_referencia: contratoManual, p_esperado: { updated_at: version } });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: msgRpc(error) };
   revalidarRecords(bloqueoId);
   return { ok: true };
+}
+
+// Paso «resolver y confirmar» de asignar/editar contrato manual (#75): que la silla esté libre NO basta, el contrato DESTINO debe presentar su
+// identidad. Esta acción es de SOLO LECTURA: devuelve número, cliente y uid del contrato al que apunta la referencia para MOSTRARLO a la persona;
+// el formulario conserva ese uid y lo envía tal cual con el envío definitivo (`identidad`). Si el contrato cambia entre la confirmación y el envío,
+// la base rechaza. Una referencia que no resuelve a una venta visible es externa y no lleva identidad.
+// Límite: ve lo que ve el rol de la sesión (RLS); la elegibilidad del reuso bloquea el número mientras exista una silla con esa referencia.
+export type ContratoManualResuelto =
+  | { ok: true; externa: true }
+  | { ok: true; externa: false; numero: string; cliente: string | null; uid: string }
+  | { ok: false; error: string };
+
+export async function resolverContratoManual(referencia: string): Promise<ContratoManualResuelto> { // identidad:n/a — solo lectura
+  const ref = normalizarReferenciaManual(typeof referencia === "string" ? referencia : null);
+  if (!ref) return { ok: false, error: "Escribe el número de contrato manual." };
+  const sb = await createClient(); // identidad:n/a — solo lectura, devuelve el uid que el formulario enviará después
+  const { data, error } = await sb.from("ventas").select("numero_contrato, cliente, contrato_uid").in("numero_contrato", candidatosNumeroContrato(ref));
+  if (error) return { ok: false, error: "No se pudo verificar el contrato; intenta de nuevo." };
+  if ((data ?? []).length > 1) return { ok: false, error: "La referencia coincide con contratos de las dos agencias; escribe el número completo (con MIN- si es de Minorista)." };
+  const v = data?.[0];
+  if (!v) return { ok: true, externa: true };
+  return { ok: true, externa: false, numero: v.numero_contrato, cliente: v.cliente ?? null, uid: v.contrato_uid };
 }
 
 // Quitar el contrato manual. Si el pasajero se queda en la silla, queda
@@ -521,14 +559,15 @@ export async function quitarContratoManual(
   sillaId: number,
   bloqueoId: number,
   version: string,
-  plazo: string | null
+  plazo: string | null,
+  identidad: IdentidadContrato
 ): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
   if (plazo !== null && !/^\d{4}-\d{2}-\d{2}$/.test(plazo)) return { ok: false, error: "Fecha de plazo inválida." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("quitar_contrato_manual", { p_silla_id: sillaId, p_plazo: plazo, p_esperado: { updated_at: version } });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: msgRpc(error) };
   revalidarRecords(bloqueoId);
   return { ok: true };
 }
@@ -542,14 +581,15 @@ export async function editarContratoManual(
   sillaId: number,
   contratoManual: string,
   bloqueoId: number,
-  version: string
+  version: string,
+  identidad: IdentidadContrato
 ): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (!(contratoManual ?? "").trim()) return { ok: false, error: "Escribe el número de contrato manual." };
   if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("editar_contrato_manual", { p_silla_id: sillaId, p_referencia: contratoManual, p_esperado: { updated_at: version } });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: msgRpc(error) };
   revalidarRecords(bloqueoId);
   return { ok: true };
 }
@@ -557,7 +597,7 @@ export async function editarContratoManual(
 // ── Retirar un cupo LIBRE del record (D8) ──────────────────────────────────
 // La fila NO se borra: queda `retirada`, deja de contar como cupo y de
 // venderse, y el retiro queda en el historial. cupos_total baja en 1.
-export async function retirarCupo(
+export async function retirarCupo( // identidad:n/a — la base rechaza sillas con contrato o pasajero
   sillaId: number,
   bloqueoId: number,
   motivo: string,
@@ -566,7 +606,7 @@ export async function retirarCupo(
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (!esOperacionId(operacionId))
     return { ok: false, error: "Falta el identificador de la operación; recarga la página." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — retirar_cupo rechaza en la base toda silla con contrato o pasajero
   const { error } = await sb.rpc("retirar_cupo", {
     p_silla_id: sillaId,
     p_motivo: (motivo ?? "").trim() || null,
@@ -584,9 +624,9 @@ export async function retirarCupo(
  * contrato manual o datos de pasajero, contratos vinculados, o producto
  * (paquete, tarifario, itinerario) que lo use.
  */
-export async function eliminarBloqueo(id: number): Promise<Result> {
+export async function eliminarBloqueo(id: number): Promise<Result> { // identidad:n/a — la base rechaza si hay sillas con contrato
   if (!esIdPositivo(id)) return { ok: false, error: "Bloqueo no válido." };
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — eliminar_bloqueo rechaza en la base si hay sillas con contrato
   // Paquetes que lo usaban (armado_vuelos cae en cascada al borrar): se
   // regeneran DESPUÉS para que el tarifario deje de publicar esa salida.
   const { data: usados } = await sb.from("armado_vuelos").select("paquete_id").eq("bloqueo_id", id);
@@ -616,11 +656,12 @@ export async function editarPasajeroSilla(
   sillaId: number,
   bloqueoId: number,
   data: PasajeroSillaInput,
-  visto: ContratoVistoSilla
+  visto: ContratoVistoSilla,
+  identidad: IdentidadContrato
 ): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (!visto) return { ok: false, error: "No se pudo confirmar el estado de la silla; recarga la página." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("editar_pasajero_silla", {
     p_silla_id: sillaId,
     p_datos: {
@@ -638,7 +679,7 @@ export async function editarPasajeroSilla(
       esperado: { numero_contrato: visto.numero_contrato ?? null, contrato_manual: visto.contrato_manual ?? null, updated_at: visto.updated_at },
     },
   });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: msgRpc(error) };
   revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
   return { ok: true };
 }
@@ -649,12 +690,12 @@ export async function editarPasajeroSilla(
 // reserva le asignara `numero_contrato`. No toca el contrato (la venta).
 // `version`: el `updated_at` que mostró la pantalla (migración 201); si otro
 // usuario editó la silla entretanto, la base rechaza sin borrar nada.
-export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number, version: string): Promise<Result> {
+export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number, version: string, identidad: IdentidadContrato): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (typeof version !== "string" || version.trim() === "") return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("liberar_silla", { p_silla_id: sillaId, p_esperado: { updated_at: version } });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: msgRpc(error) };
   revalidarRecords(bloqueoId);
   return { ok: true };
 }
@@ -663,14 +704,14 @@ export async function borrarPasajeroSilla(sillaId: number, bloqueoId: number, ve
 // decisión del dueño: nunca por cron). `version` es el `updated_at` que mostró
 // la pantalla: la base vuelve a comprobar bajo candado que la silla siga sin
 // contrato, vencida y sin cambios; si algo cambió no borra nada y lo dice.
-export async function liberarRetencionVencida(sillaId: number, bloqueoId: number, version: string): Promise<Result> {
+export async function liberarRetencionVencida(sillaId: number, bloqueoId: number, version: string, identidad: IdentidadContrato): Promise<Result> {
   if (!esIdPositivo(sillaId)) return { ok: false, error: "Silla no válida." };
   if (typeof version !== "string" || version.trim() === "") {
     return { ok: false, error: "No se pudo confirmar la versión de la silla; recarga la página." };
   }
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("liberar_retencion_vencida", { p_silla_id: sillaId, p_esperado: { updated_at: version } });
-  if (error) return { ok: false, error: mensajeErrorRpc(error).error };
+  if (error) return { ok: false, error: msgRpc(error) };
   revalidarRecords(bloqueoId);
   return { ok: true };
 }
@@ -714,7 +755,8 @@ export async function moverPasajeroSilla(
   sillaId: number,
   origenId: number,
   destinoId: number,
-  opciones: MoverPasajeroOpciones
+  opciones: MoverPasajeroOpciones,
+  identidad: IdentidadContrato
 ): Promise<MoverResult> {
   if (!esIdPositivo(sillaId) || !esIdPositivo(destinoId))
     return { ok: false, error: "Elige la silla y el record destino." };
@@ -727,7 +769,7 @@ export async function moverPasajeroSilla(
   if (!esOperacionId(opciones.operacionId))
     return { ok: false, error: "Falta el identificador de la operación; recarga la página." };
 
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { data, error } = await sb.rpc("mover_pasajero", {
     p_silla_id: sillaId,
     p_destino: destinoId,
@@ -738,6 +780,8 @@ export async function moverPasajeroSilla(
   });
   if (error) {
     const m = mensajeErrorRpc(error);
+    const idErr = mensajeSiIdentidad(error);
+    if (idErr) return { ok: false, error: idErr };
     return m.tarifaDistinta
       ? { ok: false, error: m.error, requiereConfirmarTarifa: true }
       : { ok: false, error: m.error };
@@ -767,10 +811,10 @@ export async function moverPasajeroSilla(
 //  - Mismo documento en OTRO PNR → alarma para revisar (no bloquea).
 //  - PNR que no existe → se cuenta y se avisa cuántos pasajeros lo traen.
 //  - Si un PNR no tiene cupos libres suficientes → se avisa.
-export async function cargarPasajerosMasivo(
+export async function cargarPasajerosMasivo( // identidad:n/a — solo sillas libres sin contrato
   rows: Record<string, string>[]
 ): Promise<{ ok: boolean; insertados: number; errores: string[] }> {
-  const sb = await createClient();
+  const sb = await createClient(); // identidad:n/a — carga solo en sillas libres sin contrato; el UPDATE exige numero_contrato y contrato_manual nulos
   const errores: string[] = [];
 
   // PNR (record) → bloqueo. record es único.
@@ -908,12 +952,13 @@ export async function guardarInfanteVuelo(
   bloqueoId: number,
   sillaResponsableId: number,
   infanteId: number | null,
-  input: InfanteVueloInput
+  input: InfanteVueloInput,
+  identidad: IdentidadContrato
 ): Promise<Result> {
   const v = validarInfanteVueloInput(input);
   if (!v.ok) return v;
 
-  const sb = await createClient();
+  const sb = await createClient(parseIdentidad(identidad));
   const { error } = await sb.rpc("guardar_infante_vuelo", {
     p_bloqueo_id: bloqueoId,
     p_silla_responsable_id: sillaResponsableId,
@@ -924,7 +969,7 @@ export async function guardarInfanteVuelo(
     p_numero_doc: input.numeroDoc.trim(),
     p_fecha_nacimiento: input.fechaNacimiento,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
 
   revalidatePath(`/dashboard/vuelos/${bloqueoId}`);
   revalidatePath("/dashboard/vuelos/pasajeros");

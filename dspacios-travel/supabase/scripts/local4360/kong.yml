@@ -1,0 +1,15 @@
+# Gateway LOCAL del entorno #43/#60 (como el de Supabase): una sola URL para REST, Auth y Storage.
+# Solo local: sin key-auth (la app manda la anon key igual); CORS abierto para el navegador en localhost.
+_format_version: "2.1"
+services:
+  - name: auth
+    url: http://local4360-auth:9999/
+    routes: [{ name: auth, strip_path: true, paths: [/auth/v1/] }]
+  - name: rest
+    url: http://local4360-rest:3000/
+    routes: [{ name: rest, strip_path: true, paths: [/rest/v1/] }]
+  - name: storage
+    url: http://local4360-storage:5000/
+    routes: [{ name: storage, strip_path: true, paths: [/storage/v1/] }]
+plugins:
+  - name: cors

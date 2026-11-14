@@ -13,7 +13,9 @@ test("la cotizacion B2C por share_token abre sin login", () => {
   const paginaPublica = leer("app/cot/[token]/page.tsx");
 
   assert.match(proxy, /RUTAS_PUBLICAS\s*=\s*\[[\s\S]*?"\/cot\/"/);
-  assert.match(checkout, /`\$\{origin\}\/cot\/\$\{row\.share_token\}`/);
+  // el enlace público se arma en UN solo lugar (`urlCotizacionPorToken`, #14-A) y la solicitud lo usa con el `share_token` de la fila
+  assert.match(checkout, /`\$\{proto\}:\/\/\$\{host\}\/cot\/\$\{shareToken\}`/);
+  assert.match(checkout, /urlCotizacionPorToken\(row\.share_token/);
   assert.match(paginaPublica, /\.eq\("share_token",\s*token\)/);
   assert.doesNotMatch(paginaPublica, /auth\.getUser\(/);
 });
