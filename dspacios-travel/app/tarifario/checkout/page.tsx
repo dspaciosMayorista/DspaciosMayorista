@@ -16,8 +16,8 @@ import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, 
 import type { PresentacionComparativa } from "@/lib/cotizacion/comparativa";
 import { ROTULO_ALCANCE_VENTA } from "@/lib/calc/servicioAlcance";
 import { getContextoRecobroCarrito, type ContextoRecobroCarrito } from "./actions";
-import { RecobroPanel, type EstadoRecobro, type ModoCapturaRecobro } from "./RecobroPanel";
-import { recobroDesdeFormulario, type RecobroParaEnviar } from "@/lib/cotizacion/recobroEntradaUI";
+import { RecobroPanel, TotalConRecobroUI, type EstadoRecobro, type ModoCapturaRecobro } from "./RecobroPanel";
+import { recobroDesdeFormulario, totalConRecobro, type RecobroParaEnviar } from "@/lib/cotizacion/recobroEntradaUI";
 import { coordinacionDisponible, crearContextoEnvio, enviarConClave, nuevaCompra, type ContextoEnvio } from "@/lib/cotizacion/claveEnvio";
 import { crearSolicitudReserva, fotosPortada, getContextoAsistenciaB2B, previsualizarPresentacionComparativa, type PresentacionPrevia, previsualizarTerminosB2BAsistido, previsualizarComparativaB2B, type PrevisualizacionB2B, type PrevisualizacionComparativaB2B, getContextoB2B, type SolicitudResult, type ContextoAsistenciaCheckout, type ContextoB2B, type ResultadoComparativaCreada } from "./actions";
 import { TerminosB2BAsistido } from "@/components/cotizacion/TerminosB2BAsistido";
@@ -199,6 +199,16 @@ export default function CheckoutPage() {
   // la cotización (`preverCotizacion`). Si no se puede anticipar (ítems sin
   // moneda registrada), no se muestra una cifra. El servidor la recalcula.
   const prevision = preverCotizacion(items);
+  // #14-A: a cliente final el recobro se suma al total ANTES de generar. Total confirmado (cifra) ≠ cálculo pendiente o con error (sin cifra).
+  const totalRecobro = modoRecobro === "cliente_final" && !vista.crear
+    ? totalConRecobro({
+      form: recobroForm, base: totales.unica,
+      partes: [
+        { etiqueta: hotelItems.length > 1 ? "Hoteles" : "Hotel", monto: hotelItems.reduce((n, i) => n + i.precio, 0) },
+        { etiqueta: tourItems.length + manualItems.length > 1 ? "Servicios" : "Servicio", monto: [...tourItems, ...manualItems].reduce((n, i) => n + i.precio, 0) },
+      ],
+    })
+    : null;
   const baseComision = totales.unica
     ?? (prevision.moneda && prevision.montoIncluido != null && !prevision.bloqueantes.length
       ? { moneda: prevision.moneda, monto: prevision.montoIncluido }
@@ -731,7 +741,7 @@ export default function CheckoutPage() {
             {/* #14-A — Recobro (solo cifras; el servidor decide quién puede y qué participación corresponde). */}
             {modoRecobro && (
               <RecobroPanel modo={modoRecobro} estado={recobro} onChange={setRecobro} moneda={baseComision?.moneda ?? null}
-                pctParticipacion={ctxRec?.tipo === "aliado_directo" ? ctxRec.pctParticipacion : null} error={recobroForm.ok ? null : recobroForm.error} />
+                pctParticipacion={ctxRec?.tipo === "aliado_directo" ? ctxRec.pctParticipacion : null} error={recobroForm.ok ? null : recobroForm.error} totalActualizado={totalRecobro ? <TotalConRecobroUI total={totalRecobro} /> : null} />
             )}
             {esB2B && ctxRec?.tipo === "error" && modo === "comisionable" && (
               <p role="alert" data-testid="recobro-ctx-error" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">No se puede ofrecer el recobro: {ctxRec.error}</p>

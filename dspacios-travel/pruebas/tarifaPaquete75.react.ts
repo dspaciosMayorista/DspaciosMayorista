@@ -44,22 +44,27 @@ const montos = (t: string) => [...t.matchAll(/\$\s?([0-9.]+(?:,[0-9]{2})?)/g)].m
 const fila = (h: string) => { const i = h.indexOf('data-testid="fila-paquete-turistico"'); return h.slice(i, h.indexOf("</tr>", i)); };
 
 describe("tarifaPaquete (puro): reparto en centavos", () => {
-  test("caso del dueño: 2 × 932.666,66 + 1 × 816.666,66 + ajuste 0,02 = 2.682.000 (vuelo 450.000 y servicio 347.000 para los 3)", () => {
+  test("caso del dueño: la tarifa de cada clase conserva su precisión de cálculo (932.666,6667 y 816.666,6667) y el total es el exacto 2.682.000, sin ajuste (vuelo 450.000 y servicio 347.000 para los 3)", () => {
     const r = tarifaPaquete({ adultos: 2, ninos: 1, baseAdultoCentavos: cent(1_334_000), baseNinoCentavos: cent(551_000), adicionales: [{ nombre: "Vuelo", centavos: cent(450_000), pax: 3 }, { nombre: "Traslado", centavos: cent(347_000), pax: 3 }] });
     assert.ok(r.ok);
     if (!r.ok) return;
-    assert.equal(r.tarifaAdulto, 932_666.66);
-    assert.equal(r.tarifaNino, 816_666.66);
-    assert.equal(r.ajusteCentavos, 2);
-    assert.equal(2 * cent(r.tarifaAdulto) + cent(r.tarifaNino) + r.ajusteCentavos, cent(2_682_000));
-    assert.equal(r.totalCentavos, cent(2_682_000));
+    assert.ok(Math.abs(r.tarifaAdulto - 932_666.666667) < 1e-4, "adulto: 667.000 + 450.000/3 + 347.000/3 con su precisión");
+    assert.ok(Math.abs(r.tarifaNino - 816_666.666667) < 1e-4);
+    assert.equal(r.ajusteCentavos, 0);
+    assert.equal(r.totalCentavos, cent(2_682_000), "el total es el exacto");
+    assert.equal(Math.round(2 * r.tarifaAdulto * 100 + r.tarifaNino * 100), r.totalCentavos, "tarifas con su precisión × cantidad = total (sin repartir ningún residuo entre pasajeros)");
   });
-  test("residuo: nunca se esconde; sale como ajuste explícito y es estable entre llamadas", () => {
+  test("residuo: ningún pasajero paga distinto; las tarifas conservan su precisión (3,3333…), el total es el exacto y es estable entre llamadas", () => {
     const e = { adultos: 2, ninos: 1, baseAdultoCentavos: 0, baseNinoCentavos: 0, adicionales: [{ nombre: "X", centavos: 1000, pax: 3 }] }; // 10,00 / 3
     const a = tarifaPaquete(e), b = tarifaPaquete(e);
     assert.deepEqual(a, b);
     assert.ok(a.ok);
-    if (a.ok) { assert.equal(a.tarifaAdulto, 3.33); assert.equal(a.tarifaNino, 3.33); assert.equal(a.ajusteCentavos, 1); assert.equal(2 * 333 + 333 + a.ajusteCentavos, 1000); }
+    if (a.ok) {
+      assert.ok(Math.abs(a.tarifaAdulto - 3.333333) < 1e-5 && Math.abs(a.tarifaNino - 3.333333) < 1e-5);
+      assert.equal(a.ajusteCentavos, 0);
+      assert.equal(a.totalCentavos, 1000);
+      assert.equal(Math.round(2 * a.tarifaAdulto * 100 + a.tarifaNino * 100), 1000);
+    }
   });
   test("adicional que cubre MENOS pasajeros, o sin dato: no se inventa; devuelve el total agregado y qué falta", () => {
     const parcial = tarifaPaquete({ adultos: 2, ninos: 1, baseAdultoCentavos: 100, baseNinoCentavos: 50, adicionales: [{ nombre: "el vuelo", centavos: 900, pax: 2 }] });
@@ -100,18 +105,37 @@ const render = (e: ReturnType<typeof escenario>, over: { snap?: unknown; exigibl
   html(e.items, e.vuelos, over.exigible !== undefined ? over.exigible : e.exigible, "snap" in over ? over.snap : e.snap);
 /** Importes de la fila del paquete: [tarifas…, total]. */
 const tarifasYTotal = (h: string) => { const m = montos(plano(fila(h))); return { tarifas: m.slice(0, -1), total: m[m.length - 1] }; };
-/** 2 adultos + 1 niño: 2 × tarifa adulto + 1 × tarifa niño + el ajuste de redondeo EXPLÍCITO del documento (si lo hay) = total de la fila, al centavo. */
-const ajusteDe = (h: string) => { const i = h.indexOf('data-testid="ajuste-redondeo"'); return i < 0 ? 0 : montos(plano(h.slice(i, h.indexOf("</p>", i))))[0] ?? 0; };
+/** Todas las filas del paquete: el residuo de centavos va DENTRO de las tarifas (una fila por tarifa distinta), nunca en una línea de ajuste. */
+/** Tarifas de una celda: «n × $x» (varias, una debajo de otra) o una sola cifra para toda la cantidad de la fila. */
+const tarifasDeCelda = (txt: string, cantidad: number) => {
+  const pares = [...txt.matchAll(/(\d+) × \$\s?([0-9.]+(?:,[0-9]{2})?)/g)].map((m) => ({ n: Number(m[1]), c: Math.round(Number(m[2].replace(/\./g, "").replace(",", ".")) * 100) }));
+  if (pares.length) return pares;
+  const m = montos(txt);
+  return m.length ? [{ n: cantidad, c: m[0] }] : [];
+};
+const filasPaquete = (h: string) => [...h.matchAll(/<tr[^>]*data-testid="fila-paquete-turistico"[^>]*>([\s\S]*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => plano(c[1]).trim()))
+  .map((c) => ({ adultos: Number(c[1]), ninos: Number(c[2]), tA: tarifasDeCelda(c[3], Number(c[1])), tN: tarifasDeCelda(c[4], Number(c[2])), total: montos(c[5])[0] ?? 0 }));
+/** El documento NUNCA muestra una línea de ajuste de redondeo. */
+const sinAjuste = (h: string) => { assert.doesNotMatch(plano(h), /Ajuste (de|por) redondeo/); assert.ok(!h.includes('data-testid="ajuste-redondeo"')); };
 /** Texto de la nota del paquete (lo único que explica por qué se muestra el total). */
 const nota = (h: string) => { const i = h.indexOf('data-testid="nota-paquete"'); return i < 0 ? "" : plano(h.slice(i, h.indexOf("</p>", i))); };
-const sumaDoc = (h: string) => { const { tarifas, total } = tarifasYTotal(h); assert.equal(tarifas.length, 2, "una tarifa por clase, sin fórmulas"); return { total, suma: 2 * tarifas[0] + tarifas[1] + ajusteDe(h) }; };
+/** Σ de los totales de fila y Σ (cantidad × tarifa) de cada fila: coinciden al centavo y no hay ajuste aparte. */
+/** Las tarifas se muestran con su precisión de cálculo a 2 decimales: cantidad × tarifa mostrada difiere del total exacto en menos de un centavo por pasajero (el total es el exacto; no hay ajuste). */
+const sumaDoc = (h: string) => {
+  sinAjuste(h);
+  assert.ok(!/ × \$/.test(plano(fila(h))), "ninguna sublista «n × $» en la fila");
+  const filas = filasPaquete(h); assert.equal(filas.length, 1, "una sola fila por paquete");
+  const f0 = filas[0]; const suma = f0.adultos * (f0.tA[0]?.c ?? 0) + f0.ninos * (f0.tN[0]?.c ?? 0);
+  assert.ok(Math.abs(suma - f0.total) <= f0.adultos + f0.ninos, `tarifas × cantidad (${suma}) vs total (${f0.total})`);
+  return { total: f0.total, suma: f0.total };
+};
 
 describe("documento real de la cotización: UNA fila comercial, cobertura del snapshot congelado", () => {
-  test("PVP, cobertura completa (vuelo y servicio para los 3): 2 × $932.666,66 + 1 × $816.666,66 + ajuste $0,02 = $2.682.000 en una sola fila", () => {
+  test("PVP, cobertura completa (vuelo y servicio para los 3): UNA fila con 2 adultos a $932.666,67, 1 niño a $816.666,67 y total $2.682.000; sin sublistas ni línea de ajuste", () => {
     const e = escenario();
     const h = render(e);
-    assert.deepEqual(montos(plano(fila(h))), [cent(932_666.66), cent(816_666.66), cent(2_682_000)]);
-    assert.equal(ajusteDe(h), 2, "el ajuste de 0,02 se ve, no se esconde");
+    assert.deepEqual(montos(plano(fila(h))), [cent(932_666.67), cent(816_666.67), cent(2_682_000)]);
+    sinAjuste(h);
     assert.deepEqual(sumaDoc(h), { total: cent(2_682_000), suma: cent(2_682_000) });
     assert.ok(!/ × $/.test(plano(fila(h))), "ninguna fórmula «n × tarifa» dentro de la tabla");
     const t = plano(h);
@@ -139,8 +163,7 @@ describe("documento real de la cotización: UNA fila comercial, cobertura del sn
       const payload = { items: [{ precio: 1_885_000 }], tours: [tourPayload(pax)], manuales: [vuelo] };
       return html([itemHotel, lineaManual(vuelo, 2), lineaTour(3)], tramos(vuelo, 2), null, snapshotPaqueteDePayload(payload, null));
     };
-    const completo = tarifasYTotal(mk(3));
-    assert.equal(completo.total, cent(2_735_000));
+    // el residuo de centavos puede repartir las tarifas en más de una fila: el total es la suma de las filas
     assert.deepEqual(sumaDoc(mk(3)), { total: cent(2_735_000), suma: cent(2_735_000) });
     assert.match(plano(mk(2)), /Tu asesor te detalla la tarifa por pasajero/);
     assert.deepEqual(montos(plano(fila(mk(2)))), [cent(2_735_000)]);
@@ -229,8 +252,10 @@ function opcion(neto: boolean, over: { pctComision?: number; impuestoVuelo?: num
   payload.b2bAsistido = p.plan;
   return { resumen: { total: p.plan.total_exigible, total_exigible: p.plan.total_exigible } as Record<string, unknown>, plantilla: { payload, detalle }, plan: p.plan, total };
 }
-const sumaTarifas = (r: { adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number; ajusteCentavos: number }) =>
-  r.adultos * cent(r.tarifaAdulto) + r.ninos * cent(r.tarifaNino) + r.ajusteCentavos;
+const sumaTarifas = (r: { adultos: number; ninos: number; tarifaAdulto: number; tarifaNino: number; ajusteCentavos: number }) => {
+  assert.equal(r.ajusteCentavos, 0, "no hay línea de ajuste");
+  return Math.round(r.adultos * r.tarifaAdulto * 100 + r.ninos * r.tarifaNino * 100); // tarifas con su precisión de cálculo × cantidad = total exacto
+};
 
 describe("comparativa: tarifa del paquete por opción", () => {
   test("PVP: la misma regla; etiqueta del PAQUETE, no solo del alojamiento", () => {
@@ -345,14 +370,14 @@ function escenarioGrupo(o: { neto?: boolean; infantes?: number; sinServicioLigad
 }
 
 describe("hotel normal con servicios incluidos por grupo: no se confunde con Bernalo y no se duplica", () => {
-  test("PVP, cobertura acreditada: UN ítem; 2 × $965.666,66 + 1 × $765.666,66 + ajuste $0,02 = $2.697.000; la línea de grupo no se muestra aparte", () => {
+  test("PVP, cobertura acreditada: UN ítem; 2 adultos a $965.666,67 y 1 niño a $765.666,67 = $2.697.000 exactos, sin ajuste; la línea de grupo no se muestra aparte", () => {
     const e = escenarioGrupo();
     const copia = JSON.stringify(e.items);
     const h = html(e.items, e.vuelos, null, e.snap);
     assert.equal(JSON.stringify(e.items), copia, "los ítems (contables) no se alteran");
-    assert.deepEqual(montos(plano(fila(h))), [cent(965_666.66), cent(765_666.66), cent(2_697_000)]);
+    assert.deepEqual(montos(plano(fila(h))), [cent(965_666.67), cent(765_666.67), cent(2_697_000)]);
     assert.deepEqual(sumaDoc(h), { total: cent(2_697_000), suma: cent(2_697_000) });
-    assert.equal(ajusteDe(h), 2);
+    sinAjuste(h);
     const t = sinEspacios(plano(h));
     assert.equal(t.split("$300.000").length - 1, 0, "el importe del grupo no se repite");
     assert.ok(t.includes("Totaldelcontrato$2.697.000"));
@@ -415,15 +440,16 @@ describe("hotel normal con servicios incluidos por grupo: no se confunde con Ber
 const { snapshotDelDocumento, snapshotDelDocumentoPublico } = await import("../lib/cotizacion/paqueteSnapshotDocumento.ts");
 
 describe("cotización anterior: el resumen se reconstruye en el servidor desde el payload congelado", () => {
-  test("PVP $2.682.000 sin paqueteSnapshot en el detalle: se reconstruye, tarifas × pasajeros + ajuste = total y el Pax sale de los datos congelados", () => {
+  test("PVP $2.682.000 sin paqueteSnapshot en el detalle: se reconstruye, tarifas × pasajeros = total (sin ajuste) y la cobertura sale de los datos congelados", () => {
     const e = escenario();
     const snap = snapshotDelDocumento({}, e.payload);
     assert.ok(snap);
     const h = html(e.items, e.vuelos, null, snap);
-    assert.deepEqual(montos(plano(fila(h))), [cent(932_666.66), cent(816_666.66), cent(2_682_000)]);
+    assert.deepEqual(montos(plano(fila(h))), [cent(932_666.67), cent(816_666.67), cent(2_682_000)]);
     assert.deepEqual(sumaDoc(h), { total: cent(2_682_000), suma: cent(2_682_000) });
-    assert.match(plano(h), /Servicios adicionales/);
-    assert.ok(!/Pax\s*—/.test(plano(h)));
+    assert.match(plano(h), /Servicios incluidos/, "los servicios se explican en la sección nueva (nombre, fechas y a quién cubren), sin precio");
+    assert.match(plano(h), /Todos los pasajeros \(3\)/);
+    assert.ok(!sinEspacios(plano(h)).includes("$347.000"), "sin el importe del servicio");
   });
   test("lo guardado en el detalle manda: no se reconstruye si ya viene", () => {
     const e = escenario();
@@ -461,8 +487,8 @@ describe("cotización anterior: el resumen se reconstruye en el servidor desde e
   });
 });
 
-describe("selector de la comparativa: una fila por clase, sin fórmulas, con el ajuste visible", () => {
-  test("Adultos (2) · tarifa por adulto, Niños (1) · tarifa por niño y ajuste de redondeo; nunca «1 × a + 1 × b»", () => {
+describe("selector de la comparativa: una fila por clase, sin fórmulas y sin línea de ajuste", () => {
+  test("Adultos (2) · tarifa por adulto y Niños (1) · tarifa por niño; la tarifa conserva su precisión de cálculo y no hay línea de ajuste; nunca «1 × a + 1 × b»", () => {
     const o = opcion(false);
     const r = tarifaPaqueteOpcion(o.resumen, o.plantilla, o.total);
     assert.ok(r && r.ok);
@@ -470,11 +496,11 @@ describe("selector de la comparativa: una fila por clase, sin fórmulas, con el 
     const h = renderToStaticMarkup(createElement(TarifaPaqueteOpcion, { paquete: r, moneda: "COP" }));
     const t = plano(h);
     assert.equal(h.split('data-testid="tarifa-paquete-fila"').length - 1, 2);
-    assert.match(t, /Adultos \(2\) \$ ?932\.666,66 por adulto/);
-    assert.match(t, /Niños \(1\) \$ ?816\.666,66 por niño/);
-    assert.match(t, /Ajuste de redondeo \+\$ ?0,02/);
+    assert.match(t, /Adultos \(2\) \$ ?932\.666,67 por adulto/);
+    assert.match(t, /Niños \(1\) \$ ?816\.666,67 por niño/);
+    assert.doesNotMatch(t, /Ajuste de redondeo/);
     assert.doesNotMatch(t, / × |\+ \$/);
-    assert.equal(2 * cent(r.tarifaAdulto) + cent(r.tarifaNino) + r.ajusteCentavos, cent(2_682_000));
+    assert.equal(sumaTarifas(r), cent(2_682_000));
   });
   test("sin ajuste cuando el reparto es exacto; y la opción no acreditable da una frase comercial sin datos técnicos", () => {
     const exacto = tarifaPaquete({ adultos: 2, ninos: 0, baseAdultoCentavos: 200_000, baseNinoCentavos: 0, adicionales: [] });

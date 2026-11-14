@@ -66,6 +66,18 @@ describe("el servidor sigue validando lo que declara el carrito", () => {
     assert.equal(r.ok, false);
     assert.match((r as { motivo: string }).motivo, /cubre 2 pasajeros y se seleccionaron 1/);
   });
+  test("un servicio que cubre 3 NO admite 5 pasajeros seleccionados (el cliente no es la última línea de defensa): se rechaza como cobertura mal declarada", () => {
+    const cinco: PersonaBase = { clave: "adulto:doble", etiqueta: "Adulto · Doble", tipo: "adulto", cantidad: 5, tarifa: 300_000 };
+    const ids = [1, 2, 3, 4, 5].map((n) => `adulto:doble#${n}`);
+    const u5 = unidad([cinco], { cuposActivos: { "adulto:doble": [1, 2, 3, 4, 5] } });
+    const r = construirResumenCarrito({ unidades: [u5], servicios: [servicio("m", "Traslado privado", 300_000, 3, ids)], modalidad: "pvp", moneda: "COP", total: 1_800_000 });
+    assert.equal(r.ok, false);
+    assert.equal((r as { rechazar?: boolean }).rechazar, true, "es un rechazo de la emisión, no un resumen pendiente");
+    assert.match((r as { motivo: string }).motivo, /cubre 3 pasajeros y se seleccionaron 5/);
+    // con exactamente 3 sí
+    const buena = construirResumenCarrito({ unidades: [u5], servicios: [servicio("m", "Traslado privado", 300_000, 3, ids.slice(0, 3))], modalidad: "pvp", moneda: "COP", total: 1_800_000 });
+    assert.equal(buena.ok, true);
+  });
   test("un pasajero repetido o inexistente en la selección se rechaza", () => {
     const rep = construirResumenCarrito({ unidades: [u()], servicios: [servicio("t", "Tour", 100_000, 2, ["adulto:doble#1", "adulto:doble#1"])], modalidad: "pvp", moneda: "COP", total: 700_000 });
     assert.equal(rep.ok, false);

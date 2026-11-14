@@ -53,6 +53,7 @@ const veces = (t: string, frag: string) => plano(t).split(plano(frag)).length - 
 // Estructura de siempre de «Valores y Pagos»: Ítem · Adultos · Niños · Tarifa Adulto · Tarifa Niño · Valor total. Una fila por grupo (mismo tipo, tarifa y servicios).
 // #52: el fixture trae nombre comercial («Cartagena Esencial»): el Ítem es «Paquete Turístico {nombre}».
 const ITEM = "Paquete Turístico Cartagena Esencial";
+const centavosDe = (t: string) => Math.round(Number(t.replace(/[^0-9,]/g, "").replace(",", ".")) * 100);
 const filasDe = (html: string) => [...html.matchAll(/<tr[^>]*data-testid="resumen-(?:grupo|ajuste)"[^>]*>(.*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>(.*?)<\/td>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").replace(/&nbsp;| /g, " ").trim()));
 const encabezados = (html: string) => [...(html.match(/<thead[^>]*>([\s\S]*?)<\/thead>/)?.[1] ?? "").matchAll(/<th[^>]*>(.*?)<\/th>/g)].map((c) => c[1].replace(/<[^>]+>/g, "").trim());
 const monto = (n: number, m = "COP") => formatMoneda(n, m).replace(/\s+/g, "");
@@ -117,15 +118,16 @@ describe("#94 · cotización del carrito con resumen: estructura de siempre, una
       ["2", "0", monto(300_000), monto(0), monto(600_000)], ["0", "1", monto(0), monto(200_000), monto(200_000)], ["0", "1", monto(0), monto(0), monto(0)],
     ]);
   });
-  test("el ajuste de redondeo sale como «Ajuste por redondeo» solo con su valor", () => {
-    // 1.000,01 entre 3 pasajeros: 333,33 cada uno y un residuo de 2 centavos que se muestra aparte.
+  test("el residuo de redondeo ya NO sale como fila aparte: va dentro de las tarifas por pasajero y la suma de las filas es el total", () => {
+    // 1.000,01 entre 3 pasajeros: 333,34 + 333,34 + 333,33 (el residuo de 2 centavos queda dentro de las tarifas de los dos primeros).
     const u = unidadOk(resumenUnidad({ ...meta, cupos, servicios: [{ id: "t", nombre: "Tour", modo: "total" as const, precioCentavos: 100_001, cubre: "todos" as const }] }));
-    assert.equal(u.ajusteCentavos, 2);
+    assert.equal(u.ajusteCentavos, 0);
     const r = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u] })));
-    const filas = filasDe(render([it(1, "z", { adultos: 3, tarifa_adulto: 300_000 }), it(2, "x", { modo_precio: "total", valor_total: 1000.01 })], { resumenPrecios: r }));
-    assert.equal(filas.at(-1)![0], "Ajuste por redondeo");
-    assert.deepEqual(filas.at(-1)!.slice(1, 5), ["—", "—", "—", "—"]);
-    assert.ok(/0,02|0.02/.test(filas.at(-1)![5]));
+    const html = render([it(1, "z", { adultos: 3, tarifa_adulto: 300_000 }), it(2, "x", { modo_precio: "total", valor_total: 1000.01 })], { resumenPrecios: r });
+    const filas = filasDe(html);
+    assert.equal(html.includes('data-testid="resumen-ajuste"'), false, "sin fila de ajuste");
+    assert.ok(filas.every((f) => f[0] !== "Ajuste por redondeo"));
+    assert.equal(r.unidades[0].grupos.reduce((n: number, g: { subtotalCentavos: number }) => n + g.subtotalCentavos, 0), r.totalCentavos, "el total exigible no cambia");
   });
 });
 
@@ -263,5 +265,93 @@ describe("#17 · el contrato no muestra horarios ni número de vuelo; la cotizac
     assert.match(t, /05:10–06:25/);
     assert.match(t, /vuelo AV9124/);
     assert.doesNotMatch(t, /ABC123/);
+  });
+});
+
+// ── Revisión #442: el servicio manual en los documentos del cliente (sección «Servicios incluidos») y el redondeo sin línea de ajuste ─────────────────────────────────────────────
+describe("servicios incluidos en el documento del cliente (sin precios por servicio)", () => {
+  const tourConFechas = manual({ clase: "otro", nombre: "Traslado privado", pax: 2, precio: 200_000, moneda: "COP", impuestoNoComisionable: 0, fechaIda: "2030-10-15", fechaRegreso: "2030-10-18" });
+  const conFechas = (d: (m: typeof vuelo) => string) => [
+    it(1, "1 hab Triple (3 pax) · Estándar / PC", { adultos: 3, tarifa_adulto: 300_000 }),
+    it(2, d(vuelo), { modo_precio: "total", valor_total: 1_200_000 }),
+    it(3, d(tourConFechas), { modo_precio: "total", valor_total: 200_000 }),
+  ];
+  const resumen = () => {
+    const r = resumenUnidad({ ...meta, cupos, servicios: [servicio("v", "Vuelo", 1_200_000, ["a1", "a2"]), servicio("t", "Traslado privado", 200_000, ["a2", "a3"])] });
+    return JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [unidadOk(r)] })));
+  };
+  const seccion = (html: string) => { const i = html.indexOf('data-testid="servicios-incluidos"'); return i < 0 ? "" : html.slice(i, html.indexOf("</p>", html.indexOf('data-testid="servicios-incluidos-nota"')) + 4); };
+  const plana = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/&gt;/g, ">").replace(/\s+/g, " ");
+
+  test("cotización: sección clara con nombre, fechas y a quién cubre; el importe NO se repite ni se separa por servicio", () => {
+    const h = render(conFechas(descripcionCotizacionManual), { resumenPrecios: resumen() });
+    const s = seccion(h);
+    assert.ok(s, "la sección existe");
+    const t = plana(s);
+    assert.match(t, /Servicios incluidos/);
+    assert.match(t, /Traslado privado/);
+    assert.match(t, /2 de 3 pasajeros \(2 adultos\)/);
+    assert.match(t, /15 de octubre de 2030|15\/10\/2030|octubre/i, "lleva las fechas");
+    assert.match(t, /incluido en las tarifas por pasajero del paquete/);
+    assert.equal(veces(t, $(200_000)), 0, "sin el precio del servicio");
+    assert.doesNotMatch(t, /Vuelo|Tiquete/, "el vuelo vive en el cuadro de vuelos, no en esta sección");
+    assert.doesNotMatch(texto(conFechas(descripcionCotizacionManual), { resumenPrecios: resumen() }), /Servicios adicionales/, "no vuelve la tabla vieja con precios");
+  });
+
+  test("contrato (sin salvedad comercial): la misma sección con nombre, fechas y cobertura", () => {
+    const h = render(conFechas(descripcionContratoManual), { resumenPrecios: resumen(), esCotizacion: false, codigo: null }, { estado: "confirmado" });
+    const s = plana(seccion(h));
+    assert.match(s, /Traslado privado/);
+    assert.match(s, /2 de 3 pasajeros \(2 adultos\)/);
+    assert.equal(veces(s, $(200_000)), 0);
+  });
+
+  test("servicio sin fechas: «Por confirmar»; con cobertura total: «Todos los pasajeros (3)»", () => {
+    const sinFechas = [it(1, "1 hab Triple (3 pax) · Estándar / PC", { adultos: 3, tarifa_adulto: 300_000 }), it(2, descripcionCotizacionManual(tour), { modo_precio: "total", valor_total: 200_000 })];
+    const r = resumenUnidad({ ...meta, cupos, servicios: [servicio("t", "Tour Islas del Rosario", 200_000, ["a1", "a2", "a3"])] });
+    const res = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [unidadOk(r)] })));
+    const s = plana(seccion(render(sinFechas, { resumenPrecios: res }, {})));
+    assert.match(s, /Tour Islas del Rosario/);
+    assert.match(s, /Por confirmar/);
+    assert.match(s, /Todos los pasajeros \(3\)/);
+  });
+});
+
+describe("redondeo: el cliente nunca ve «Ajuste por redondeo» y el total exigible no cambia", () => {
+  const items = [
+    it(1, "1 hab Triple (3 pax) · Estándar / PC", { adultos: 3, tarifa_adulto: 300_000 }),
+    it(2, descripcionCotizacionManual(tour), { modo_precio: "total", valor_total: 100_001 }),
+  ];
+  test("un servicio que no divide exacto reparte el residuo DENTRO de las tarifas por pasajero: sin fila de ajuste y con el mismo total", () => {
+    const r = resumenUnidad({ ...meta, cupos, servicios: [servicio("t", "Tour Islas del Rosario", 100_001, ["a1", "a2", "a3"])] });
+    const u = unidadOk(r);
+    assert.equal(u.ajusteCentavos, 0);
+    const res = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u] })));
+    const html = render(items, { resumenPrecios: res }, {});
+    assert.doesNotMatch(texto(items, { resumenPrecios: res }), /Ajuste por redondeo/);
+    assert.equal(filasDe(html).length > 0, true);
+    assert.equal(html.includes('data-testid="resumen-ajuste"'), false);
+    const suma = res.unidades[0].grupos.reduce((s: number, g: { subtotalCentavos: number }) => s + g.subtotalCentavos, 0);
+    assert.equal(suma, 100_001 * 100 + 3 * 30_000_000, "la suma de las tarifas es el total exigible");
+  });
+  test("UNA fila por paquete: 3 adultos con UNA tarifa ($433.333,67, su precisión de cálculo) y el valor total exacto ($1.300.001); sin sublistas, sin pasajeros con tarifas distintas y sin ajuste", () => {
+    const u = unidadOk(resumenUnidad({ ...meta, cupos, servicios: [{ id: "t", nombre: "Tour", modo: "total" as const, precioCentavos: 40_000_100, cubre: "todos" as const }] }));
+    const r = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [u] })));
+    const html = render([it(1, "z", { adultos: 3, tarifa_adulto: 300_000 }), it(2, "x", { modo_precio: "total", valor_total: 400_001 })], { resumenPrecios: r }, {});
+    const filas = filasDe(html);
+    assert.equal(filas.length, 1, "una sola fila para el paquete");
+    assert.equal(filas[0][1], "3");
+    assert.match(filas[0][3], /^\$\s?433\.333,67$/, `una sola tarifa: «${filas[0][3]}»`);
+    assert.equal(centavosDe(filas[0][5]), 130_000_100, "valor total exacto de la fila");
+    assert.ok(!html.includes('data-testid="tarifas-multiples"'));
+    assert.doesNotMatch(html.replace(/<[^>]+>/g, " "), / × \$|Ajuste (de|por) redondeo/);
+  });
+  test("un resumen guardado antes del cambio (con ajusteCentavos) se muestra SIN la fila de ajuste y con el mismo total", () => {
+    const u = unidadOk(resumenUnidad({ ...meta, cupos, servicios: [] }));
+    const legado = { ...u, ajusteCentavos: 1, totalCentavos: u.totalCentavos + 1 };
+    const res = JSON.parse(JSON.stringify(resumenCotizacion({ modalidad: "pvp", moneda: "COP", unidades: [legado] })));
+    const html = render([it(1, "1 hab Triple (3 pax) · Estándar / PC", { adultos: 3, tarifa_adulto: 300_000 })], { resumenPrecios: res }, {});
+    assert.equal(html.includes('data-testid="resumen-ajuste"'), false);
+    assert.doesNotMatch(html.replace(/<[^>]+>/g, " "), /Ajuste por redondeo/);
   });
 });

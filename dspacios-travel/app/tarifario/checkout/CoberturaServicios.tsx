@@ -106,7 +106,9 @@ export function useCoberturaNormal(p: { activo: boolean; hotelId: string | null;
   };
   const alternar = (s: ServicioCobertura, id: string) => cambiarSeleccion((prev, vivos) => {
     const base = (prev[s.id] ?? []).filter((x) => vivos.has(x)); // al corregir se descartan los pasajeros que ya no existen
-    return { ...prev, [s.id]: base.includes(id) ? base.filter((x) => x !== id) : [...base, id] };
+    if (base.includes(id)) return { ...prev, [s.id]: base.filter((x) => x !== id) };
+    if (base.length >= s.pax) return { ...prev, [s.id]: base }; // un servicio que cubre N no admite una selección de más de N: se desmarca uno para sustituirlo
+    return { ...prev, [s.id]: [...base, id] };
   });
   const usarTodos = (s: ServicioCobertura) => cambiarSeleccion((prev) => ({ ...prev, [s.id]: [] }));
 
@@ -123,6 +125,7 @@ export function useCoberturaNormal(p: { activo: boolean; hotelId: string | null;
         const sel = elegidos(s);
         if (!parcial(s) && !mal) continue;
         if (mal) { bloqueo = `Revisa la cobertura de «${s.nombre}»: un pasajero que tenía marcado ya no está en la cotización.`; break; }
+        if (sel.length > s.pax) { bloqueo = `«${s.nombre}» cubre ${s.pax} pasajeros y hay ${sel.length} marcados: desmarca ${sel.length - s.pax} (no se elige a nadie por ti).`; break; }
         if (sel.length !== s.pax) { bloqueo = `«${s.nombre}» cubre ${s.pax} de los ${paxHotel} pasajeros: marca ${s.pax} (marcados: ${sel.length}).`; break; }
       }
     }
@@ -141,7 +144,7 @@ export function useCoberturaNormal(p: { activo: boolean; hotelId: string | null;
   const panel = !activo || !lista.length ? null : (
     <section className="rounded-xl border border-gray-200 bg-white p-4" data-testid="cobertura-servicios">
       <h2 className="text-sm font-semibold text-gray-700">Pasajeros que cubre cada servicio</h2>
-      <p className="mt-1 text-[11px] text-gray-400">Por defecto cada servicio cubre a todos los pasajeros del hotel ({paxHotel}). Si cubre a menos, marca a cuáles.</p>
+      <p className="mt-1 text-[11px] text-gray-400">Por defecto cada servicio cubre a todos los pasajeros del hotel ({paxHotel}). Si cubre a menos, marca exactamente a cuáles: al llegar a su cantidad se deshabilitan los demás (desmarca uno para cambiarlo).</p>
       {error && <p className="mt-2 text-xs text-red-600" role="alert">{error}</p>}
       <ul className="mt-3 space-y-3">
         {lista.map((s) => {
@@ -156,12 +159,16 @@ export function useCoberturaNormal(p: { activo: boolean; hotelId: string | null;
               {parcial(s) && cupos && (
                 <fieldset className="mt-2 grid gap-1 sm:grid-cols-2">
                   <legend className="sr-only">Pasajeros cubiertos por {s.nombre}</legend>
-                  {ids.map((id) => (
-                    <label key={id} className="flex items-center gap-2">
-                      <input type="checkbox" checked={sel.includes(id)} onChange={() => alternar(s, id)} aria-label={`${s.nombre}: ${etiqueta.get(id) ?? id}`} />
-                      <span>{etiqueta.get(id) ?? id}</span>
-                    </label>
-                  ))}
+                  {ids.map((id) => {
+                    const marcado = sel.includes(id);
+                    const lleno = !marcado && sel.filter((x) => ids.includes(x)).length >= s.pax; // solo cuentan los pasajeros que siguen en la cotización // alcanzada la cantidad: el resto queda deshabilitado; los marcados siguen pudiendo desmarcarse
+                    return (
+                      <label key={id} className={`flex items-center gap-2 ${lleno ? "text-gray-400" : ""}`}>
+                        <input type="checkbox" checked={marcado} disabled={lleno} onChange={() => alternar(s, id)} aria-label={`${s.nombre}: ${etiqueta.get(id) ?? id}`} />
+                        <span>{etiqueta.get(id) ?? id}</span>
+                      </label>
+                    );
+                  })}
                 </fieldset>
               )}
               {mal && (
@@ -170,7 +177,9 @@ export function useCoberturaNormal(p: { activo: boolean; hotelId: string | null;
                   {!parcial(s) && <button type="button" onClick={() => usarTodos(s)} className="ml-2 underline">Cubrir a todos</button>}
                 </p>
               )}
-              {parcial(s) && !mal && sel.length !== s.pax && <p className="mt-2 text-gray-500">Marca {s.pax} pasajeros (marcados: {sel.length}).</p>}
+              {parcial(s) && !mal && sel.length < s.pax && <p className="mt-2 text-gray-500" data-testid="cobertura-faltan">Marca {s.pax} pasajeros (marcados: {sel.length}).</p>}
+              {parcial(s) && !mal && sel.length === s.pax && <p className="mt-2 text-emerald-700" data-testid="cobertura-completa">Cobertura completa: {s.pax} de {paxHotel}. Desmarca uno para cambiarlo.</p>}
+              {parcial(s) && !mal && sel.length > s.pax && <p className="mt-2 font-medium text-amber-700" role="alert" data-testid="cobertura-exceso">Este servicio cubre {s.pax} pasajeros y hay {sel.length} marcados: desmarca {sel.length - s.pax}. La cotización no se emite hasta corregirlo.</p>}
             </li>
           );
         })}

@@ -69,11 +69,24 @@ describe("tarifas distintas se conservan", () => {
 });
 
 describe("redondeo y validaciones", () => {
-  test("el residuo menor a un centavo por pasajero sale como ajuste explícito y el total cuadra", () => {
+  test("el residuo se resuelve DENTRO de las tarifas por pasajero (sin línea de ajuste) y el total se conserva exacto", () => {
     const u = ok(resumenUnidad({ ...meta, cupos: adultos(3, 0), servicios: [{ id: "v", nombre: "Vuelo", modo: "total", precioCentavos: 1000, cubre: "todos" }] }));
-    assert.equal(u.grupos[0].tarifaCentavos, 333);
-    assert.equal(u.ajusteCentavos, 1);
+    assert.deepEqual(u.grupos.map((g) => [g.cantidad, g.tarifaCentavos]), [[1, 334], [2, 333]], "un pasajero paga un centavo más; los otros dos, 333");
+    assert.equal(u.ajusteCentavos, 0);
     assert.equal(u.totalCentavos, 1000);
+    assert.equal(u.grupos.reduce((s, g) => s + g.subtotalCentavos, 0), 1000);
+  });
+  test("la estructura guardada trabaja en centavos enteros (400.000 entre 3 = 133.333,34 + 133.333,33 + 133.333,33): no hay paso de un peso ni ningún múltiplo inventado, y el total es exacto", () => {
+    const u = ok(resumenUnidad({ ...meta, cupos: adultos(3, 0), servicios: [total(400_000, "s", "Traslado", "todos")] }));
+    assert.deepEqual(u.grupos.map((g) => [g.cantidad, g.tarifaCentavos]), [[1, 13_333_334], [2, 13_333_333]]);
+    assert.equal(u.ajusteCentavos, 0);
+    assert.equal(u.totalCentavos, 40_000_000);
+  });
+  test("varios servicios con residuo: cada uno reparte el suyo y el total es la suma exacta", () => {
+    const u = ok(resumenUnidad({ ...meta, cupos: adultos(3, 0), servicios: [total(100_000, "a", "A", "todos"), total(200_000, "b", "B", ["a1", "a2"])] }));
+    assert.equal(u.ajusteCentavos, 0);
+    assert.equal(u.totalCentavos, 30_000_000);
+    assert.equal(u.grupos.reduce((s, g) => s + g.subtotalCentavos, 0), 30_000_000);
   });
   test("servicio parcial sin cupos seleccionados o con un cupo inexistente: error explícito", () => {
     assert.equal(resumenUnidad({ ...meta, cupos: adultos(2), servicios: [total(100, "v", "Vuelo", [])] }).ok, false);

@@ -70,7 +70,7 @@ export function construirResumenCarrito(e: {
   modalidad: "pvp" | "neto";
   moneda: string;
   total: number;
-  /** #14-A: recobro de cada unidad (unidades de moneda). Va DENTRO de la tarifa de adulto como un servicio oculto que cubre a sus adultos: se reparte por igual y el residuo sale en el «ajuste». `total` ya lo incluye. */
+  /** #14-A: recobro de cada unidad (unidades de moneda). Va DENTRO de la tarifa de adulto como un servicio oculto que cubre a sus adultos: se reparte por igual y el residuo queda dentro de las tarifas de algunos adultos (sin línea de ajuste). `total` ya lo incluye. */
   recobroPorUnidad?: Readonly<Record<string, number>>;
   /**
    * #14-A (NETO): tarifa NETO de cada pasajero (centavos), ya calculada con la regla aprobada, por `${ref}|${clave}|${posición}` (posición = orden del pasajero dentro de su clase en la unidad).

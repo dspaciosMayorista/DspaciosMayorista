@@ -43,3 +43,35 @@ export function recobroDesdeFormulario(e: EntradaFormularioRecobro): { ok: true;
   }
   return { ok: true, recobro: { total, participacion: { modo: "valor", valor: p } } };
 }
+
+/** Un componente del total que ve el asesor antes de generar (hotel, servicios, recobro). */
+export type ParteTotal = { etiqueta: string; monto: number };
+export type TotalConRecobro =
+  | { estado: "sin_recobro" }
+  /** El texto del recobro no se puede leer: no hay total que confirmar. */
+  | { estado: "error"; mensaje: string }
+  /** El recobro es válido pero el total no se puede sumar todavía (el carrito mezcla monedas o hay ítems sin moneda): no se muestra una cifra. */
+  | { estado: "pendiente"; motivo: string }
+  /** Total confirmado: partes + recobro, en una sola moneda. */
+  | { estado: "confirmado"; moneda: string; partes: ParteTotal[]; recobro: number; total: number };
+
+/**
+ * #14-A — Total actualizado de una cotización a CLIENTE FINAL con recobro, antes de generar (pantalla interna del asesor: ningún documento del cliente lo nombra).
+ * Distingue un total CONFIRMADO de un cálculo pendiente o con error: nunca muestra una cifra mientras el recobro sea ilegible o la moneda no esté definida.
+ * `base` = total del carrito en UNA moneda (null si mezcla monedas o hay ítems sin moneda) y `partes` su desglose (hotel, servicios).
+ */
+export function totalConRecobro(e: {
+  form: { ok: true; recobro: RecobroParaEnviar | null } | { ok: false; error: string };
+  base: { moneda: string; monto: number } | null;
+  partes: readonly ParteTotal[];
+}): TotalConRecobro {
+  if (!e.form.ok) return { estado: "error", mensaje: e.form.error };
+  if (!e.form.recobro) return { estado: "sin_recobro" };
+  if (!e.base) return { estado: "pendiente", motivo: "El carrito mezcla monedas o tiene ítems sin moneda: el total con recobro se calcula al generar la cotización." };
+  const recobro = e.form.recobro.total;
+  const cent = (n: number) => Math.round(n * 100);
+  const total = (cent(e.base.monto) + cent(recobro)) / 100;
+  const partes = e.partes.filter((p) => p.monto !== 0).map((p) => ({ etiqueta: p.etiqueta, monto: p.monto }));
+  if (partes.reduce((s, p) => s + cent(p.monto), 0) !== cent(e.base.monto)) return { estado: "pendiente", motivo: "El desglose del carrito no coincide con su total: se calcula al generar la cotización." };
+  return { estado: "confirmado", moneda: e.base.moneda, partes, recobro, total };
+}

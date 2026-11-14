@@ -6,7 +6,8 @@
 //   · NETO del aliado directo: no se muestra (el aliado no captura recobro en NETO).
 // El recobro viaja DENTRO de la tarifa de adulto: nunca se identifica en los documentos del cliente (este panel y la vista previa de términos son internos).
 import { Coins } from "lucide-react";
-import type { PartModoFormulario } from "@/lib/cotizacion/recobroEntradaUI";
+import type { PartModoFormulario, TotalConRecobro } from "@/lib/cotizacion/recobroEntradaUI";
+import { formatMoneda } from "@/lib/utils";
 
 export type ModoCapturaRecobro = "aliado_directo" | "asistida" | "cliente_final";
 
@@ -15,7 +16,7 @@ export type EstadoRecobro = { recobroTxt: string; partModo: PartModoFormulario; 
 const inp = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 
-export function RecobroPanel({ modo, estado, onChange, moneda, pctParticipacion, error }: {
+export function RecobroPanel({ modo, estado, onChange, moneda, pctParticipacion, error, totalActualizado }: {
   modo: ModoCapturaRecobro;
   estado: EstadoRecobro;
   onChange: (e: EstadoRecobro) => void;
@@ -24,6 +25,8 @@ export function RecobroPanel({ modo, estado, onChange, moneda, pctParticipacion,
   pctParticipacion?: number | null;
   /** Error de lectura/validación del formulario (se muestra, no se oculta). */
   error?: string | null;
+  /** Total actualizado con el recobro (cliente final): vive AQUÍ, junto al campo, y no en «Tu selección» (que el cliente puede ver): ningún texto del recobro sale de este panel interno. */
+  totalActualizado?: React.ReactNode;
 }) {
   const sub = (p: Partial<EstadoRecobro>) => onChange({ ...estado, ...p });
   return (
@@ -72,6 +75,29 @@ export function RecobroPanel({ modo, estado, onChange, moneda, pctParticipacion,
         <p className="mt-2 text-xs text-gray-400" data-testid="recobro-ayuda-cliente">Sin aliado, el recobro es 100 % de la empresa: no se distribuye.</p>
       )}
       {error && <p id="recobro-error" role="alert" data-testid="recobro-error" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{error}</p>}
+      {totalActualizado && <div className="mt-3">{totalActualizado}</div>}
     </section>
+  );
+}
+
+/** #14-A — Total actualizado con el recobro (solo cliente final), ANTES de generar. Un total confirmado se distingue de un cálculo pendiente o con error: sin cifra mientras no se pueda confirmar. */
+export function TotalConRecobroUI({ total }: { total: TotalConRecobro }) {
+  if (total.estado === "sin_recobro") return null;
+  if (total.estado === "error") {
+    return <p role="alert" data-testid="total-recobro-error" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Total con recobro no disponible: {total.mensaje}</p>;
+  }
+  if (total.estado === "pendiente") {
+    return <p role="status" data-testid="total-recobro-pendiente" className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">Total con recobro pendiente: {total.motivo}</p>;
+  }
+  return (
+    <div className="space-y-1 rounded-lg bg-emerald-50/60 px-3 py-2" data-testid="total-recobro-confirmado">
+      <p className="text-xs text-gray-600">
+        {[...total.partes.map((p) => `${p.etiqueta} ${formatMoneda(p.monto, total.moneda)}`), `Recobro ${formatMoneda(total.recobro, total.moneda)}`].join(" + ")}
+      </p>
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-700">Total con recobro</span>
+        <span className="text-lg font-bold" data-testid="total-recobro-valor" style={{ color: "var(--brand-primary)" }}>{formatMoneda(total.total, total.moneda)}</span>
+      </div>
+    </div>
   );
 }

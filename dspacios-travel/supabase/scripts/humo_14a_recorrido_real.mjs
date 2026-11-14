@@ -123,7 +123,7 @@ const importeDe = (texto, etiqueta) => { const m = new RegExp(etiqueta.source + 
 const entre = (texto, desde, hasta) => { const a = texto.indexOf(desde); if (a < 0) return ""; const b = texto.indexOf(hasta, a); return texto.slice(a, b < 0 ? undefined : b); };
 
 /** Llena el formulario de conversión: asesor, moneda, pasajeros (todos los datos) y genera. Devuelve el número de contrato. */
-async function generarContrato(p, cotId, pasajeros) {
+async function generarContrato(p, cotId, pasajeros, costosManuales = []) {
   await p.ir(`/dashboard/cotizaciones/${cotId}`);
   await p.esperar(`[...document.querySelectorAll('button')].some((b) => /Confirmar → generar contrato/.test(b.textContent))`, "el botón de conversión");
   await p.boton(/Confirmar → generar contrato/);
@@ -146,6 +146,10 @@ async function generarContrato(p, cotId, pasajeros) {
       set(campo('Nacimiento'), ${JSON.stringify(x.nacimiento)}, 'input'); set(campo('Nacimiento'), ${JSON.stringify(x.nacimiento)}, 'change');
       set(campo('Nacionalidad'), 'Colombiana', 'input');
       return true; })()`);
+  }
+  // Servicios manuales: el personal captura el costo neto y el proveedor al convertir (la cotización no los guarda).
+  for (let k = 0; k < costosManuales.length; k++) {
+    await p.evalJs(`(() => { const set = (el, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); }; set(document.querySelector('#man-costo-${k}'), ${JSON.stringify(String(costosManuales[k].costo))}); set(document.querySelector('#man-prov-${k}'), ${JSON.stringify(costosManuales[k].proveedor)}); return true; })()`);
   }
   await p.boton("Generar contrato(s)");
   await espera(7000);
@@ -292,6 +296,40 @@ try {
       check(N, "la página abierta después usa la intención nueva: ya generada, sin tercera cotización", (await resultado(p5)) === "duplicado" && total() - antes === 2, `${total() - antes}`);
       check(N, "dos cotizaciones, dos claves distintas, un solo usuario", sql("select count(distinct clave_envio) || '/' || count(distinct actor_envio) from (select * from public.cotizaciones order by id desc limit 2) t") === "2/1", claves);
     } finally { for (const p of otras) await p.cerrar().catch(() => {}); }
+  });
+
+  // 6) REGLA DEL DUEÑO sobre el redondeo, de punta a punta: un servicio manual de 400.000 que NO divide exacto entre 3 pasajeros. Las tarifas del documento conservan su precisión de cálculo (una por tipo), el total es el
+  //    exacto y cotización, contrato, resumen congelado, documentos y la base de la liquidación (ventas.precio_venta) mantienen el MISMO importe; sin fila de ajuste ni sublistas.
+  if (cuales.includes("6")) await escenario("6-redondeo-regla-del-dueno", async (p) => {
+    const N = "6-redondeo-regla-del-dueno";
+    const MANUAL = { id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", tramo: null, hotelRef: null, hotelEtiqueta: null, pax: 3, precio: 400000, impuestoNoComisionable: 0, moneda: "COP", fotoUrl: null, noches: null };
+    await cargarCheckout(p, U.staff, [ITEM({ ninos: 1, pax: 3, precio: 938000, edadesMenores: [8] }), MANUAL]);
+    const codigo = await generar(p);
+    const c = cotDeCodigo(codigo);
+    const TOTAL = 938000 + 400000;
+    check(N, "cotización: precio_venta = hotel + servicio (1.338.000), sin recobro", num(c.precio_venta) === TOTAL, String(c.precio_venta));
+    const resumen = json(`select (detalle->'resumenPrecios')::text from public.cotizaciones where id = ${c.id}`);
+    const grupos = resumen.unidades.flatMap((u) => u.grupos);
+    check(N, "resumen guardado: estructura en centavos enteros que suma EXACTAMENTE el total y trae la tarifa con su precisión", resumen.totalCentavos === TOTAL * 100 && grupos.reduce((x, g) => x + g.subtotalCentavos, 0) === TOTAL * 100 && grupos.every((g) => Number.isInteger(g.tarifaCentavos) && g.subtotalCentavos === g.cantidad * g.tarifaCentavos && typeof g.tarifaExactaCentavos === "number") && resumen.unidades.every((u) => u.ajusteCentavos === 0), JSON.stringify(grupos).slice(0, 300));
+    const exA = grupos.filter((g) => g.tipo === "adulto"); const exN = grupos.filter((g) => g.tipo !== "adulto");
+    const tarifaA = exA.reduce((x, g) => x + g.tarifaExactaCentavos * g.cantidad, 0) / exA.reduce((x, g) => x + g.cantidad, 0) / 100;
+    const tarifaN = exN.reduce((x, g) => x + g.tarifaExactaCentavos * g.cantidad, 0) / exN.reduce((x, g) => x + g.cantidad, 0) / 100;
+    const fmt = (n) => n.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const cot = await textoDe(p, null, `/cot/${c.share_token}`);
+    check(N, "documento de la cotización: total exacto, UNA tarifa por tipo con su precisión, sin sublistas ni «Ajuste por redondeo»", tiene(cot, TOTAL) && cot.includes(fmt(tarifaA)) && cot.includes(fmt(tarifaN)) && !/ × \$|Ajuste (de|por) redondeo/.test(cot) && /Servicios incluidos/.test(cot), `${fmt(tarifaA)} / ${fmt(tarifaN)}`);
+    const numero = await generarContrato(p, c.id, PAX_FAMILIA, [{ costo: 300000, proveedor: "Receptivo 14A" }]);
+    out[N].numero = numero;
+    const v = ventaDe(numero);
+    check(N, "contrato: precio_venta (base de la liquidación y de la rentabilidad) = el de la cotización", num(v.precio_venta) === TOTAL, String(v.precio_venta));
+    const resCont = json(`select resumen::text from public.contrato_resumen_precios where numero_contrato = '${numero}'`);
+    check(N, "resumen congelado en el contrato = el de la cotización (mismo total, mismas tarifas exactas)", resCont.totalCentavos === TOTAL * 100 && JSON.stringify(resCont.unidades.flatMap((u) => u.grupos).map((g) => [g.cantidad, g.tarifaCentavos, g.tarifaExactaCentavos])) === JSON.stringify(grupos.map((g) => [g.cantidad, g.tarifaCentavos, g.tarifaExactaCentavos])), JSON.stringify(resCont).slice(0, 200));
+    await confirmar(numero);
+    const doc = await textoDe(p, U.staff, `/contrato/${numero}`);
+    check(N, "documento del contrato: mismo total, tarifa exacta por tipo y sin sublistas ni ajuste", tiene(doc, TOTAL) && doc.includes(fmt(tarifaA)) && !/ × \$|Ajuste (de|por) redondeo/.test(doc), "");
+    const pub = await textoDe(p, null, `/c/${v.share_token}`);
+    check(N, "enlace público del contrato: mismo total", tiene(pub, TOTAL) && !/Ajuste (de|por) redondeo/.test(pub), "");
+    const cartera = num(sql(`select coalesce(sum(precio_venta), 0) from public.ventas where numero_contrato = '${numero}'`));
+    check(N, "base de la liquidación (ventas) = total del documento", cartera === TOTAL, String(cartera));
   });
 
   if (cuales.includes("3")) await escenario("3-neto-adultos-nino-servicio", async (p) => {

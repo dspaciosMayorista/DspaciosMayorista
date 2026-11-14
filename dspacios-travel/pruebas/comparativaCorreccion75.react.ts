@@ -220,7 +220,8 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
       assert.doesNotMatch(t, /\$ 400\.000|\$ 682\.000/, "los importes del vuelo y del servicio no se muestran por separado");
       assert.doesNotMatch(t, /Vuelo · Avianca/);
       assert.equal((h.match(/fila-paquete-turistico/g) ?? []).length, 1, "un único ítem, no una fila por acomodación");
-      assert.match(t, /Servicios adicionales/);
+      assert.match(t, /Servicios incluidos/, "los servicios se explican (nombre, fechas y a quién cubren) en su sección, sin precio");
+      assert.match(t, /Todos los pasajeros \(2\)/);
     });
     test("NETO: la fila ES el total exigible y el vuelo no se cuenta dos veces", () => {
       const h = htmlDoc({ items, vuelos, netoTotalExigible: netoSnap.exigible, paqueteSnapshot: netoSnap.snap });
@@ -262,10 +263,12 @@ describe("cotización normal con servicio manual: un solo ítem «Paquete Turís
     const manual = { ...svc, id: 9, descripcion: descripcionCotizacionManual(m.valor) };
     const h = htmlDoc({ items: [item(1, HOTEL, 2, 0, 800_000, 0), item(3, "Hotel Almirante — CARTAGENA · Niño 1 · Estándar / PAM", 0, 1, 0, 400_000), manual], vuelos: [], paqueteSnapshot: snapshot({ hotelPvp: 2_000_000, manuales: [m.valor] }).snap });
     // 2 adultos × 800.000 + 1 niño × 400.000 + servicio 400.000 entre 3 personas (133.333,34 / 133.333,33 / 133.333,33).
-    // Tarifa única por clase (933.333,33 y 533.333,33) y el centavo que no se reparte sale como ajuste explícito.
-    assert.deepEqual(importes(h), [93_333_333, 53_333_333, 240_000_000]);
-    assert.match(plano(h), /Ajuste de redondeo: \+\$ 0,01 \(ya incluido en el valor total\)/);
-    assert.equal(2 * importes(h)[0] + importes(h)[1] + 1, importes(h)[2]);
+    // El centavo que no se reparte NO se reparte: UNA fila por paquete (2 adultos y el niño) con UNA tarifa por tipo con su precisión de cálculo (933.333,33 y 533.333,33) y el total exacto.
+    const filas = [...h.matchAll(/<tr[^>]*data-testid="fila-paquete-turistico"[^>]*>([^]*?)<\/tr>/g)].map((m) => [...m[1].matchAll(/<td[^>]*>([^]*?)<\/td>/g)].map((c) => plano(c[1]).trim()));
+    assert.equal(filas.length, 1, "una sola fila para el paquete");
+    assert.deepEqual(filas[0].slice(1), ["2", "1", "$ 933.333,33", "$ 533.333,33", "$ 2.400.000"]);
+    assert.doesNotMatch(plano(h), /Ajuste (de|por) redondeo/);
+    assert.doesNotMatch(filas[0].join(" "), / × \$/, "sin sublistas");
   });
 
   test("la edición cambia solo el texto: mismos valores; una edición inválida se ignora", () => {

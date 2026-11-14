@@ -36,3 +36,34 @@ describe("recobroDesdeFormulario", () => {
     }
   });
 });
+
+// ── Total con recobro a cliente final (antes de generar): confirmado ≠ pendiente ≠ error ──────────────────────────────────────────────────────────────────────────────
+import { totalConRecobro } from "../lib/cotizacion/recobroEntradaUI.ts";
+describe("total con recobro (cliente final)", () => {
+  const partes = [{ etiqueta: "Hotel", monto: 1_840_000 }, { etiqueta: "Servicio", monto: 400_000 }];
+  const base = { moneda: "COP", monto: 2_240_000 };
+  const form = (txt: string) => recobroDesdeFormulario({ recobroTxt: txt, partModo: "valor", partTxt: "", pideDistribucion: false });
+  test("hotel $1.840.000 + servicio $400.000 + recobro $400.000 = $2.640.000 (confirmado)", () => {
+    const t = totalConRecobro({ form: form("400.000"), base, partes });
+    assert.equal(t.estado, "confirmado");
+    if (t.estado === "confirmado") { assert.equal(t.total, 2_640_000); assert.equal(t.recobro, 400_000); assert.deepEqual(t.partes.map((p) => p.monto), [1_840_000, 400_000]); }
+  });
+  test("sin recobro (vacío o 0): nada que mostrar", () => {
+    assert.equal(totalConRecobro({ form: form(""), base, partes }).estado, "sin_recobro");
+    assert.equal(totalConRecobro({ form: form("0"), base, partes }).estado, "sin_recobro");
+  });
+  test("recobro ilegible o negativo: ERROR, sin cifra de total", () => {
+    for (const txt of ["abc", "-5", "1,2,3"]) { const t = totalConRecobro({ form: form(txt), base, partes }); assert.equal(t.estado, "error", txt); assert.equal("total" in t, false); }
+  });
+  test("moneda mezclada o desglose que no cuadra: PENDIENTE, sin cifra (no se muestra un total sin poder confirmarlo)", () => {
+    const mezcla = totalConRecobro({ form: form("400000"), base: null, partes });
+    assert.equal(mezcla.estado, "pendiente"); assert.equal("total" in mezcla, false);
+    const incoherente = totalConRecobro({ form: form("400000"), base, partes: [{ etiqueta: "Hotel", monto: 1_000_000 }] });
+    assert.equal(incoherente.estado, "pendiente");
+  });
+  test("centavos: la suma es exacta (sin errores de coma flotante)", () => {
+    const t = totalConRecobro({ form: form("0,10"), base: { moneda: "USD", monto: 100.2 }, partes: [{ etiqueta: "Hotel", monto: 100.2 }] });
+    assert.equal(t.estado, "confirmado");
+    if (t.estado === "confirmado") assert.equal(t.total, 100.3);
+  });
+});

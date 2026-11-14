@@ -35,6 +35,8 @@ import { esLineaVueloManual, esTramoVueloManual, notaVueloManual } from "@/lib/c
 import { formatoExacto, repartoPorPersona } from "@/lib/contrato/repartoTarifa";
 import { resumenAplicable } from "@/lib/cotizacion/resumenPrecios";
 import { ResumenPreciosCliente } from "@/components/contrato/ResumenPreciosCliente";
+import { ServiciosIncluidos } from "@/components/contrato/ServiciosIncluidos";
+import { serviciosDeDocumento } from "@/lib/contrato/serviciosDocumento";
 
 // Incluye / No incluye guardado como texto (una línea por ítem) → viñetas. Mismo criterio que `lineasTexto` de la comparativa.
 const lineasTextoDoc = (t?: string | null) => (t || "").split(/\r?\n|·|;/).map((x) => x.replace(/^[-•*\s]+/, "").trim()).filter(Boolean);
@@ -758,12 +760,8 @@ export function ContratoDocumento({
               {/* Teléfono: una tarjeta con etiqueta y cifra en su propia fila (seis columnas no caben en 390 px). Desde sm y al imprimir: la tabla de siempre. */}
               <dl className="space-y-1 rounded-lg border border-gray-200 p-3 text-xs sm:hidden print:hidden" data-testid="paquete-movil">
                 <dt className="font-semibold text-gray-800">{tituloPaqueteDoc}</dt>
-                {filaPaquete.adultos > 0 && (
-                  <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Adultos ({filaPaquete.adultos}){filaPaquete.tarifa.ok ? " · tarifa por adulto" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda)}</dd>}</div>
-                )}
-                {filaPaquete.ninos > 0 && (
-                  <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>
-                )}
+                {filaPaquete.adultos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Adultos ({filaPaquete.adultos}){filaPaquete.tarifa.ok ? " · tarifa por adulto" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda)}</dd>}</div>}
+                {filaPaquete.ninos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>}
                 <div className="flex items-baseline justify-between gap-3 border-t border-gray-100 pt-1 font-medium"><dd>Total del paquete{esNeto ? " NETO" : ""}</dd><dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</dd></div>
               </dl>
               <div className="hidden overflow-x-auto sm:block print:block">
@@ -794,11 +792,6 @@ export function ContratoDocumento({
                 </tbody>
               </table>
               </div>
-              {filaPaquete.tarifa.ok && filaPaquete.tarifa.ajusteCentavos > 0 && (
-                <p className="mt-1 text-[11px] text-gray-600" data-testid="ajuste-redondeo">
-                  Ajuste de redondeo: +{formatoNetoDocumento(filaPaquete.tarifa.ajusteCentavos / 100, moneda)} (ya incluido en el valor total).
-                </p>
-              )}
               {filaPaquete.adicionales.length > 0 && (
                 <p className="mt-1 text-[11px] text-gray-500" data-testid="nota-paquete">
                   {filaPaquete.tarifa.ok
@@ -903,7 +896,11 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {servicioItems.length > 0 && !resumen && (
+          {/* Con el importe ya repartido en las tarifas por pasajero (resumen o fila de paquete) los servicios se explican SIN precio: qué incluyen, cuándo y a quién cubren. */}
+          {servicioItems.length > 0 && (resumen || filaPaquete) && (
+            <ServiciosIncluidos servicios={serviciosDeDocumento(servicioItems, resumen, (venta as { pax?: number | null }).pax ?? null, (l) => vinculoPorId.get(l.id)?.pax ?? null)} color={TITULO} />
+          )}
+          {servicioItems.length > 0 && !resumen && !filaPaquete && (
             <div className="mt-3 overflow-x-auto">
               <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Servicios adicionales</p>
               <table className="w-full min-w-[300px] border-collapse text-xs">

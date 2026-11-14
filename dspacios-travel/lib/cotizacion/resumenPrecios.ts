@@ -3,9 +3,10 @@
 //
 // El cliente ve GRUPOS de pasajeros con su precio completo por persona y su subtotal, más el total; lo incluido se describe sin importe por servicio.
 //   · Un «cupo» es un pasajero anónimo de la cotización con identidad ESTABLE (`id`) y su base de alojamiento (la tarifa que le corresponde por su habitación y tipo).
-//   · Un servicio con precio TOTAL se reparte por igual entre los cupos que cubre; el residuo menor a un centavo por cupo sale como «ajuste de redondeo» explícito.
+//   · Un servicio con precio TOTAL se reparte por igual entre los cupos que cubre. La ESTRUCTURA guardada trabaja en centavos enteros (así la valida la base: tarifa × cantidad = subtotal), por lo que el residuo de un centavo vive
+//     ahí, invisible; lo que ve el cliente NO es ese reparto: el documento muestra UNA tarifa por tipo con su precisión de cálculo (subtotal ÷ cantidad) y el total exacto (`filasDeUnidad`). Sin múltiplo de redondeo nuevo y sin línea de «ajuste».
 //   · Un servicio con tarifas POR TIPO (adulto / niño / infante) se conserva: cada cupo cubierto paga la de su tipo. Si falta la de un tipo cubierto, se rechaza (no se inventa ni se promedia).
-//   · Todo en centavos enteros. El resultado suma EXACTAMENTE: Σ subtotales + ajuste = total.
+//   · Todo en centavos enteros. El resultado suma EXACTAMENTE: Σ subtotales = total (`ajusteCentavos` queda en 0; solo los resúmenes guardados antes de este cambio pueden traerlo).
 // ─────────────────────────────────────────────────────────────────────────
 
 export type TipoCupo = "adulto" | "nino" | "nino2" | "infante";
@@ -23,8 +24,10 @@ export type ServicioCobertura =
 export type GrupoResumen = {
   tipo: TipoCupo;
   cantidad: number;
-  /** Precio completo por persona (alojamiento + su parte de cada servicio cubierto). */
+  /** Precio completo por persona (alojamiento + su parte de cada servicio cubierto) en centavos ENTEROS: la estructura que valida la base (tarifa × cantidad = subtotal). */
   tarifaCentavos: number;
+  /** La MISMA tarifa con su precisión de cálculo (centavos con fracción, sin repartir el residuo entre pasajeros): es la que muestra el documento. Ausente en resúmenes anteriores (entonces vale `tarifaCentavos`). */
+  tarifaExactaCentavos?: number;
   subtotalCentavos: number;
   /** Nombres de los servicios que cubre el grupo (sin importes), en el orden en que se agregaron. */
   incluye: string[];
@@ -40,7 +43,7 @@ export type UnidadResumen = {
   categoria: string | null;
   regimen: string | null;
   grupos: GrupoResumen[];
-  /** Residuo de repartir un precio total entre los cupos cubiertos (menos de un centavo por cupo y servicio). */
+  /** Heredado: los resúmenes nuevos lo dejan en 0 (el residuo va dentro de las tarifas por pasajero). Los guardados antes pueden traerlo; la presentación lo absorbe en las tarifas (`absorberAjuste`). */
   ajusteCentavos: number;
   totalCentavos: number;
 };
@@ -71,8 +74,9 @@ export function resumenUnidad(
   }
   const idsServicio = new Set<string>();
   const precio = new Map<string, number>(cupos.map((c) => [c.id, c.baseCentavos]));
+  const exacto = new Map<string, number>(cupos.map((c) => [c.id, c.baseCentavos])); // lo mismo con precisión de cálculo: sin repartir el residuo
   const incluidos = new Map<string, string[]>(cupos.map((c) => [c.id, []]));
-  let ajuste = 0;
+  const ajuste = 0;
   let sumaEsperada = cupos.reduce((s, c) => s + c.baseCentavos, 0);
   for (const s of servicios) {
     if (!s.id || idsServicio.has(s.id)) return { ok: false, error: "Los servicios deben tener identificador único." };
@@ -84,9 +88,12 @@ export function resumenUnidad(
     }
     if (s.modo === "total") {
       if (!entero(s.precioCentavos)) return { ok: false, error: `El precio de «${s.nombre}» no es válido.` };
+      // El residuo (menos de un centavo por cupo) se reparte de a UN centavo entre los primeros cupos cubiertos: es el límite del dinero y lo que la base exige (enteros). Determinista y sin efecto visible:
+      // el documento muestra la tarifa con precisión de cálculo por tipo, no este reparto.
       const parte = Math.floor(s.precioCentavos / cubiertos.length);
-      for (const id of cubiertos) precio.set(id, (precio.get(id) ?? 0) + parte);
-      ajuste += s.precioCentavos - parte * cubiertos.length;
+      const resto = s.precioCentavos - parte * cubiertos.length;
+      cubiertos.forEach((id, i) => precio.set(id, (precio.get(id) ?? 0) + parte + (i < resto ? 1 : 0)));
+      for (const id of cubiertos) exacto.set(id, (exacto.get(id) ?? 0) + s.precioCentavos / cubiertos.length);
       sumaEsperada += s.precioCentavos;
     } else {
       for (const id of cubiertos) {
@@ -94,6 +101,7 @@ export function resumenUnidad(
         const t = s.tarifasCentavos[tipo];
         if (!entero(t)) return { ok: false, error: `«${s.nombre}» no tiene tarifa de ${ETIQUETA_TIPO[tipo].toLowerCase()}; no se asume gratis ni se promedia.` };
         precio.set(id, (precio.get(id) ?? 0) + t);
+        exacto.set(id, (exacto.get(id) ?? 0) + t);
         sumaEsperada += t;
       }
     }
@@ -102,14 +110,18 @@ export function resumenUnidad(
   // Grupos: mismo tipo, misma tarifa y mismo conjunto de servicios. Orden determinista e independiente del orden de entrada: tipo, tarifa descendente, servicios.
   const ordenTipo: TipoCupo[] = ["adulto", "nino", "nino2", "infante"];
   const grupos = new Map<string, GrupoResumen>();
+  const sumaExacta = new Map<string, number>();
   for (const c of cupos) {
     const tarifa = precio.get(c.id)!;
     const nombres = incluidos.get(c.id)!;
-    const clave = `${c.tipo}|${tarifa}|${nombres.join("\u0001")}`;
+    // La exacta entra en la clave: dos cupos con la misma tarifa entera pero distinta tarifa real (p. ej. 100,00 + residuo y 100,01 + residuo) no pueden quedar en un grupo cuya exacta sería un promedio.
+    const clave = `${c.tipo}|${tarifa}|${Math.round((exacto.get(c.id) ?? tarifa) * 1e4)}|${nombres.join("\u0001")}`;
     const g = grupos.get(clave) ?? { tipo: c.tipo, cantidad: 0, tarifaCentavos: tarifa, subtotalCentavos: 0, incluye: nombres, cupos: [] };
     g.cantidad += 1; g.subtotalCentavos += tarifa; g.cupos.push(c.id);
+    sumaExacta.set(clave, (sumaExacta.get(clave) ?? 0) + (exacto.get(c.id) ?? tarifa));
     grupos.set(clave, g);
   }
+  for (const [clave, g] of grupos) g.tarifaExactaCentavos = Math.round((sumaExacta.get(clave)! / g.cantidad) * 1e4) / 1e4;
   const lista = [...grupos.values()].sort((a, b) =>
     ordenTipo.indexOf(a.tipo) - ordenTipo.indexOf(b.tipo) || b.tarifaCentavos - a.tarifaCentavos || a.incluye.join("|").localeCompare(b.incluye.join("|")));
   const total = lista.reduce((s, g) => s + g.subtotalCentavos, 0) + ajuste;

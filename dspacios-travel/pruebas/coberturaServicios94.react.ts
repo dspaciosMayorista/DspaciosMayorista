@@ -92,7 +92,7 @@ const generar = async (raiz: HTMLElement) => { await act(async () => { click(bot
 const casilla = (raiz: HTMLElement, servicioNombre: string, pasajero: RegExp) =>
   [...raiz.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((i) => (i.getAttribute("aria-label") ?? "").startsWith(`${servicioNombre}:`) && pasajero.test(i.getAttribute("aria-label") ?? ""))!;
 const marcar = async (el: HTMLInputElement) => { await act(async () => { click(el); await espera(); }); };
-type Enviada = { cobertura?: { cupos: Record<string, Record<string, number[]>>; tours: Record<string, { hotel: number; cubre?: string[] }> } };
+type Enviada = { cobertura?: { cupos: Record<string, Record<string, number[]>>; tours: Record<string, { hotel: number; cubre?: string[] }>; manuales: Record<string, { hotel: number; cubre?: string[] }> } };
 const ultima = () => stub.__solicitudes.at(-1) as Enviada;
 const texto = (raiz: HTMLElement) => raiz.textContent ?? "";
 
@@ -332,6 +332,69 @@ describe("#94 página: Ítem del paquete editable sin servicios manuales", () =>
     await generar(m.container);
     assert.equal(stub.__solicitudes.length, antes + 2);
     assert.equal((ultima() as { tituloPaquete?: string }).tituloPaquete, "Escapada Caribe 2030");
+    m.desmontar();
+  });
+});
+
+// ── Corrección de revisión: un servicio que cubre N no admite una selección de más de N ──────────────────────────────────────────────────────────────────────────────
+const manualOtro = (id: string, nombre: string, pax: number) => ({
+  id, tipo: "manual", clase: "otro", nombre, origen: null, destino: null, fechaIda: null, fechaRegreso: null, tramo: null, hotelRef: null, hotelEtiqueta: null,
+  pax, precio: pax * 100_000, impuestoNoComisionable: 0, moneda: "COP", fotoUrl: null, noches: null,
+});
+describe("cobertura: la selección nunca supera lo que cubre el servicio (interfaz real)", () => {
+  before(() => {
+    stub.__setContextoB2B({ esB2B: false, pctComision: 0, agencia: null });
+    stub.__setCuposDeCarrito(async (i: Parameters<typeof cuposDe>[0]) => cuposDe(i));
+    stub.__setCrearSolicitudReserva(async () => ({ ok: false, error: "rechazo de prueba" }));
+  });
+  after(() => { stub.__setCuposDeCarrito(null); stub.__setCrearSolicitudReserva(null); });
+  const todas = (raiz: HTMLElement, servicioNombre: string) => [...raiz.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].filter((i) => (i.getAttribute("aria-label") ?? "").startsWith(`${servicioNombre}:`));
+
+  test("un servicio que cubre 3 de 5: al marcar 3 los otros 2 quedan DESHABILITADOS; se puede desmarcar uno y sustituirlo; nunca hay 5 marcados", async () => {
+    const m = await montar([hotel({ doble: 2, sencilla: 1 }), manualOtro("m1", "Traslado privado", 3)]);
+    await llenarCliente(m.container);
+    assert.equal(todas(m.container, "Traslado privado").length, 5, "los 5 pasajeros del hotel");
+    assert.ok(todas(m.container, "Traslado privado").every((c) => !c.disabled), "al inicio todos disponibles");
+    for (const p of [/Doble · pasajero 1/, /Doble · pasajero 2/, /Doble · pasajero 3/]) await marcar(casilla(m.container, "Traslado privado", p));
+    const estado = todas(m.container, "Traslado privado");
+    assert.equal(estado.filter((c) => c.checked).length, 3);
+    assert.deepEqual(estado.filter((c) => !c.checked).map((c) => c.disabled), [true, true], "alcanzada la cantidad, los restantes se deshabilitan");
+    assert.ok(estado.filter((c) => c.checked).every((c) => !c.disabled), "los marcados pueden desmarcarse");
+    assert.ok(m.container.querySelector('[data-testid="cobertura-completa"]'), "aviso de cobertura completa");
+    // sustituir: desmarcar uno libera a los demás y se elige otro
+    await marcar(casilla(m.container, "Traslado privado", /Doble · pasajero 3/));
+    assert.ok(todas(m.container, "Traslado privado").every((c) => !c.disabled), "al desmarcar uno se habilita el resto");
+    await marcar(casilla(m.container, "Traslado privado", /Sencilla · pasajero 1/));
+    assert.equal(todas(m.container, "Traslado privado").filter((c) => c.checked).length, 3);
+    // un clic de más (aunque el navegador lo entregue) tampoco pasa de 3
+    const bloqueada = todas(m.container, "Traslado privado").find((c) => !c.checked)!;
+    assert.equal(bloqueada.disabled, true);
+    const antes = stub.__solicitudes.length;
+    await generar(m.container);
+    assert.equal(stub.__solicitudes.length, antes + 1, "con exactamente 3 se emite");
+    assert.equal(ultima().cobertura!.manuales[0].cubre!.length, 3);
+    m.desmontar();
+  });
+
+  test("si cambia la cantidad que cubre el servicio (3 → 2) con 3 marcados: se pide una selección válida, NO se elige a nadie por el usuario y no se emite", async () => {
+    const m = await montar([hotel({ doble: 2, sencilla: 1 }), manualOtro("m1", "Traslado privado", 3)]);
+    await llenarCliente(m.container);
+    for (const p of [/Doble · pasajero 1/, /Doble · pasajero 2/, /Doble · pasajero 3/]) await marcar(casilla(m.container, "Traslado privado", p));
+    const api = m.carrito();
+    const man = api.items.find((i) => i.id === "m1") as unknown as Record<string, unknown>;
+    await act(async () => { const { id: _i, tipo: _t, fotoUrl: _f, noches: _n, ...datos } = man; void _i; void _t; void _f; void _n; api.actualizarManual("m1", { ...datos, pax: 2, precio: 200_000 } as never); await espera(80); });
+    const marcados = todas(m.container, "Traslado privado").filter((c) => c.checked);
+    assert.equal(marcados.length, 3, "las marcas existentes se conservan (no se desmarca ni se elige nada solo)");
+    assert.ok(m.container.querySelector('[data-testid="cobertura-exceso"]'), "aviso de exceso");
+    assert.match(texto(m.container), /cubre 2 pasajeros y hay 3 marcados: desmarca 1/);
+    assert.ok(todas(m.container, "Traslado privado").filter((c) => !c.checked).every((c) => c.disabled), "no se puede marcar a nadie más");
+    const antes = stub.__solicitudes.length;
+    await generar(m.container);
+    assert.equal(stub.__solicitudes.length, antes, "no se emite hasta corregir la selección");
+    await marcar(casilla(m.container, "Traslado privado", /Doble · pasajero 3/)); // el usuario elige a quién quitar
+    await generar(m.container);
+    assert.equal(stub.__solicitudes.length, antes + 1);
+    assert.deepEqual(ultima().cobertura!.manuales[0].cubre, ["adulto:doble#1", "adulto:doble#2"]);
     m.desmontar();
   });
 });

@@ -49,6 +49,8 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
   const [abierto, setAbierto] = useState(false);
   // Los pasajeros solo se sugieren mientras el usuario no los haya editado expresamente (al cambiar de grupo se sugieren los del nuevo grupo, sin pisar su cantidad).
   const [paxEditado, setPaxEditado] = useState(false);
+  // Las fechas de un «otro servicio» se precargan desde el hotel al que se asigna MIENTRAS el usuario no las haya editado; nunca se pisa lo escrito ni se usa «hoy».
+  const [fechasEditadas, setFechasEditadas] = useState(false);
 
   // Moneda ya fijada por el resto del carrito (sin contar el servicio que se edita): el manual se alinea a ella o se rechaza.
   const resto = items.filter((i) => i.id !== editando && i.tipo !== "manual");
@@ -94,6 +96,17 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
   const selectorHotel = comun ? destinosDistintos > 1 : hotelesSel.length > 1;
   const selectorFechas = comun && destinosDistintos <= 1 && gruposSel.length > 1;
 
+  // Fechas que precarga un servicio que NO es vuelo: las del hotel (o grupo) al que se asigna. Con varios hoteles de fechas distintas primero hay que elegir el hotel; si todos coinciden no hay ambigüedad.
+  const fechasComunes = !comun && hoteles.length > 1 && hoteles.every((h) => h.fechaIda === hoteles[0].fechaIda && h.fechaRegreso === hoteles[0].fechaRegreso) ? { ida: hoteles[0].fechaIda, regreso: hoteles[0].fechaRegreso } : null;
+  const planOtro = esVuelo ? null : (plan ? { ida: plan.ida, regreso: plan.regreso } : fechasComunes);
+  const faltaAsociacion = !esVuelo && !planOtro && (comun ? gruposSel.length > 1 : hoteles.length > 1);
+  useEffect(() => {
+    if (!abierto || esVuelo || fechasEditadas || editando) return;
+    const ida = planOtro?.ida ?? "", regreso = planOtro?.regreso ?? "";
+    setB((p) => (p.fechaIda === ida && p.fechaRegreso === regreso ? p : { ...p, fechaIda: ida, fechaRegreso: regreso }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abierto, esVuelo, fechasEditadas, editando, planOtro?.ida, planOtro?.regreso]);
+
   // Mantiene las fechas del vuelo ligadas al plan: si el plan del hotel o del grupo cambió, el vuelo se actualiza solo.
   useEffect(() => {
     for (const m of manuales) {
@@ -111,8 +124,8 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(hoteles.map((h) => [h.id, h.fechaIda, h.fechaRegreso])), manuales.map((m) => `${m.id}|${m.fechaIda}|${m.fechaRegreso}|${m.hotelRef}`).join(",")]);
 
-  function limpiar() { setB(VACIO); setEditando(null); setErr(""); setAbierto(false); setPaxEditado(false); }
-  function abrirNuevo() { setB({ ...VACIO, pax: String(comun ? (grupos.length === 1 ? paxLimiteGrupo(grupos[0]) || 1 : (hoteles[0]?.pax || 1)) : paxCarrito) }); setPaxEditado(false); setAbierto(true); }
+  function limpiar() { setB(VACIO); setEditando(null); setErr(""); setAbierto(false); setPaxEditado(false); setFechasEditadas(false); }
+  function abrirNuevo() { setB({ ...VACIO, pax: String(comun ? (grupos.length === 1 ? paxLimiteGrupo(grupos[0]) || 1 : (hoteles[0]?.pax || 1)) : paxCarrito) }); setPaxEditado(false); setFechasEditadas(false); setAbierto(true); }
   useEffect(() => {
     if (!abierto || paxEditado || !comun || !grupoElegido || paxGrupo <= 0) return;
     setB((p) => (p.pax === String(paxGrupo) ? p : { ...p, pax: String(paxGrupo) }));
@@ -123,6 +136,7 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
     const esRegreso = m.tramo === "regreso";
     setEditando(m.id);
     setPaxEditado(true); // al editar se respeta la cantidad ya guardada
+    setFechasEditadas(true); // y las fechas ya guardadas: no se precargan de nuevo
     setB({
       clase: m.clase, tramo: m.tramo ?? "ida_regreso", hotelRef: m.hotelRef ?? "", nombre: m.nombre, otraCiudad: (esRegreso ? m.destino : m.origen) ?? "",
       fechaIda: m.fechaIda ?? "", fechaRegreso: m.fechaRegreso ?? "", horaIda: m.horaIda ?? "", horaRegreso: m.horaRegreso ?? "", pax: String(m.pax), precio: String(m.precio),
@@ -244,9 +258,9 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
               </select>
             </div>
           )}
-          {(esVuelo || comun) && !todoCubierto && (
+          {(esVuelo || comun || hoteles.length > 1) && !todoCubierto && (
             <div>
-              <label className={lbl} htmlFor="man-hotel">{comun ? "Grupo de la comparativa" : "Hotel o destino del carrito"}</label>
+              <label className={lbl} htmlFor="man-hotel">{comun ? "Grupo de la comparativa" : esVuelo ? "Hotel o destino del carrito" : "Hotel al que se asigna el servicio"}</label>
               {comun && !selectorHotel && !selectorFechas ? (
                 <p id="man-hotel" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
                   {gruposSel.length ? `Todas las opciones · ${gruposSel[0].destinoIata} · ${corto(gruposSel[0].fechaIda)} → ${corto(gruposSel[0].fechaRegreso)}` : "Sin destino con código IATA"}
@@ -299,28 +313,39 @@ export function ServicioManualPanel({ comun = false }: { comun?: boolean }) {
             </>
           )}
           <div>
-            <label className={lbl} htmlFor="man-ida">{esVuelo ? "Fecha del vuelo de ida (del plan)" : "Fecha de ida (opcional)"}</label>
+            <label className={lbl} htmlFor="man-ida">{esVuelo ? "Fecha del vuelo de ida (del plan)" : "Fecha de inicio del servicio (opcional)"}</label>
             {!esVuelo ? (
-              <DateInput id="man-ida" type="date" className={inp} value={b.fechaIda} onValueChange={(v) => set("fechaIda", v)} />
+              <DateInput id="man-ida" type="date" className={inp} value={b.fechaIda} onValueChange={(v) => { setFechasEditadas(true); set("fechaIda", v); }} />
             ) : conIda ? (
               <p id="man-ida" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">{fechas.fechaIda ?? "Elige el hotel o grupo"}</p>
             ) : <p id="man-ida" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">No aplica</p>}
           </div>
           <div>
-            <label className={lbl} htmlFor="man-regreso">{esVuelo ? "Fecha del vuelo de regreso (del plan)" : "Fecha de regreso (opcional)"}</label>
+            <label className={lbl} htmlFor="man-regreso">{esVuelo ? "Fecha del vuelo de regreso (del plan)" : "Fecha de fin del servicio (opcional)"}</label>
             {!esVuelo ? (
-              <DateInput id="man-regreso" type="date" className={inp} min={b.fechaIda || undefined} value={b.fechaRegreso} onValueChange={(v) => set("fechaRegreso", v)} />
+              <DateInput id="man-regreso" type="date" className={inp} min={b.fechaIda || undefined} value={b.fechaRegreso} onValueChange={(v) => { setFechasEditadas(true); set("fechaRegreso", v); }} />
             ) : conRegreso ? (
               <p id="man-regreso" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">{fechas.fechaRegreso ?? "Elige el hotel o grupo"}</p>
             ) : <p id="man-regreso" className="rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-400">No aplica</p>}
           </div>
+          {!esVuelo && (
+            <p className="text-[11px] text-gray-500 sm:col-span-2" data-testid="ayuda-fechas-servicio">
+              {faltaAsociacion
+                ? <span data-testid="fechas-sin-hotel">Elige el hotel al que se asigna el servicio para precargar sus fechas, o escríbelas tú.</span>
+                : "Se precargan con las fechas consultadas del hotel al que se asigna (inicio y fin de su estadía). Puedes cambiarlas: lo que escribas no se vuelve a sobrescribir."}
+            </p>
+          )}
           <div>
-            <label className={lbl} htmlFor="man-pax">Pasajeros en este vuelo</label>
+            <label className={lbl} htmlFor="man-pax">{esVuelo ? "Pasajeros en este vuelo" : "Pasajeros que cubre este servicio"}</label>
             <input id="man-pax" inputMode="numeric" className={inp} value={b.pax} onChange={(e) => { setPaxEditado(true); set("pax", e.target.value.replace(/\D/g, "")); }} />
             <p className="mt-1 text-[11px] text-gray-500">
-              {comun
-                ? `Por defecto, los de la opción del grupo con menos pasajeros (${paxPropuesto}); las alternativas no se suman. Cámbialo si el grupo viaja en vuelos distintos.`
-                : `Por defecto, todos los de la cotización (${paxCarrito}). Cámbialo si el grupo viaja en vuelos distintos.`}
+              {esVuelo
+                ? (comun
+                  ? `Por defecto, los de la opción del grupo con menos pasajeros (${paxPropuesto}); las alternativas no se suman. Cámbialo si el grupo viaja en vuelos distintos.`
+                  : `Por defecto, todos los de la cotización (${paxCarrito}). Cámbialo si el grupo viaja en vuelos distintos.`)
+                : (comun
+                  ? `Por defecto, los de la opción del grupo con menos pasajeros (${paxPropuesto}); las alternativas no se suman. Si el servicio cubre a menos, cambia la cantidad y marca a cuáles en «Pasajeros que cubre cada servicio».`
+                  : `Por defecto, todos los de la cotización (${paxCarrito}). Si el servicio cubre a menos, cambia la cantidad y luego marca exactamente a cuáles en «Pasajeros que cubre cada servicio».`)}
             </p>
           </div>
           <div>

@@ -624,3 +624,40 @@ describe("Estimación del aliado directo", () => {
     v.desmontar();
   });
 });
+
+describe("Total con recobro a cliente final, antes de generar", () => {
+  const manual = (precio: number, moneda = "COP") => ({
+    id: "m1", tipo: "manual", clase: "otro", nombre: "Traslado privado", origen: null, destino: null, fechaIda: null, fechaRegreso: null, tramo: null, hotelRef: null, hotelEtiqueta: null,
+    pax: 2, precio, impuestoNoComisionable: 0, moneda, fotoUrl: null, noches: null,
+  });
+  const totalTxt = (c: HTMLElement) => (porId(c, "total-recobro-valor")?.textContent ?? "").replace(/\s+/g, "");
+  test("hotel $1.840.000 + servicio $400.000 + recobro $400.000 = $2.640.000: el total actualizado se ve ANTES de generar y se distingue de un cálculo pendiente o con error", async () => {
+    stub.__setContextoAsistencia({ puede: true, aliados: [] });
+    const v = await montar([persona("h1", "Hotel Almirante", 1_840_000), manual(400_000)]);
+    await pausa(200);
+    assert.equal(porId(v.container, "total-recobro-confirmado"), null, "sin recobro no hay bloque de total con recobro");
+    await escribirRecobro(v.container, "400000"); await pausa(100);
+    const caja = porId(v.container, "total-recobro-confirmado")!;
+    assert.ok(caja, "total confirmado");
+    assert.match(caja.textContent!.replace(/\s+/g, " "), /Hotel \$ ?1\.840\.000 \+ Servicio \$ ?400\.000 \+ Recobro \$ ?400\.000/);
+    assert.equal(totalTxt(v.container), "$2.640.000");
+    // recobro ilegible: ERROR, y NO queda ninguna cifra de total confirmado
+    await escribirRecobro(v.container, "40a0"); await pausa(100);
+    assert.ok(porId(v.container, "total-recobro-error"), "error visible");
+    assert.equal(porId(v.container, "total-recobro-confirmado"), null, "ni rastro de un total confirmado");
+    assert.equal(porId(v.container, "total-recobro-valor"), null);
+    // corregido: vuelve el total
+    await escribirRecobro(v.container, "250.000"); await pausa(100);
+    assert.equal(totalTxt(v.container), "$2.490.000");
+    v.desmontar();
+  });
+  test("carrito con monedas mezcladas: el total con recobro queda PENDIENTE (sin cifra), no un total inventado", async () => {
+    stub.__setContextoAsistencia({ puede: true, aliados: [] });
+    const v = await montar([persona("h1", "Hotel Almirante", 1_840_000), manual(100, "USD")]);
+    await pausa(200);
+    await escribirRecobro(v.container, "400000"); await pausa(100);
+    assert.ok(porId(v.container, "total-recobro-pendiente"), "pendiente visible");
+    assert.equal(porId(v.container, "total-recobro-valor"), null);
+    v.desmontar();
+  });
+});

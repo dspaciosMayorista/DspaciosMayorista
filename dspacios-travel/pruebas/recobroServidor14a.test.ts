@@ -65,11 +65,11 @@ describe("resumen #94 con recobro oculto", () => {
     assert.ok(g.every((x) => x.incluye.length === 0));
     assert.equal(r.resumen.unidades[0].ajusteCentavos, 0);
   });
-  test("recobro que no divide exacto: el residuo sale como ajuste explícito y la suma es exacta (3 adultos, 100.000 ⇒ 33.333,33 c/u + 0,01)", () => {
+  test("recobro que no divide exacto: el residuo queda DENTRO de las tarifas (3 adultos, 100.000 ⇒ 33.333,34 + 33.333,33 + 33.333,33) y la suma es exacta, sin ajuste", () => {
     const u3: UnidadBase = { ...unidad, paxTotal: 3, personas: [{ clave: "adulto:triple", etiqueta: "Adulto", tipo: "adulto", cantidad: 3, tarifa: 800000 }] };
     const r = construirResumenCarrito({ unidades: [u3], servicios: [], modalidad: "pvp", moneda: "COP", total: 2500000, recobroPorUnidad: { "item-0": 100000 } }); assert.ok(r.ok, r.ok ? "" : r.motivo);
-    assert.equal(r.resumen.unidades[0].grupos[0].tarifaCentavos, 83333333);
-    assert.equal(r.resumen.unidades[0].ajusteCentavos, 1);
+    assert.deepEqual(r.resumen.unidades[0].grupos.map((g) => [g.cantidad, g.tarifaCentavos]), [[1, 83333334], [2, 83333333]]);
+    assert.equal(r.resumen.unidades[0].ajusteCentavos, 0);
     assert.equal(r.resumen.totalCentavos, 250000000);
   });
   test("sin recobro el resumen es el de siempre", () => {

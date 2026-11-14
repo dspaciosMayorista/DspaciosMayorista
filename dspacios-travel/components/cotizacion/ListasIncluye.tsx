@@ -165,12 +165,6 @@ export function TarifaPaqueteOpcion({ paquete, moneda, sufijo = "" }: { paquete:
       <p className="text-left text-[11px] leading-snug text-gray-400">{etiqueta} por pasajero{paquete.conAdicionales ? " (incluye vuelos y servicios)" : ""}{paquete.neto ? " · NETO" : ""}{sufijo}</p>
       {fila("Adultos", "por adulto", paquete.tarifaAdulto, paquete.adultos)}
       {fila("Niños", "por niño", paquete.tarifaNino, paquete.ninos)}
-      {paquete.ajusteCentavos > 0 && (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 text-xs text-gray-500" data-testid="tarifa-paquete-ajuste">
-          <span className="text-left">Ajuste de redondeo</span>
-          <span className="whitespace-nowrap text-right font-medium tabular-nums text-gray-700">+{formatoExacto(paquete.ajusteCentavos / 100, moneda)}</span>
-        </div>
-      )}
     </div>
   );
 }
