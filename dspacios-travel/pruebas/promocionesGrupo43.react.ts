@@ -61,7 +61,7 @@ test("abrir y editar: 0 solicitudes; nada elegido; solo bases de menor prioridad
   let cerrado = 0;
   const c = await montar(h(React.StrictMode, null, h(ReglasPromoPanel, { hotelId: 5, promo: promo(), bases: BASES, onCerrar: () => { cerrado++; } })));
   const sel = c.querySelector("select")!;
-  assert.deepEqual([...sel.options].map((o) => o.textContent), ["Elige la vigencia base…", "ALTA (P1) · 2 grupo(s)"]);
+  assert.deepEqual([...sel.options].map((o) => o.textContent), ["Elige la vigencia base…", "Seguir la base ganadora cada noche (varias temporadas)", "ALTA (P1) · 2 grupo(s)"]); // #125: segunda opción
   await act(() => cambiar(sel, "1"));
   const casillas = [...c.querySelectorAll<HTMLInputElement>("[data-regla-grupo] > label input[type=checkbox]")];
   assert.equal(casillas.length, 2);

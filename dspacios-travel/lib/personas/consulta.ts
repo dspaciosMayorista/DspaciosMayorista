@@ -167,13 +167,37 @@ export async function altaPersonasCotizacion(
     const participantes = participantesDesdeCotizacion(fila);
     if (participantes.length) {
       const r = await registrarPersonasCotizacion(admin, fila.id, p.usuarioId, participantes);
-      if (!r.ok) return { ok: false, etapa: "registro", codigo: r.codigo };
+      if (!r.ok) {
+        // La fachada es atómica: el dato inválido de UNA persona (documento demasiado largo, NIT con dígito de verificación erróneo...) rechaza TODA la llamada y
+        // dejaba fuera al titular y a los demás pasajeros, que sí eran válidos. Solo en este camino de fallo, y solo si el rechazo es de una persona (no de la
+        // cotización, la autorización, el estado o el sistema), se intenta de a una: nunca más puestos que los de la cotización (la fachada admite 60).
+        // Lista POSITIVA: un código desconocido, nulo, un tiempo agotado o una caída de la red NO se multiplica (la base ya está lenta o caída).
+        if (participantes.length < 2 || r.codigo == null || !CODIGOS_DE_UNA_PERSONA.has(r.codigo)) return { ok: false, etapa: "registro", codigo: r.codigo };
+        let primerCodigo: string | null = null;
+        for (const uno of participantes) {
+          const u = await registrarPersonasCotizacion(admin, fila.id, p.usuarioId, [uno]);
+          if (u.ok) continue;
+          // Un fallo que ya no es de esa persona (sistema, autorización, tiempo agotado) detiene el recorrido: no se sigue llamando.
+          if (u.codigo == null || !CODIGOS_DE_UNA_PERSONA.has(u.codigo)) return { ok: false, etapa: "registro", codigo: u.codigo ?? r.codigo };
+          primerCodigo ??= u.codigo;
+        }
+        if (primerCodigo != null) return { ok: false, etapa: "registro", codigo: primerCodigo };
+      }
     }
   } catch {
     return { ok: false, etapa: fallaSello ? "sello" : "registro", codigo: null };
   }
   return fallaSello ?? { ok: true };
 }
+
+/**
+ * Rechazos de la fachada que dependen de los DATOS de una sola persona (documento demasiado largo, NIT con dígito de verificación erróneo, campos o tipo de documento no
+ * admitidos, puesto sin datos): solo ante ellos intentar de a una puede salvar a las demás. Todo lo demás (autorización, estado, tenant, estructura del lote, tiempo
+ * agotado, red) se detiene en la primera llamada. Códigos de las migraciones 214/219.
+ */
+const CODIGOS_DE_UNA_PERSONA: ReadonlySet<string> = new Set([
+  "original_demasiado_largo", "nit_dv_sin_nit", "nit_dv_invalido", "observaciones_invalidas", "campo_no_admitido", "participante_vacio", "tipo_no_admitido",
+]);
 
 /** Línea de log SIN datos personales (solo etapa, id y código). */
 export function logPersonasCotizacion(origen: string, cotizacionId: number, r: { etapa: string; codigo: string | null }): string {

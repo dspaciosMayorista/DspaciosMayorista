@@ -36,7 +36,17 @@ export type FilaCotizacionPersonas = {
   creado_por_id?: string | null;
   propietario_id?: string | null;
   aliado_id?: number | null;
+  /** Correo de quien creó la fila (texto, no el id estable): null en la solicitud de hotel de un visitante. */
+  creado_por?: string | null;
+  /** Paquete dinámico de origen (cotización de un paquete dinámico). */
+  paquete_din_id?: number | null;
+  /** Paquete armado de origen (tarifario, solicitud de hotel). */
+  paquete_armado_id?: number | null;
 };
+
+/** Columnas que el alta lee de una cotización guardada (reintento, reparación y retry de la ficha): una sola lista para que ninguna se quede atrás. */
+export const COLUMNAS_COTIZACION_PERSONAS =
+  "id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id, creado_por, paquete_din_id, paquete_armado_id" as const;
 
 /** Puesto ya registrado (de `cotizacion_participantes`, leído con service_role). */
 export type PuestoRegistrado = { id: string; rol: string; activo: boolean; version?: number };
@@ -95,10 +105,17 @@ export function asignarRefsPasajeros<T extends object>(pasajeros: readonly T[], 
   });
 }
 
-/** Misma regla que `p214_priv.cotizacion_anonima`: checkout público sin creador, propietario ni aliado. */
-export function esCotizacionAnonima(f: Pick<FilaCotizacionPersonas, "tenant" | "tipo" | "creado_por_id" | "propietario_id" | "aliado_id">): boolean {
-  return f.creado_por_id == null && (f.propietario_id ?? null) == null && (f.aliado_id ?? null) == null
-    && f.tenant === "mayorista" && (f.tipo === "carrito" || f.tipo === "comparativa_carrito");
+/**
+ * Misma regla que `registrar_personas_cotizacion` (219 + 308): sin creador, propietario ni aliado y en mayorista, es anónima la cotización del carrito
+ * público, la de un paquete dinámico pedida por un visitante (tipo manual con `paquete_din_id`) y la solicitud de hotel de un visitante (tipo tarifario
+ * sin `creado_por`). Una fila a la que le falta alguno de estos datos se trata como NO anónima: es lo seguro (el tipo de documento se registra y la
+ * base, que decide, lo rechaza si no corresponde).
+ */
+export function esCotizacionAnonima(f: Pick<FilaCotizacionPersonas, "tenant" | "tipo" | "creado_por_id" | "propietario_id" | "aliado_id" | "creado_por" | "paquete_din_id" | "paquete_armado_id">): boolean {
+  if (f.creado_por_id != null || (f.propietario_id ?? null) != null || (f.aliado_id ?? null) != null || f.tenant !== "mayorista") return false;
+  if (f.tipo === "carrito" || f.tipo === "comparativa_carrito") return true;
+  if (f.tipo === "manual") return (f.paquete_din_id ?? null) != null;
+  return f.tipo === "tarifario" && f.creado_por === null && (f.paquete_armado_id ?? null) != null;
 }
 
 /** Titular de relleno que usa el motor al reliquidar una opción (`"Cliente"` sin documento): no es una persona. */

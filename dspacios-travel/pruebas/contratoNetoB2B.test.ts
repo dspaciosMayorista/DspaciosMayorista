@@ -97,17 +97,40 @@ test("una venta directa con descuento comercial sigue siendo PVP, nunca NETO B2B
 test("documento: un contrato que no es NETO conserva total y saldo por suma de ítems", () => {
   assert.deepEqual(
     presentacionValoresContrato({ totalItems: 2_000_000, totalPagado: 500_000, netoTotalExigible: null }),
-    { total: 2_000_000, saldo: 1_500_000, mostrarValoresItems: true },
+    { total: 2_000_000, saldo: 1_500_000, mostrarValoresItems: true, sinDetalleItems: false },
   );
   assert.deepEqual(
     presentacionValoresContrato({ totalItems: 2_000_000, totalPagado: 500_000 }),
-    { total: 2_000_000, saldo: 1_500_000, mostrarValoresItems: true },
+    { total: 2_000_000, saldo: 1_500_000, mostrarValoresItems: true, sinDetalleItems: false },
   );
+});
+
+// #53 · hallazgo reproducido con el importador de histórico de Minorista: ventas con precio y NINGÚN ítem imprimían «Total $0» y «Saldo $0».
+test("documento: sin NINGUNA línea de ítem y con precio registrado, el total es ese precio y el saldo descuenta lo pagado (se avisa; no se inventa desglose)", () => {
+  assert.deepEqual(
+    presentacionValoresContrato({ totalItems: 0, totalPagado: 1_000_000, cantidadItems: 0, precioRegistrado: 3_000_000 }),
+    { total: 3_000_000, saldo: 2_000_000, mostrarValoresItems: true, sinDetalleItems: true },
+  );
+});
+test("documento: la excepción es ESTRECHA — con ítems (aunque sumen 0), sin precio, o NETO, todo sigue como siempre", () => {
+  const conItems = presentacionValoresContrato({ totalItems: 0, totalPagado: 0, cantidadItems: 2, precioRegistrado: 3_000_000 });
+  assert.deepEqual(conItems, { total: 0, saldo: 0, mostrarValoresItems: true, sinDetalleItems: false });
+  assert.equal(presentacionValoresContrato({ totalItems: 0, totalPagado: 0, cantidadItems: 0, precioRegistrado: 0 }).sinDetalleItems, false);
+  assert.equal(presentacionValoresContrato({ totalItems: 0, totalPagado: 0, cantidadItems: 0, precioRegistrado: null }).sinDetalleItems, false);
+  const neto = presentacionValoresContrato({ totalItems: 0, totalPagado: 100, cantidadItems: 0, precioRegistrado: 3_000_000, netoTotalExigible: 1_840_000 });
+  assert.deepEqual(neto, { total: 1_840_000, saldo: 1_839_900, mostrarValoresItems: false, sinDetalleItems: false });
+});
+test("documento: el aviso de «sin detalle de ítems» está en el documento y el total sale del precio registrado", () => {
+  const src = leer("components/contrato/ContratoDocumento.tsx");
+  assert.match(src, /cantidadItems: items\.length,/);
+  assert.match(src, /precioRegistrado: Number\(\(venta as \{ precio_venta\?: number \| string \| null \}\)\.precio_venta\) \|\| null,/);
+  assert.match(src, /sinDetalleItems && \(/);
+  assert.match(src, /Este contrato no tiene detalle de ítems \(registro histórico\)/);
 });
 
 test("documento NETO: total y saldo del total exigible, valores por ítem ocultos", () => {
   const p = presentacionValoresContrato({ totalItems: PVP, totalPagado: 840_000, netoTotalExigible: 1_840_000 });
-  assert.deepEqual(p, { total: 1_840_000, saldo: 1_000_000, mostrarValoresItems: false });
+  assert.deepEqual(p, { total: 1_840_000, saldo: 1_000_000, mostrarValoresItems: false, sinDetalleItems: false });
   assert.notEqual(p.total, PVP);
   // Pagado el total exigible, el saldo es 0 (antes quedaban 160.000 "por pagar").
   assert.equal(presentacionValoresContrato({ totalItems: PVP, totalPagado: 1_840_000, netoTotalExigible: 1_840_000 }).saldo, 0);
@@ -156,7 +179,7 @@ test("modalidad del contrato: si la lectura falla, no adivina (no vuelve a impri
 
 test("documento: ContratoDocumento calcula total/saldo NETO y prorratea los importes visibles", () => {
   const src = leer("components/contrato/ContratoDocumento.tsx");
-  assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(items\),\s*totalPagado,\s*netoTotalExigible,\s*\}\)/);
+  assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(items\),\s*totalPagado,\s*netoTotalExigible,\s*cantidadItems: items\.length,[\s\S]*?\}\)/);
   assert.doesNotMatch(src, /const total = totalVisibleContratoItems\(items\);/, "volvió a sumar los ítems a PVP como total");
   assert.match(src, /valoresNetosDocumento\(items, total\)/);
   assert.match(src, /const mostrarDesglose = mostrarValoresItems \|\| valoresDoc !== null/);

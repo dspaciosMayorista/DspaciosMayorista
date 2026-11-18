@@ -152,11 +152,10 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
     } as never);
   if (error || id == null) return { ok: false, error: mensajeDin(error?.message, "No se pudo crear la cotización.") };
 
-  // CRM (#42): el titular de la cotización debe quedar consultable. Con sesión (aliado B2B o personal) entra al registro de personas
-  // (el autor ya lo estampó la base). El visitante sin sesión NO puede: ese registro solo admite anónimos de tipo `carrito` (migración 219,
-  // `p214_priv.cotizacion_anonima`) y esta cotización es de tipo `manual` para poder convertirse; se verificó en local (`no_autorizado`).
-  // Para él se usa el mismo contacto auxiliar de CRM que el checkout público (`crm_contactos`, Mayorista, cliente final).
-  let alta: { ok: true } | { ok: false; etapa: "sello" | "registro"; codigo: string | null } = { ok: true };
+  // CRM (#1): el titular de la cotización debe quedar consultable SIEMPRE, sin esperar al contrato. Con sesión (aliado B2B o personal) entra al registro de
+  // personas con el autor que ya estampó la base. El visitante sin sesión también entra (migración 308: una cotización de paquete dinámico sin creador,
+  // propietario ni aliado es anónima, con captura PROVISIONAL: sin tipo de documento). Además se conserva el contacto auxiliar del checkout público
+  // (`crm_contactos`, Mayorista, cliente final), que es el que alimenta las campañas: es un efecto aparte y nunca bloquea la cotización.
   if (canal === "publico") {
     try {
       const datos = datosContactoTarifario(input.cliente, input.cliente.numeroDoc.trim() ? input.cliente.tipoDoc : null);
@@ -168,13 +167,12 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
     } catch {
       console.error(logContactoTarifario("excepcion"));
     }
-  } else {
-    alta = await altaPersonasCotizacion(admin, {
-      fila: { id: Number(id), tenant: p.tenant, tipo: "manual", payload: armado.cabecera.payload as Json, creado_por_id: perfil?.id ?? null },
-      usuarioId: perfil?.id ?? null, sellar: false,
-    });
-    if (!alta.ok) console.error(logPersonasCotizacion("manual", Number(id), alta));
   }
+  const alta = await altaPersonasCotizacion(admin, {
+    fila: { id: Number(id), tenant: p.tenant, tipo: "manual", payload: armado.cabecera.payload as Json, creado_por_id: perfil?.id ?? null, paquete_din_id: p.id },
+    usuarioId: perfil?.id ?? null, sellar: false,
+  });
+  if (!alta.ok) console.error(logPersonasCotizacion("manual", Number(id), alta));
 
   revalidatePath("/dashboard/cotizaciones");
   let destino: "dashboard" | "portal" | "publico" = "dashboard";

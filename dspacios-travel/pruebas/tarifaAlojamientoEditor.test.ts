@@ -487,8 +487,8 @@ describe("reglasEdadDesdeConfiguracionHotel — límites inclusivos, sin huecos 
     const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 10, edadNinoMax: 10, adultsOnly: false });
     assert.equal(r.ok, false);
     if (r.ok) return;
-    assert.match(r.error, /edad_infante_max/);
-    assert.match(r.error, /edad_nino_max/);
+    assert.match(r.error, /Infante hasta/); // O3: el mensaje accionable nombra los campos (antes: edad_infante_max / edad_nino_max)
+    assert.match(r.error, /Niño hasta/);
   });
 
   test("configuración inválida falla cerrada: edadNinoMax >= 18", () => {
@@ -505,11 +505,11 @@ describe("reglasEdadDesdeConfiguracionHotel — límites inclusivos, sin huecos 
     const r = reglasEdadDesdeConfiguracionHotel({ edadInfanteMax: 2.5, edadNinoMax: 10, adultsOnly: false });
     assert.equal(r.ok, false);
     if (r.ok) return;
-    assert.match(r.error, /enteros/);
+    assert.match(r.error, /entero/); // O3: «debe ser un entero entre 0 y 17»
   });
 });
 
-describe("aplicarFallbackReglasEdad — solo actúa cuando la tarifa no trae reglas explícitas", () => {
+describe("aplicarFallbackReglasEdad — deriva reglas solo si la tarifa no las trae; la configuración del hotel es SIEMPRE obligatoria", () => {
   const HOTEL_EDADES: EdadesGeneralesHotel = { edadInfanteMax: 2, edadNinoMax: 10, adultsOnly: false };
 
   function tarifaPersonaSinReglas(): TarifaAlojamiento {
@@ -566,6 +566,32 @@ describe("aplicarFallbackReglasEdad — solo actúa cuando la tarifa no trae reg
     assert.deepEqual(r.tarifa.reglaMenores.reglas, [{ categoria: "nino", edadMinAnios: 0, edadMaxAnios: 17 }]);
   });
 
+  // U1 (O3): una regla explícita puede ser la clasificación efectiva de la tarifa, pero NUNCA reemplaza la configuración obligatoria de edades del hotel.
+  test("U1: reglas explícitas + hotel SIN edades (o inválidas) → se rechaza, nombrando hotel y campos", () => {
+    const explicitas = {
+      ...tarifaPersonaSinReglas(),
+      reglaMenores: { reglas: [{ categoria: "nino" as const, edadMinAnios: 0, edadMaxAnios: 17 }] },
+    };
+    const sinEdades = aplicarFallbackReglasEdad(explicitas, { edadInfanteMax: null, edadNinoMax: null, adultsOnly: false, nombre: "Hotel X" });
+    assert.equal(sinEdades.ok, false);
+    if (!sinEdades.ok) {
+      assert.match(sinEdades.error, /Hotel X/);
+      assert.match(sinEdades.error, /Infante hasta/);
+    }
+    const invalidas = aplicarFallbackReglasEdad(explicitas, { edadInfanteMax: 5, edadNinoMax: 3, adultsOnly: false });
+    assert.equal(invalidas.ok, false);
+    if (!invalidas.ok) assert.match(invalidas.error, /valor no válido/);
+  });
+
+  test("U1: reglas explícitas + Adults Only → se aceptan tal cual (Adults Only está exento de edades)", () => {
+    const explicitas = {
+      ...tarifaPersonaSinReglas(),
+      reglaMenores: { reglas: [{ categoria: "nino" as const, edadMinAnios: 0, edadMaxAnios: 17 }] },
+    };
+    const r = aplicarFallbackReglasEdad(explicitas, { edadInfanteMax: null, edadNinoMax: null, adultsOnly: true });
+    assert.equal(r.ok, true);
+  });
+
   test("adults_only: la tarifa queda con reglas vacías (no es un error, es la respuesta correcta)", () => {
     const r = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), { edadInfanteMax: 2, edadNinoMax: 10, adultsOnly: true });
     assert.equal(r.ok, true);
@@ -577,7 +603,7 @@ describe("aplicarFallbackReglasEdad — solo actúa cuando la tarifa no trae reg
     const r = aplicarFallbackReglasEdad(tarifaPersonaSinReglas(), { edadInfanteMax: 12, edadNinoMax: 10, adultsOnly: false });
     assert.equal(r.ok, false);
     if (r.ok) return;
-    assert.match(r.error, /inválida/);
+    assert.match(r.error, /valor no válido|debe ser menor/); // O3: mensaje accionable de la configuración obligatoria
   });
 
   test("las reglas resueltas quedan DENTRO del payload (tarifa.reglaMenores) — no hay ningún campo aparte que las guarde", () => {
@@ -894,9 +920,11 @@ describe("cableado — sin fechas propias y sin integración comercial", () => {
     }
   });
 
-  test("resolverReglasEdadTarifa no consulta el hotel si la tarifa ya trae reglas explícitas (punto 4: nunca se sobreescriben)", () => {
+  test("U1: resolverReglasEdadTarifa SIEMPRE lee y valida el hotel — una regla explícita nunca lo salta (se conserva solo después, en aplicarFallbackReglasEdad)", () => {
     const cuerpo = cuerpoDeFuncion(fuentes.acciones, "resolverReglasEdadTarifa");
-    assert.match(cuerpo, /if\s*\(tarifa\.reglaMenores\.reglas\.length > 0\)\s*return\s*\{\s*ok:\s*true,\s*tarifa\s*\};/);
+    assert.doesNotMatch(cuerpo, /reglaMenores\.reglas\.length/, "sin salida anticipada por reglas explícitas");
+    assert.match(cuerpo, /await edadesGeneralesDelHotel\(sb, hotelId\)/);
+    assert.match(cuerpo, /return aplicarFallbackReglasEdad\(tarifa, edades\.edades\);/);
   });
 
   test("edadesGeneralesDelHotel usa el cliente de SESIÓN y filtra por hotel_id — nunca admin", () => {

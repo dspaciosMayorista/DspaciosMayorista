@@ -46,6 +46,7 @@ const TABLAS: Record<string, string> = {
   VOUCHERS: "vouchers", CONTRATO_ADJUNTOS: "archivos adjuntos", CONTRATO_SOPORTES_PAGO: "soportes de pago", AVISOS: "avisos",
   COTIZACIONES: "una cotización vinculada", PERSONA_CAPTURAS: "capturas de personas", CONTRATO_CONDICIONES: "condiciones de pago",
   MOVIMIENTOS_SILLA: "movimientos de sillas", CONTRATO_FACTURACION: "configuración de facturación",
+  CONTRATO_SEGUIMIENTO: "acuses operativos de entrega/envío",
 };
 
 /** Traduce UN código de bloqueo (tal como lo devuelve la base) a una frase para el superadmin. */

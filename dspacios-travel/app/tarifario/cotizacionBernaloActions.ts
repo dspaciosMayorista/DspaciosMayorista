@@ -128,6 +128,8 @@ const MENSAJES_PUBLICOS: Record<string, string> = {
   hotel_no_vinculado: "Este hotel no está disponible para cotización en este momento.",
   clasificacion_no_vinculada: "La categoría o alimentación seleccionada no está disponible para este hotel.",
   configuracion_incompleta: "Este hotel todavía no tiene su configuración completa para cotizar en línea.",
+  edades_hotel_incompletas: "Este hotel no se puede cotizar con menores en este momento (falta completar su configuración de edades). Cotiza solo con adultos o contacta a un asesor.",
+  hotel_solo_adultos: "Este hotel es solo para adultos y no admite menores.",
   salida_no_vinculada: "La salida seleccionada no es válida para este paquete.",
   salidas_no_disponibles: "No hay salidas disponibles para este paquete en este momento.",
   fechas_fuera_de_ventana: "Las fechas seleccionadas están fuera del rango de viaje del paquete.",

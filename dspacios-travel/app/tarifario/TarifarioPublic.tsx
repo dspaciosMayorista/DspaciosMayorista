@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Star, Plane, Bus, Search, X, UtensilsCrossed, BedDouble, Tag } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
+import { ImagenCatalogo } from "@/components/ImagenCatalogo";
 import { VistaBooking } from "./VistaBooking";
 import type { TextosCategoriaPorHotel } from "@/lib/tarifario/textosCategoria";
 import { PorDinamicos, type EvaluarSeleccionFn } from "./PorDinamicos";
@@ -12,6 +13,12 @@ import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
 import { entradaSalida, useCotizacionesHoteles } from "./cotizacionSalidaModal";
+import { BuscadorBooking, type EstadoBusquedaPorcion } from "./BuscadorBooking";
+import { TablaResultadosBusqueda } from "./TablaResultadosBusqueda";
+import type { SugerenciaFecha } from "@/lib/reservar/liquidacionHotel";
+import { destinosPorcionPublica } from "@/lib/tarifario/destinosPorcion";
+import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+
 import { textoEdadesHotel, type AcomConfig } from "@/lib/acomodaciones";
 import { obtenerDetalleSalida, obtenerDetallePaquete, obtenerDetalleServicios } from "./detalle-actions";
 import { conCacheDetalle, claveDetalleSalida, claveDetallePaquete, type EstadoDetalle } from "@/lib/tarifario/detalleCliente";
@@ -671,7 +678,7 @@ export function TarifarioPublic({
           ) : modulo === "dinamico" ? (
             <PorSalida filas={filasFiltradas.filter((f) => f.modulo === "dinamico")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
           ) : modulo === "porcion_terrestre" ? (
-            <PorPaquete filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
+            <PorcionTerrestreTabla filas={filasFiltradas.filter((f) => f.modulo === "porcion_terrestre")} puedeReservar={puedeReservar} soloAcom={fAcom || null} infoPorHotel={infoPorHotel} planesInfo={planesInfo} q={q.trim()} fCat={fCat} fReg={fReg} hotelesUnidad={hotelesBernalo} />
           ) : (
             <PorServicios q={q.trim()} fCat={fCat} fReg={fReg} puedeReservar={puedeReservar} />
           )}
@@ -828,8 +835,57 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
   );
 }
 
+// ── Módulo PORCIÓN TERRESTRE (#102): buscador externo + matriz del paquete ─────
+// El buscador es el MISMO de Vista Booking (mismas entradas, mismo motor: una sola llamada a \`buscarHoteles\`
+// para todo el destino). Con una búsqueda vigente la tabla muestra SUS resultados (estadía + una noche adicional);
+// sin ella, la matriz de tarifas por paquete de siempre. Los hoteles por unidad se evalúan en la misma búsqueda (una acción más por clic) y la tabla los muestra en su propia sección, por habitación.
+function PorcionTerrestreTabla({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {}, q, fCat, fReg, hotelesUnidad = [] }: {
+  filas: FilaResumen[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo; q: string; fCat: string; fReg: string; hotelesUnidad?: HotelBernaloDescubierto[];
+}) {
+  const [busqueda, setBusqueda] = useState<EstadoBusquedaPorcion | null>(null);
+  const [buscando, setBuscando] = useState(false);
+  // O4: «extender el regreso 1 noche» reutiliza el mecanismo de sugerencias del buscador: aplica ida/regreso, conserva destino, habitaciones, viajeros y filtros, y repite UNA búsqueda por clic (nonce).
+  const [extension, setExtension] = useState<(SugerenciaFecha & { nonce: number }) | null>(null);
+  // Owner 2026-11-18: la unión persona + unidad es la MISMA de Vista Booking; con `[]` un destino que solo existe por hoteles de unidad (CARTAGENA U1) nunca se podía elegir en la tabla.
+  const destinos = useMemo(() => destinosPorcionPublica(filas, hotelesUnidad), [filas, hotelesUnidad]);
+  return (
+    <div className="space-y-4">
+      <BuscadorBooking modo="tabla" destinos={destinos} onBusqueda={setBusqueda} onPendingChange={setBuscando} sugerenciaPedida={extension} />
+      {busqueda?.avisoUnidad && <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">{busqueda.avisoUnidad}</p>}
+      {!!busqueda?.enRevision?.length && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800" data-testid="hoteles-en-revision">
+          <p className="font-medium">{busqueda.enRevision.length === 1 ? "1 hotel no se pudo cotizar" : `${busqueda.enRevision.length} hoteles no se pudieron cotizar`} con estas edades de menores:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {busqueda.enRevision.map((h) => (
+              <li key={`${h.paqueteId}-${h.hotelId}`}>{h.motivo ?? `${h.hotelNombre ?? "Un hotel"}: su configuración de edades de niño/infante es ambigua o está incompleta y requiere revisión.`}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {buscando ? (
+        <p className="py-8 text-center text-sm text-gray-400" role="status">Buscando tarifas…</p>
+      ) : busqueda ? (
+        <TablaResultadosBusqueda
+          estado={busqueda} q={q} fCat={fCat} fReg={fReg} puedeReservar={puedeReservar} extendiendo={buscando}
+          onExtenderRegreso={(e) => setExtension({ fechaIda: e.fechaIda, fechaRegreso: e.fechaRegreso, noches: e.noches, etiqueta: "Regreso extendido 1 noche", nonce: (extension?.nonce ?? 0) + 1 })}
+          hotelExtras={(id) => (
+            <>
+              <CategoriaInline info={infoPorHotel[id]} />
+              <AdultsOnlyBadge info={infoPorHotel[id]} />
+              <PetFriendlyBadge info={infoPorHotel[id]} />
+              {rangoEdades(infoPorHotel[id]) && <span className="mt-0.5 block text-[11px] font-normal text-gray-400">{rangoEdades(infoPorHotel[id])}</span>}
+            </>
+          )}
+        />
+      ) : (
+        <PorPaquete filas={filas} puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} conNocheAdicional />
+      )}
+    </div>
+  );
+}
+
 // ── Módulo PORCIÓN TERRESTRE: elige un paquete ─────────────────────────────
-function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { filas: FilaResumen[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, planesInfo = {}, conNocheAdicional = false }: { filas: FilaResumen[]; puedeReservar: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo; conNocheAdicional?: boolean }) {
   const paquetes = useMemo(() => {
     const map = new Map<string, FilaResumen>();
     for (const f of filas) {
@@ -883,12 +939,28 @@ function PorPaquete({ filas, puedeReservar, soloAcom = null, infoPorHotel = {}, 
         </div>
       </div>
       <div className="min-w-0">
+        {conNocheAdicional && selFila && (
+          <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <h3 className="text-sm font-bold text-slate-800">Paquete de {selFila.noches} noche{selFila.noches === 1 ? "" : "s"}</h3>
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Tarifa por persona para las {selFila.noches} noches del paquete</span>
+          </div>
+        )}
         {detalle?.estado === "ok" ? (
           <TablaHorizontal rows={rows} referencia puedeReservar={puedeReservar} soloAcom={soloAcom} infoPorHotel={infoPorHotel} planesInfo={planesInfo} />
         ) : (
           <EstadoCargaTabla detalle={detalle} onReintentar={reintentarDetalle} />
         )}
       </div>
+      {conNocheAdicional && (
+        <section aria-labelledby="sec-noche-info" className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3" data-testid="noche-adicional-info">
+          <h3 id="sec-noche-info" className="text-sm font-bold text-slate-800">Una noche adicional</h3>
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-600">
+            El valor de UNA noche más depende de la fecha de esa noche (temporada, grupo de días y promociones), por eso no hay un precio único.
+            Elige las fechas de la estadía, las habitaciones y los viajeros en el buscador de arriba: la tabla mostrará, como <b>valor referencial</b>, lo que cambia al sumar
+            la noche del día de regreso. Ese valor no se suma a ningún total: para reservar con una noche más se recalcula la estadía completa.
+          </p>
+        </section>
+      )}
     </div>
   );
 }
@@ -991,7 +1063,7 @@ function reservarHref(r: Pivotada): string {
   return `/dashboard/reservar/nuevo?${p.toString()}`;
 }
 
-function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { rows: Pivotada[]; /** Precio calculado por fila (salida con fechas); sin él, el importe es el publicado. */ vivo?: (r: Pivotada) => FilaVivo; /** Importes publicados SIN fechas: son una referencia, no el precio de una promoción. */ referencia?: boolean; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
+export function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false, soloAcom = null, infoPorHotel = {}, planesInfo = {} }: { rows: Pivotada[]; /** Precio calculado por fila (salida con fechas); sin él, el importe es el publicado. */ vivo?: (r: Pivotada) => FilaVivo; /** Importes publicados SIN fechas: son una referencia, no el precio de una promoción. */ referencia?: boolean; puedeReservar?: boolean; soloAcom?: string | null; infoPorHotel?: InfoHotel; planesInfo?: PlanesInfo }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Filtro de acomodación: restringe las columnas a esa acomodación y deja solo
@@ -1019,20 +1091,27 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+    // #102: anchos de columna coherentes (hotel/categoría/alimentación fijos, el resto repartido por igual), precios
+    // alineados a la derecha con cifras tabulares y, bajo el ancho útil del contenedor, cada fila se apila como tarjeta
+    // (mismo patrón ResponsiveTableShell que el resto del sistema) en vez de recortar columnas.
+    <ResponsiveTableShell minWidth={760} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
       {referencia && (
         <p data-testid="tabla-referencia" className="border-b border-gray-100 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
           Importes publicados de referencia, sin fechas. Las promociones (EBB / Long Stay) se calculan al elegir fechas concretas en Vista Booking.
         </p>
       )}
-      <table className="w-full min-w-[760px] text-sm">
+      <table className="w-full min-w-[760px] table-fixed text-sm">
+        <colgroup>
+          <col className="w-[24%]" /><col className="w-[12%]" /><col className="w-[10%]" />
+          {cols.map(([k]) => <col key={k} />)}
+        </colgroup>
         <thead>
-          <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
-            <th className="px-3 py-2">Hotel</th>
-            <th className="px-3 py-2">Categoría</th>
-            <th className="px-3 py-2">R.A.</th>
+          <tr className="bg-gray-50 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <th className="px-3 py-2.5">Hotel</th>
+            <th className="px-3 py-2.5">Categoría</th>
+            <th className="px-3 py-2.5">Alimentación</th>
             {cols.map(([k, label]) => (
-              <th key={k} className="px-3 py-2 text-right">{label}</th>
+              <th key={k} className="px-3 py-2.5 text-right">{label}</th>
             ))}
           </tr>
         </thead>
@@ -1049,9 +1128,9 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
                   const preciosMenor2 = v?.estado === "ok" ? v.preciosMenor2 : r.preciosMenor2;
                   const listo = !vivo || v?.estado === "ok";
                   return (
-                  <tr key={`${hotel}-${i}`} className="border-t border-gray-100">
-                    <td className="px-3 py-2 font-medium text-gray-800">
-                      {i === 0 ? r.hotel : ""}
+                  <tr key={`${hotel}-${i}`} className={i === 0 ? "border-t border-gray-200" : "border-t border-gray-100"}>
+                    <td className="px-3 py-2.5 align-top font-medium text-gray-800" data-label="">
+                      {i === 0 ? <span className="font-semibold text-slate-800">{r.hotel}</span> : <span className="text-slate-500">{r.hotel}</span>}
                       {i === 0 && r.hotel_id != null && <CategoriaInline info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && r.hotel_id != null && <AdultsOnlyBadge info={infoPorHotel[r.hotel_id]} />}
                       {i === 0 && r.hotel_id != null && <PetFriendlyBadge info={infoPorHotel[r.hotel_id]} />}
@@ -1077,7 +1156,7 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
                         />
                       )}
                     </td>
-                    <td className="px-3 py-2 text-gray-600">
+                    <td className="px-3 py-2.5 align-top text-gray-600" data-label="Categoría">
                       {r.categoria}
                       {v?.estado === "ok" && v.descuento && <div className="mt-1"><EtiquetaDescuentoHotel descuento={v.descuento} className="rounded-lg! whitespace-normal" /></div>}
                       {/* El estado va junto a la categoría (siempre visible), no al final de una tabla que en móvil se desplaza. */}
@@ -1092,12 +1171,12 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-gray-600">
+                    <td className="px-3 py-2.5 align-top text-gray-600" data-label="Alimentación">
                       <RegimenInfo codigo={r.regimen} info={planesInfo[(r.regimen ?? "").trim().toUpperCase()]} />
                     </td>
                     {v && v.estado !== "ok" ? (
-                      <td colSpan={cols.length} className="px-3 py-2 text-center text-gray-300">—</td>
-                    ) : cols.map(([k]) => {
+                      <td colSpan={cols.length} className="px-3 py-2 text-center text-gray-300" data-label="">—</td>
+                    ) : cols.map(([k, label]) => {
                       // En habitaciones, 0 = no aplica (no gratis) → "—". En niños
                       // (nino/nino2) e infante el 0 es válido (gratis) y sí se muestra.
                       const esRoom = k !== "nino" && k !== "nino2" && k !== "infante";
@@ -1106,7 +1185,7 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
                       const v = k === "infante" ? (preciosMenor2?.infante ?? precios.infante) : precios[k];
                       const mostrar = v != null && (!esRoom || v > 0);
                       return (
-                        <td key={k} className="px-3 py-2 text-right tabular-nums">
+                        <td key={k} className="px-3 py-2.5 text-right align-top tabular-nums" data-label={label}>
                           {mostrar ? (
                             <span style={{ color: "var(--brand-primary)" }}>{formatMoneda(v, r.moneda)}</span>
                           ) : (
@@ -1120,7 +1199,7 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
                 })}
                 {ocultas > 0 && (
                   <tr>
-                    <td colSpan={3 + cols.length} className="px-3 pb-2 pt-0.5">
+                    <td colSpan={3 + cols.length} className="px-3 pb-2 pt-0.5" data-label="">
                       <button
                         type="button"
                         onClick={() => toggle(hotel)}
@@ -1143,7 +1222,7 @@ function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar = false
           Desde los 2 años, el vuelo y los servicios se cobran como adulto (el hotel aplica su propia edad de niño e infante).
         </p>
       )}
-    </div>
+    </ResponsiveTableShell>
   );
 }
 
@@ -1214,15 +1293,16 @@ function PorProgramas({ programas, puedeReservar = false }: { programas: Program
         <p className="py-12 text-center text-gray-400">No hay programas para ese filtro.</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtrados.map((p) => (
+          {filtrados.map((p, i) => (
             <div
               key={p.id}
               className="flex flex-col justify-between overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--brand-primary)] hover:shadow-lg"
             >
           <Link href={`/tarifario/programa/${p.id}`} className="block">
             {p.portada_url ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={p.portada_url} alt={p.nombre} className="h-40 w-full object-cover" />
+              <div className="relative h-40 w-full bg-gray-100">
+                <ImagenCatalogo src={p.portada_url} alt={p.nombre} prioridad={i === 0} />
+              </div>
             ) : (
               // Portada por defecto: degradado de marca con el nombre del programa.
               <div className="bg-brand-gradient flex h-40 w-full items-end p-4">

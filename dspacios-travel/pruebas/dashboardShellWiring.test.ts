@@ -78,13 +78,13 @@ describe("SidebarNav — conserva rutas, jerarquía y estado activo", () => {
     assert.match(nav, /const cActive = pathname === c\.href;/);
   });
 
-  test("el mapa de íconos conserva las mismas 16 claves de módulo (ningún módulo se queda sin ícono ni se inventa uno nuevo)", () => {
+  test("el mapa de íconos conserva las mismas 17 claves de módulo (16 + «gestion» de #106) (ningún módulo se queda sin ícono ni se inventa uno nuevo)", () => {
     const m = nav.match(/const ICONS: Record<string, LucideIcon> = \{([\s\S]*?)\};/);
     assert.ok(m, "debe existir el mapa ICONS");
     const claves = [...m![1].matchAll(/(\w+):/g)].map((x) => x[1]);
     assert.deepEqual(claves.sort(), [
       "auditoria", "b2b", "cms", "contabilidad", "contratos", "cotizaciones", "crm", "finanzas",
-      "importar", "paquetes", "producto", "reservar", "tarifario", "usuarios", "ventas", "vuelos", "configuracion",
+      "importar", "paquetes", "producto", "reservar", "tarifario", "usuarios", "ventas", "vuelos", "configuracion", "gestion",
     ].sort());
   });
 });

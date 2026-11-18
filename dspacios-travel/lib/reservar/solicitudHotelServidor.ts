@@ -4,7 +4,7 @@ import { aporteVuelo } from "@/lib/calc/paquetes";
 import type { OrigenVuelo } from "@/lib/reservar/origen";
 import { ITEM_REF_HOTEL, type ConteosViajeros, type ModoReparto, type NetaSolicitud, type VueloSolicitud } from "@/lib/reservar/solicitudHotel";
 import { evaluarOcupacionSolicitud, type ResultadoOcupacion } from "@/lib/reservar/solicitudOcupacion";
-import { normalizarReglaEdadGeneral } from "@/lib/calc/reglaEdadTarifa";
+import { REGLA_SIN_MENORES, validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import type { AcomConfig } from "@/lib/acomodaciones";
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -54,7 +54,10 @@ export async function evaluarOcupacionHotel(admin: Admin, hotelId: number, habit
   ]);
   if (h.error || a.error || !h.data) return { ok: false, error: "No se pudo leer la configuración del hotel." };
   if (h.data.adults_only && edadesMenores.length) return { ok: false, error: "Este hotel es Adults Only: no acepta niños ni infantes." };
-  const regla = normalizarReglaEdadGeneral({ infanteMin: h.data.edad_infante_min ?? null, infanteMax: h.data.edad_infante_max ?? null, ninoMin: h.data.edad_nino_min ?? null, ninoMax: h.data.edad_nino_max ?? null });
+  // O3: con menores la configuración de edades del hotel es obligatoria (motivo accionable); sin menores la regla no se usa.
+  const g = edadesMenores.length ? validarEdadesGeneralesHotel({ infanteMax: h.data.edad_infante_max ?? null, ninoMax: h.data.edad_nino_max ?? null }) : null;
+  if (g && !g.ok) return { ok: false, error: g.error };
+  const regla = g?.ok ? g.regla : REGLA_SIN_MENORES;
   return evaluarOcupacionSolicitud({ habitaciones, edadesMenores, reglas: (a.data ?? []) as unknown as AcomConfig[], reglaEdad: { infanteMax: regla.infanteMax, ninoMax: regla.ninoMax }, adultosReales });
 }
 export type { ConteosViajeros };

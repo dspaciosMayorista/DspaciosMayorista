@@ -38,6 +38,7 @@ import {
   type HabitacionOcupacionEntrada,
   type HabitacionOcupacionValidada,
 } from "../reservar/ocupacionPorHabitacion.ts";
+import { validarEdadesGeneralesHotel } from "../calc/reglaEdadTarifa.ts";
 import { distribuirOcupacionUnidad } from "./distribucionOcupacionUnidad.ts";
 import { resolverCapacidadTarifaUnidad } from "./capacidadTarifaUnidad.ts";
 import type { HotelBernaloDescubierto } from "./datosBernalo.ts";
@@ -120,7 +121,9 @@ export type DisponibilidadUnidadHotel =
  */
 export type VeredictoHotelUnidad =
   | { tipo: "veredicto"; valor: DisponibilidadUnidadHotel; parcial?: boolean }
-  | { tipo: "inconcluyente"; hotelId: number; motivo: string };
+  | { tipo: "inconcluyente"; hotelId: number; motivo: string }
+  // O3/U1: veredicto CON fundamento — con menores declarados el hotel no tiene su configuración obligatoria de edades; `motivo` es accionable y se muestra tal cual.
+  | { tipo: "bloqueado_edades"; hotelId: number; hotelNombre: string | null; paqueteId: number; motivo: string };
 
 /** Orden de las opciones confirmadas de un hotel: menor `precioVenta`
  * primero (esa es la preseleccionada por defecto en la tarjeta); en empate,
@@ -268,6 +271,14 @@ export async function evaluarDisponibilidadHotelUnidad(
   // un veredicto real, no una inconcluyencia.
   if (edadesMenores.length > 0 && fila.adults_only) {
     return { tipo: "veredicto", valor: { hotelId, estado: "sin_disponibilidad" } };
+  }
+
+  // O3/U1: con menores, la configuración de edades del hotel es obligatoria — una regla explícita de la tarifa publicada no la reemplaza. Solo adultos no la consulta.
+  if (edadesMenores.length > 0) {
+    const g = validarEdadesGeneralesHotel({ infanteMax: fila.edad_infante_max, ninoMax: fila.edad_nino_max }, ofertas[0]?.hotelNombre ?? null);
+    if (!g.ok) {
+      return { tipo: "bloqueado_edades", hotelId, hotelNombre: ofertas[0]?.hotelNombre ?? null, paqueteId: ofertas[0]?.paqueteId ?? 0, motivo: g.error };
+    }
   }
 
   // Cierre de la UX de la tarjeta: la evaluación YA NO se corta en el primer

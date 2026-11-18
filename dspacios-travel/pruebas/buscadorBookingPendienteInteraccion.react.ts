@@ -156,7 +156,7 @@ describe("BuscadorBooking.tsx — onPendingChange: isotipo durante la búsqueda,
 
   test("clic en 'Buscar hoteles' dispara onPendingChange(true) ANTES de que la Server Action resuelva, y onPendingChange(false) al resolver con ÉXITO", async () => {
     const dHoteles = diferido<{ ok: true; resultados: []; diagnostico: undefined; sugerenciasFecha: [] }>();
-    const dUnidad = diferido<{ ok: true; disponibilidad: []; incompleto: false }>();
+    const dUnidad = diferido<{ ok: true; disponibilidad: []; incompleto: false; enRevision: [] }>();
     __setBuscarHoteles(async () => dHoteles.promesa);
     __setBuscarAlojamientosUnidadPorFechas(async () => dUnidad.promesa);
 
@@ -171,7 +171,7 @@ describe("BuscadorBooking.tsx — onPendingChange: isotipo durante la búsqueda,
 
     await act(async () => {
       dHoteles.resolve({ ok: true, resultados: [], diagnostico: undefined, sugerenciasFecha: [] });
-      dUnidad.resolve({ ok: true, disponibilidad: [], incompleto: false });
+      dUnidad.resolve({ ok: true, disponibilidad: [], incompleto: false, enRevision: [] });
       await new Promise((r) => setTimeout(r, 10));
     });
 
@@ -181,7 +181,7 @@ describe("BuscadorBooking.tsx — onPendingChange: isotipo durante la búsqueda,
 
   test("clic en 'Buscar hoteles' con la Server Action resolviendo en ERROR también retira onPendingChange (false) — el retiro no depende de éxito/error", async () => {
     const dHoteles = diferido<{ ok: false; error: string }>();
-    const dUnidad = diferido<{ ok: true; disponibilidad: []; incompleto: false }>();
+    const dUnidad = diferido<{ ok: true; disponibilidad: []; incompleto: false; enRevision: [] }>();
     __setBuscarHoteles(async () => dHoteles.promesa);
     __setBuscarAlojamientosUnidadPorFechas(async () => dUnidad.promesa);
 
@@ -194,7 +194,7 @@ describe("BuscadorBooking.tsx — onPendingChange: isotipo durante la búsqueda,
 
     await act(async () => {
       dHoteles.resolve({ ok: false, error: "Búsqueda no disponible en este momento. Intenta nuevamente." });
-      dUnidad.resolve({ ok: true, disponibilidad: [], incompleto: false });
+      dUnidad.resolve({ ok: true, disponibilidad: [], incompleto: false, enRevision: [] });
       await new Promise((r) => setTimeout(r, 10));
     });
 
@@ -204,7 +204,7 @@ describe("BuscadorBooking.tsx — onPendingChange: isotipo durante la búsqueda,
 
   test("'Limpiar resultados' CON la búsqueda todavía en vuelo retira onPendingChange(false) DE INMEDIATO — no espera a que esa promesa se asiente, y la respuesta tardía no revive nada", async () => {
     const dHoteles = diferido<{ ok: true; resultados: []; diagnostico: undefined; sugerenciasFecha: [] }>();
-    const dUnidad = diferido<{ ok: true; disponibilidad: []; incompleto: false }>();
+    const dUnidad = diferido<{ ok: true; disponibilidad: []; incompleto: false; enRevision: [] }>();
     __setBuscarHoteles(async () => dHoteles.promesa);
     __setBuscarAlojamientosUnidadPorFechas(async () => dUnidad.promesa);
 
@@ -228,7 +228,7 @@ describe("BuscadorBooking.tsx — onPendingChange: isotipo durante la búsqueda,
     // no debe volver a publicar ni a reactivar el isotipo.
     await act(async () => {
       dHoteles.resolve({ ok: true, resultados: [], diagnostico: undefined, sugerenciasFecha: [] });
-      dUnidad.resolve({ ok: true, disponibilidad: [], incompleto: false });
+      dUnidad.resolve({ ok: true, disponibilidad: [], incompleto: false, enRevision: [] });
       await new Promise((r) => setTimeout(r, 10));
     });
     assert.deepEqual(pendientesVistos, [true, false], "la respuesta tardía no debe volver a tocar onPendingChange");

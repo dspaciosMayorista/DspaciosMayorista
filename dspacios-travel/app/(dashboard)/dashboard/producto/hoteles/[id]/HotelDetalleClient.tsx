@@ -19,6 +19,7 @@ import {
 import { pctInicialParaFormulario, restriccionImplicitaHotel } from "@/lib/cotizacion/condicionPagoCatalogo";
 import { etiquetasRestriccion } from "@/lib/cotizacion/etiquetasCondicion";
 import { etiquetaFilaTarifa } from "@/lib/calc/promoCalculadora";
+import { toTemporadaRango } from "@/lib/calc/paquetes";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasVigencia } from "@/lib/hoteles/validarFechasVigencia";
 import { GruposDiasPanel } from "./GruposDiasPanel";
@@ -44,6 +45,8 @@ type Temporada = {
   hotel_temporada_grupos?: GrupoCfg[] | null;
   // #43/#60 entrega 4 (migración 300): elecciones de la promoción y reglas por grupo (misma lectura).
   promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null;
+  // #125 (migración 310): seguir la base ganadora cada noche + un niño gratis por habitación (edad propia opcional).
+  promo_sigue_base?: boolean | null; nino_gratis?: boolean | null; nino_gratis_edad_min?: number | null; nino_gratis_edad_max?: number | null;
   dias_promo?: number[] | null; hotel_promocion_reglas?: ReglaGuardada[] | null;
   hotel_promocion_combinacion?: { estado: string } | { estado: string }[] | null; // entrega 5
 };
@@ -191,7 +194,7 @@ export function HotelDetalleClient({
         {configuracion}
       </div>
       <div role="tabpanel" id="panel-hotel-temporadas" aria-labelledby="tab-hotel-temporadas" hidden={activa !== "temporadas"} className="mx-auto max-w-5xl space-y-8">
-        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} permiteGrupos={mostrarTarifaPersona} />
+        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} permiteGrupos={mostrarTarifaPersona} tarifas={tarifas} />
         {/* Cada bloque del servidor va como ÚNICO hijo de su contenedor: junto a otros hijos dentro de un arreglo estático,
            React 19 (dev) avisa "Each child in a list should have a unique key" por los elementos que llegan del servidor. */}
         <div>{calculadora}</div>
@@ -207,7 +210,7 @@ export function HotelDetalleClient({
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda, permiteGrupos = false }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string; permiteGrupos?: boolean }) {
+function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda, permiteGrupos = false, tarifas = [] }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string; permiteGrupos?: boolean; tarifas?: Tarifa[] }) {
   // #43/#60: editor de grupos de días (preparación inactiva). Sin controles en hoteles por unidad.
   const [gruposAbierta, setGruposAbierta] = useState<Temporada | null>(null);
   const [gruposLocales, setGruposLocales] = useState<Record<number, GrupoCfg[]>>({});
@@ -366,6 +369,16 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
               }).join(" · ")}
             </span>
           )}
+          {t.promo_sigue_base === true && (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600" data-sigue-base>
+              Sigue la base ganadora{(t.hotel_promocion_reglas ?? []).map((r) => ` −${r.valor}%${r.dias ? ` (${textoDias(r.dias)})` : ""}`).join("")}
+            </span>
+          )}
+          {t.nino_gratis === true && (
+            <span className="rounded-full bg-[var(--brand-highlight)]/25 px-2 py-0.5 text-[10px] text-gray-700" data-nino-gratis-chip>
+              Niño gratis{t.nino_gratis_edad_min != null && t.nino_gratis_edad_max != null ? ` (${t.nino_gratis_edad_min}–${t.nino_gratis_edad_max} años)` : ""}
+            </span>
+          )}
           {t.regimen_restringido && (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">solo {t.regimen_restringido}</span>
           )}
@@ -422,9 +435,12 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
     <section>
       {reglasAbierta && (
         <ReglasPromoPanel hotelId={hotelId} bases={basesReglas} onCerrar={() => setReglasAbierta(null)}
+          vigencias={temporadas.map(toTemporadaRango)} tarifas={tarifas} regimenes={regimenes} moneda={moneda}
           promo={{ id: reglasAbierta.id, nombre: reglasAbierta.nombre, tipo: reglasAbierta.tipo ?? "tarifa", prioridad: reglasAbierta.prioridad ?? 1,
             descuento_valor: reglasAbierta.descuento_valor ?? null, descuento_unidad: reglasAbierta.descuento_unidad ?? null,
-            promo_base_id: reglasAbierta.promo_base_id ?? null, reglas: reglasAbierta.hotel_promocion_reglas ?? [] }} />
+            promo_base_id: reglasAbierta.promo_base_id ?? null, reglas: reglasAbierta.hotel_promocion_reglas ?? [],
+            promo_sigue_base: reglasAbierta.promo_sigue_base === true, nino_gratis: reglasAbierta.nino_gratis === true,
+            nino_gratis_edad_min: reglasAbierta.nino_gratis_edad_min ?? null, nino_gratis_edad_max: reglasAbierta.nino_gratis_edad_max ?? null }} />
       )}
       {gruposAbierta && (
         <GruposDiasPanel temporadaId={gruposAbierta.id} nombreVigencia={gruposAbierta.nombre} onCerrar={() => setGruposAbierta(null)}

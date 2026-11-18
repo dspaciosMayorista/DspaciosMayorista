@@ -7,7 +7,7 @@ import {
 } from "../lib/calc/paquetes.ts";
 import { generarTarifasDubai, type DubaiParams, type TarifaGenerada } from "../lib/calc/calculadoras.ts";
 import {
-  resolverReglaEdadEstadiaSegura, normalizarReglaEdadGeneral, type FilaTarifaHotelEdadCruda,
+  resolverReglaEdadEstadiaSegura, type FilaTarifaHotelEdadCruda,
 } from "../lib/calc/reglaEdadTarifa.ts";
 import { extraerCondicionesTarifa } from "../lib/calc/condicionesTarifa.ts";
 import { columnasProcedencia } from "../lib/tarifario/procedenciaTarifario.ts";
@@ -281,7 +281,7 @@ describe("Integración pura — edades y condiciones de tarifa resuelven contra 
       }));
     // Regla general del hotel — deliberadamente DISTINTA de la de la promo,
     // para probar que la promo gana sobre el fallback general.
-    const general = normalizarReglaEdadGeneral({ infanteMin: 0, infanteMax: 2, ninoMin: 3, ninoMax: 11 });
+    const general = { infanteMin: 0, infanteMax: 2, ninoMin: 3, ninoMax: 11 }; // configuración completa del hotel (obligatoria, O3)
     const rEdad = resolverReglaEdadEstadiaSegura({
       filas: filasEdadCrudas, categoria: "estandar", regimen: "PC", temporadasUsadas, general,
     });

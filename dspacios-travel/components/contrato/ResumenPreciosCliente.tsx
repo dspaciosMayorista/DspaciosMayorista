@@ -3,6 +3,7 @@ import { ETIQUETA_AJUSTE_CLIENTE } from "@/lib/reservar/solicitudHotel";
 import type { ResumenPrecios } from "@/lib/cotizacion/resumenPrecios";
 import { filasDeUnidad } from "@/lib/cotizacion/filasResumen";
 import { tituloItemPaquete } from "@/lib/contrato/paqueteTuristicoDocumento";
+import { ETIQUETA_NINO_GRATIS_CLIENTE } from "@/lib/contrato/plegarNinoGratis";
 
 // #94/#52 — lo que ve el CLIENTE, con la estructura de siempre de «Valores y Pagos»: Ítem primero, luego Adultos, Niños, Tarifa Adulto, Tarifa Niño y Valor total.
 // Una fila por grupo de pasajeros; adultos y niños comparten fila cuando son del mismo paquete, con la misma cobertura y una sola tarifa por tipo (ver `filasDeUnidad`).
@@ -26,7 +27,7 @@ export function ResumenPreciosCliente({ resumen, tituloEditado = null, destino =
           <dl key={f.clave} className="space-y-1 rounded-lg border border-gray-200 p-3 text-xs">
             <dt className="font-semibold text-gray-800">{f.ajuste ? ETIQUETA_AJUSTE_CLIENTE : f.titulo}</dt>
             {f.adultos > 0 && <div className="flex justify-between gap-3"><dd className="text-gray-600">Adultos ({f.adultos}) · tarifa por adulto{sufijo}</dd><dd className="tabular-nums">{dinero(f.tarifaAdulto)}</dd></div>}
-            {f.ninos > 0 && <div className="flex justify-between gap-3"><dd className="text-gray-600">Niños ({f.ninos}) · tarifa por niño{sufijo}</dd><dd className="tabular-nums">{dinero(f.tarifaNino)}</dd></div>}
+            {f.ninos > 0 && <div className="flex justify-between gap-3"><dd className="text-gray-600">Niños ({f.ninos}) · tarifa por niño{sufijo}</dd><dd className="tabular-nums">{f.ninoGratis ? ETIQUETA_NINO_GRATIS_CLIENTE : dinero(f.tarifaNino)}</dd></div>}
             <div className="flex justify-between gap-3 border-t border-gray-100 pt-1 font-medium"><dd>Valor total{sufijo}</dd><dd className="tabular-nums">{dinero(f.total)}</dd></div>
           </dl>
         ))}
@@ -50,7 +51,7 @@ export function ResumenPreciosCliente({ resumen, tituloEditado = null, destino =
                 <td className="border border-gray-200 px-2 py-1">{f.ajuste ? "—" : f.adultos}</td>
                 <td className="border border-gray-200 px-2 py-1">{f.ajuste ? "—" : f.ninos}</td>
                 <td className="border border-gray-200 px-2 py-1">{f.ajuste ? "—" : dinero(f.tarifaAdulto)}</td>
-                <td className="border border-gray-200 px-2 py-1">{f.ajuste ? "—" : dinero(f.tarifaNino)}</td>
+                <td className="border border-gray-200 px-2 py-1">{f.ajuste ? "—" : f.ninoGratis ? ETIQUETA_NINO_GRATIS_CLIENTE : dinero(f.tarifaNino)}</td>
                 <td className="border border-gray-200 px-2 py-1 font-medium">{dinero(f.total)}</td>
               </tr>
             ))}

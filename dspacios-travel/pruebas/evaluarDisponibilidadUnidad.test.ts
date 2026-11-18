@@ -291,6 +291,34 @@ describe("evaluarDisponibilidadHotelUnidad — comportamiento REAL (ejecutable, 
     assert.deepEqual(veredicto, { tipo: "veredicto", valor: { hotelId: 216, estado: "sin_disponibilidad" } });
   });
 
+  // U1 (O3): la configuración de edades del hotel es obligatoria con menores — la regla explícita de una tarifa publicada no la reemplaza (aquí la tarifa trae reglas y aun así se bloquea).
+  test("U1: con menores y el hotel SIN edades (o inválidas) → bloqueado_edades con motivo accionable; computar() NO se llama", async () => {
+    for (const [fila, patron] of [
+      [{ ...FILA, edad_infante_max: null, edad_nino_max: null }, /falta/],
+      [{ ...FILA, edad_infante_max: 5, edad_nino_max: 3 }, /valor no válido/],
+    ] as const) {
+      let llamadas = 0;
+      const veredicto = await evaluarDisponibilidadHotelUnidad({
+        ...ENTRADA_BASE, fila, edadesMenores: [5],
+        filasTarifas: [filaTarifaUnidad({ categoria: "Estandar", alimentacion: "PC", maxPax: 4 })],
+        computar: async () => { llamadas++; return { ok: true, precioVenta: 1, moneda: "COP", paxTotal: 3 }; },
+      });
+      assert.equal(veredicto.tipo, "bloqueado_edades");
+      if (veredicto.tipo !== "bloqueado_edades") return;
+      assert.match(veredicto.motivo, patron);
+      assert.match(veredicto.motivo, /Infante hasta/);
+      assert.equal(llamadas, 0);
+    }
+  });
+
+  test("U1: solo adultos con el hotel SIN edades → sigue siendo evaluable y disponible (no se consulta la configuración)", async () => {
+    const veredicto = await evaluarDisponibilidadHotelUnidad({
+      ...ENTRADA_BASE, fila: { ...FILA, edad_infante_max: null, edad_nino_max: null }, edadesMenores: [], computar: computarSiempreOk(),
+    });
+    assert.equal(veredicto.tipo, "veredicto");
+    if (veredicto.tipo === "veredicto") assert.equal(veredicto.valor.estado, "disponible");
+  });
+
   test("hotel con ofertas pero SIN ninguna combinación categoría×alimentación evaluable → inconcluyente (drift de datos), nunca sin_disponibilidad", async () => {
     const ofertaSinCombos: HotelBernaloDescubierto = { ...OFERTA, categorias: [], regimenes: [] };
     const veredicto = await evaluarDisponibilidadHotelUnidad({ ...ENTRADA_BASE, ofertas: [ofertaSinCombos], computar: computarSiempreOk() });

@@ -26,15 +26,17 @@
 
 import {
   marcar, componerTarifa, precioMenorDeDos, toTemporadaRango, minNochesAplicable,
-  factorLiquidacion, normRangos, hoyISO, type TemporadaRango,
+  factorLiquidacion, normRangos, hoyISO, type TemporadaRango, type NocheNinoGratis,
 } from "../calc/paquetes.ts";
 import { basesPromoDeFilas, claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "../calc/netosPorTemporada.ts";
+import { ajustarNochesNinoGratis } from "./ninoGratisPrecio.ts";
 import {
-  resolverReglaEdadEstadiaSegura, type FilaTarifaHotelEdadCruda, type ReglaEdadGeneralParcial,
+  resolverReglaEdadEstadiaSegura, REGLA_SIN_MENORES, type FilaTarifaHotelEdadCruda, type ReglaEdadGeneralParcial,
 } from "../calc/reglaEdadTarifa.ts";
-import { PAX_TARIFA_DEFAULT, type AcomRoom } from "../acomodaciones.ts";
+import { PAX_TARIFA_DEFAULT, type AcomConfig, type AcomRoom } from "../acomodaciones.ts";
 import { resolverDescuentoHotel, aplicarDescuentoNeta, type ReglaDescuentoHotel, type DescuentoAplicado } from "../calc/descuentoHotel.ts";
 import { liquidarConPrecedencia, mismoDescuento, type DescuentoMostrado } from "../calc/precedenciaPromociones.ts";
+import { evaluarComposicionHotel } from "./composicionHotelBusqueda.ts";
 import {
   clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles, type ClasificacionMenores,
 } from "./edadesMenores.ts";
@@ -110,6 +112,9 @@ export type ComboCotizado = {
   // `temporadasTarifaPorAcom` (la regla de edad sigue exactamente igual),
   // solo amplía el conjunto que se usa para buscar condiciones de tarifa.
   temporadasCondicionPorAcom?: Record<string, string[]>;
+  // #125: noches que ganó una promoción con «un niño gratis por habitación»: neto PAGADERO (ya con la promoción de estadía repartida) y con el EBB/Long Stay + redondeo de `netos` aplicados
+  // al total de la promoción (Σ noches = lo que el niño paga de alojamiento por esa promoción). Ausente si ninguna.
+  ninoGratisNoches?: Partial<Record<"nino" | "nino2", NocheNinoGratis[]>>;
 };
 
 // ── Datos crudos, YA CONSULTADOS por el llamador (una sola vez por hotel/
@@ -151,7 +156,9 @@ export type FilaTemporadaHotelRaw = {
   // #43/#60: grupos de días incrustados en la misma lectura (solo cuentan los activos).
   hotel_temporada_grupos?: unknown;
   // #43/#60 entrega 4: promociones (misma lectura, `SELECT_PROMO_VIGENCIA`).
-  promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null;
+  promo_base_id?: number | null; promo_sigue_base?: boolean | null;
+  nino_gratis?: boolean | null; nino_gratis_edad_min?: number | null; nino_gratis_edad_max?: number | null;
+  descuento_unidad?: string | null; noche_gratis_regla?: string | null;
   dias_promo?: unknown; hotel_promocion_reglas?: unknown;
 };
 export type FilaTarifaHotelRaw = Record<string, unknown>; // tipo_habitacion, alimentacion, temporada, neto_*
@@ -344,6 +351,7 @@ export function evaluarHotelPorFechas(
     const basePromoPorClave = basesPromoDeFilas(tempMap);
     const netosHabitacion: Record<string, { ocupantes: number; total: number; descuento: number }> = {};
     const descuentoPorAcom: Record<string, DescuentoAplicado | null> = {};
+    const ninoGratisNoches: Partial<Record<"nino" | "nino2", NocheNinoGratis[]>> = {};
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
       const netoPorTemporada = netosDeColumna(tempMap, col);
@@ -371,6 +379,13 @@ export function evaluarHotelPorFechas(
         }
       } else {
         costoHotel = lp?.r.total ?? null;
+        if ((acom === "nino" || acom === "nino2") && lp?.r.ninoGratisNoches?.length) {
+          // F1: lo PAGADERO tras la promoción de estadía (el motor ya lo reparte entre las noches) y con EBB/Long Stay + redondeo aplicados al TOTAL de la promoción, igual que `costoHotel` de la clase.
+          ninoGratisNoches[acom] = ajustarNochesNinoGratis(lp.r.ninoGratisNoches, (suma) => {
+            const neto = aplicarDescuentoNeta(suma, descAcom, monedaHotel);
+            return datos.redondeoCentavos ? Math.round(neto * 100) / 100 : neto;
+          });
+        }
       }
       if (costoHotel == null) continue;
       costoHotel = aplicarDescuentoNeta(costoHotel, descAcom, monedaHotel);
@@ -410,12 +425,13 @@ export function evaluarHotelPorFechas(
       if (fijoMenor2 != null) preciosMenor2SinFijo.infante = normalMenor2;
     }
     if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, preciosMenor2, preciosSinFijo, preciosMenor2SinFijo, temporadasTarifaPorAcom, temporadasCondicionPorAcom,
-      ...(Object.keys(netosHabitacion).length ? { netosHabitacion } : {}), ...(Object.keys(descuentoPorAcom).length ? { descuentoPorAcom } : {}) });
+      ...(Object.keys(netosHabitacion).length ? { netosHabitacion } : {}), ...(Object.keys(descuentoPorAcom).length ? { descuentoPorAcom } : {}),
+      ...(Object.keys(ninoGratisNoches).length ? { ninoGratisNoches } : {}) });
   }
   if (reglasCierre.length) {
     for (const c of combos) {
       for (const a of Object.keys(c.precios)) {
-        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.preciosMenor2?.[a]; delete c.preciosSinFijo?.[a]; delete c.preciosMenor2SinFijo?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; }
+        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.preciosMenor2?.[a]; delete c.preciosSinFijo?.[a]; delete c.preciosMenor2SinFijo?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; if (a === "nino" || a === "nino2") delete c.ninoGratisNoches?.[a]; }
       }
     }
   }
@@ -522,6 +538,10 @@ export type SugerenciaFecha = { fechaIda: string; fechaRegreso: string; noches: 
 export type ComposicionSugerencia = {
   adultosDeclarados: number;
   habitacionesConsultadas: HabitacionConsultada[];
+  // #102 — búsqueda general: cuántas habitaciones; cada hotel reparte las suyas con su propia configuración
+  // (`reglasAcom`). `habitacionesConsultadas` queda vacío en ese modo.
+  numHabitaciones?: number;
+  reglasAcom?: AcomConfig[];
   edadesMenores: number[];
   // Filas CRUDAS de `tarifa_hotel` ya cargadas (`datos.tarifas`, nunca una
   // consulta nueva) + la regla general del hotel — la regla de edad efectiva
@@ -535,6 +555,14 @@ export type ComposicionSugerencia = {
 
 function compatibleConComposicion(resultado: ResultadoHotelFechas, comp: ComposicionSugerencia): boolean {
   if (comp.adultsOnly && comp.edadesMenores.length > 0) return false;
+  if (comp.numHabitaciones != null) {
+    // Solo factibilidad de la composición (sin el cargo de servicios por grupo): mismo motor que la búsqueda.
+    return evaluarComposicionHotel({
+      res: { combos: resultado.combos, serviciosGrupoIncluidos: [] }, filasTarifa: comp.filasTarifa, pctMk: 0, numNoches: 1,
+      adultos: comp.adultosDeclarados, edades: comp.edadesMenores, reglasAcom: comp.reglasAcom ?? [], generalEdad: comp.generalEdad,
+      numHabitaciones: comp.numHabitaciones, soloFactibilidad: true,
+    }).combos.length > 0;
+  }
   const porAcom = new Map<AcomRoom, number>();
   for (const h of comp.habitacionesConsultadas) porAcom.set(h.acom, (porAcom.get(h.acom) ?? 0) + 1);
 
@@ -546,10 +574,13 @@ function compatibleConComposicion(resultado: ResultadoHotelFechas, comp: Composi
     // general por accidente.
     const temporadasUsadas = new Set<string>();
     for (const acom of porAcom.keys()) for (const t of combo.temporadasTarifaPorAcom?.[acom] ?? []) temporadasUsadas.add(t);
-    const rRegla = resolverReglaEdadEstadiaSegura({
-      filas: comp.filasTarifa, categoria: combo.categoria, regimen: combo.regimen,
-      temporadasUsadas, general: comp.generalEdad,
-    });
+    // O3: sin menores la regla de edad es irrelevante; con menores y sin la configuración de edades del hotel (obligatoria) no se sugiere nada.
+    const rRegla = comp.edadesMenores.length > 0
+      ? resolverReglaEdadEstadiaSegura({
+        filas: comp.filasTarifa, categoria: combo.categoria, regimen: combo.regimen,
+        temporadasUsadas, general: comp.generalEdad,
+      })
+      : { ok: true as const, regla: REGLA_SIN_MENORES };
     if (!rRegla.ok) continue;
 
     // `distribuirPorHabitaciones` valida SIEMPRE (no solo cuando hay menores):

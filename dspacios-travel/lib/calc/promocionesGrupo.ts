@@ -22,7 +22,7 @@ export type ReglaNocheGratis = "mas_barata" | "mas_cara" | "ultima";
 
 /** Fragmento de `select` de `hotel_temporadas` con lo que la entrega 4 necesita, DENTRO de la
  * lectura de vigencias que cada cargador ya hace (0 solicitudes nuevas). Exige la 300 aplicada. */
-export const SELECT_PROMO_VIGENCIA = "promo_base_id, descuento_unidad, noche_gratis_regla, dias_promo, hotel_promocion_reglas(grupo_id, valor, dias), hotel_promocion_combinacion(estado, alternativas, acumulable_ebb, acumulable_long_stay, orden)";
+export const SELECT_PROMO_VIGENCIA = "promo_base_id, promo_sigue_base, nino_gratis, nino_gratis_edad_min, nino_gratis_edad_max, descuento_unidad, noche_gratis_regla, dias_promo, hotel_promocion_reglas(grupo_id, valor, dias), hotel_promocion_combinacion(estado, alternativas, acumulable_ebb, acumulable_long_stay, orden)";
 
 /** Acomodación de una columna de neto de `tarifa_hotel` (`neto_doble` → `doble`). */
 export function acomodacionDeColumna(col: string): string {

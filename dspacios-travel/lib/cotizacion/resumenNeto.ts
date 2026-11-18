@@ -50,7 +50,8 @@ export function resumenNetoCarrito(e: {
   let adultoGlobal = 0;
   for (const u of e.unidades) {
     const filas: { tipo: PersonaNeto["tipo"]; pvp: bigint; clave: string }[] = [];
-    for (const c of u.personas) for (let k = 0; k < c.cantidad; k++) filas.push({ tipo: c.tipo, pvp: aCentavos(c.tarifa), clave: c.clave });
+    // F3: el PVP de cada pasajero es su tarifa menos el alojamiento condonado (niño gratis): la comisión y el NETO parten de lo que de verdad se cobra.
+    for (const c of u.personas) for (let k = 0; k < c.cantidad; k++) filas.push({ tipo: c.tipo, pvp: aCentavos(c.tarifa) - aCentavos(c.condonado?.[k] ?? 0), clave: c.clave });
     const bnc = repartir(aCentavos(e.impuestoPorUnidad[u.ref] ?? 0), filas.map((f) => f.pvp));
     const posicion = new Map<string, number>();
     porUnidad.push(filas.map((f, i) => {
@@ -80,8 +81,14 @@ export function resumenNetoCarrito(e: {
     if (!t.ok) return { ok: false, motivo: t.error };
     t.valor.forEach((x, i) => { netoPorCupo[porUnidad[iu][i].llave] = Number(x.netoCent); });
     const ex = tarifasNetoExactasPorPersona({ personas: porUnidad[iu], ordinariaCent: ordUnidad[iu], participacionCent: partUnidad[iu], excluyeRecobro });
+    // Una clase con un pasajero de alojamiento condonado tiene tarifas reales distintas: se guarda la exacta de cada posición (no el promedio de la clase).
+    const clasesConCondonado = new Set(e.unidades[iu].personas.filter((p) => p.condonado?.some((x) => x > 0)).map((p) => `${e.unidades[iu].ref}|${p.clave}`));
     const acum = new Map<string, { suma: number; n: number }>();
-    ex.forEach((v, i) => { const clase = porUnidad[iu][i].llave.replace(/\|[0-9]+$/, ""); const a = acum.get(clase) ?? { suma: 0, n: 0 }; a.suma += v; a.n += 1; acum.set(clase, a); });
+    ex.forEach((v, i) => {
+      const llave = porUnidad[iu][i].llave, clase = llave.replace(/\|[0-9]+$/, "");
+      if (clasesConCondonado.has(clase)) { netoExactoPorClase[llave] = v; return; }
+      const a = acum.get(clase) ?? { suma: 0, n: 0 }; a.suma += v; a.n += 1; acum.set(clase, a);
+    });
     for (const [clase, a] of acum) netoExactoPorClase[clase] = a.suma / a.n;
   }
   const netoServicio: Record<string, number> = {};

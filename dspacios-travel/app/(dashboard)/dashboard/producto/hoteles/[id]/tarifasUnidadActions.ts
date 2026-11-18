@@ -211,15 +211,16 @@ async function validarClasificacionHotel(
 // actualizar, publicar o duplicar — así un formulario manipulado, un cliente
 // viejo sin la precarga, o un borrador creado antes de esta ronda, terminan
 // igual de cubiertos. `aplicarFallbackReglasEdad` (dominio puro) decide si
-// hace falta tocar algo: si la tarifa ya trae reglas explícitas, esta
-// consulta ni siquiera importa el resultado.
+// hace falta derivar reglas; la configuración obligatoria del hotel se lee y
+// valida SIEMPRE (una regla explícita nunca la reemplaza — O3/U1). Una sola
+// lectura por operación, nunca por habitación.
 async function edadesGeneralesDelHotel(
   sb: Awaited<ReturnType<typeof createClient>>,
   hotelId: number
-): Promise<{ ok: true; edades: { edadInfanteMax: number; edadNinoMax: number; adultsOnly: boolean } } | { ok: false; error: string }> {
+): Promise<{ ok: true; edades: { edadInfanteMax: number | null; edadNinoMax: number | null; adultsOnly: boolean; nombre: string | null } } | { ok: false; error: string }> {
   const { data, error } = await sb
     .from("hoteles")
-    .select("edad_infante_max, edad_nino_max, adults_only")
+    .select("nombre, edad_infante_max, edad_nino_max, adults_only")
     .eq("id", hotelId)
     .maybeSingle();
   if (error) return { ok: false, error: "No se pudo leer la configuración de edades del hotel." };
@@ -230,6 +231,7 @@ async function edadesGeneralesDelHotel(
       edadInfanteMax: data.edad_infante_max,
       edadNinoMax: data.edad_nino_max,
       adultsOnly: data.adults_only ?? false,
+      nombre: data.nombre ?? null,
     },
   };
 }
@@ -239,9 +241,7 @@ async function resolverReglasEdadTarifa(
   hotelId: number,
   tarifa: TarifaAlojamiento
 ): Promise<{ ok: true; tarifa: TarifaAlojamiento } | { ok: false; error: string }> {
-  // Reglas explícitas: no hace falta ni consultar el hotel (punto 4).
-  if (tarifa.reglaMenores.reglas.length > 0) return { ok: true, tarifa };
-
+  // O3/U1: la configuración de edades del hotel es obligatoria aunque la tarifa traiga reglas explícitas (el override no la reemplaza).
   const edades = await edadesGeneralesDelHotel(sb, hotelId);
   if (!edades.ok) return edades;
 

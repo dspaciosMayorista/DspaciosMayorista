@@ -15,12 +15,12 @@ const datos = (src: string) => `data:text/javascript,${encodeURIComponent(src)}`
 const G = "globalThis.__c297r";
 const reg = (n: string) => `export async function ${n}(...a) { ${G}.llamadas.push(['${n}', a]); return ${G}.resp('${n}', a); }`;
 const GRUPOS = datos(["leerConfigGrupos", "guardarGruposVigencia", "guardarPropuestaGrupos", "borrarGrupoDias", "guardarCalculoGrupo"].map(reg).join("\n"));
-const HOTEL = datos(["guardarCalculadora", "generarTarifasCalculadora", "sustituirPromoManualMixta"].map(reg).join("\n"));
+const HOTEL = datos(["guardarCalculadora", "generarTarifasCalculadora", "sustituirPromoManualMixta", "guardarReglasPromocion"].map(reg).join("\n"));
 registerHooks({
   resolve(specifier, context, nextResolve) {
     const padre = context.parentURL ?? "";
     if (specifier === "./grupos-actions" && padre.endsWith("/CalculoGrupoPanel.tsx")) return { url: GRUPOS, shortCircuit: true };
-    if (specifier === "../actions" && padre.endsWith("/CalculadoraEditor.tsx")) return { url: HOTEL, shortCircuit: true };
+    if (specifier === "../actions" && /\/(CalculadoraEditor|CruceBasesMixta)\.tsx$/.test(padre)) return { url: HOTEL, shortCircuit: true };
     if (specifier === "next/navigation" && padre.includes("/producto/hoteles/")) return { url: datos("export function useRouter(){return{push(){},refresh(){},replace(){}}}"), shortCircuit: true };
     return nextResolve(specifier, context);
   },

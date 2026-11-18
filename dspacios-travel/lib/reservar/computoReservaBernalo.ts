@@ -56,6 +56,7 @@ import { normalizarCategoriaServicio, type ServicioGrupoIncluido } from "@/lib/r
 import { cargarVigenciasServicios } from "@/lib/reservar/temporadasServicio";
 import { incluidoPorUnidades, incluidoSeOmite } from "@/lib/calc/servicioVigencias";
 import { empaquetadoVigente, hoyBogota } from "@/lib/reservar/origen";
+import { validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import type { DecisionesOcupacionBernalo, SalidaSeleccionadaBernaloEntrada } from "@/lib/reservar/solicitudAlojamientoBernalo";
 
 // ── Entrada: reusa TAL CUAL el tipo de decisiones de Fase 3F-1 ─────────────
@@ -69,6 +70,8 @@ export type CodigoComputoReservaBernalo =
   | "hotel_no_vinculado"
   | "clasificacion_no_vinculada"
   | "configuracion_incompleta"
+  | "edades_hotel_incompletas"
+  | "hotel_solo_adultos"
   | "salida_no_vinculada"
   | "salidas_no_disponibles"
   | "fechas_fuera_de_ventana"
@@ -180,7 +183,7 @@ export async function computarReservaBernalo(
   // `hotelId` recibido.
   const { data: ah, error: eAh } = await admin
     .from("armado_hoteles")
-    .select("hotel_id, categorias, regimenes, hoteles(moneda, modelo_tarifario, nombre, proveedores(nombre, aplica_retencion, pct_retencion))")
+    .select("hotel_id, categorias, regimenes, hoteles(moneda, modelo_tarifario, nombre, adults_only, edad_infante_max, edad_nino_max, proveedores(nombre, aplica_retencion, pct_retencion))")
     .eq("paquete_id", input.paqueteId)
     .eq("hotel_id", input.hotelId)
     .maybeSingle();
@@ -190,6 +193,7 @@ export async function computarReservaBernalo(
   }
   const hotelMeta = ah.hoteles as unknown as {
     moneda?: string | null; modelo_tarifario?: string | null; nombre?: string | null;
+    adults_only?: boolean | null; edad_infante_max?: number | null; edad_nino_max?: number | null;
     proveedores?: { nombre: string | null; aplica_retencion: boolean | null; pct_retencion: number | null } | null;
   } | null;
   const modeloTarifario = hotelMeta?.modelo_tarifario ?? null;
@@ -197,6 +201,16 @@ export async function computarReservaBernalo(
     return { ok: false, codigo: "hotel_no_vinculado", mensaje: "Este hotel no está disponible para cotización en este momento." };
   }
   const hotelNombre = hotelMeta?.nombre ?? "";
+
+  // O3/U1: con menores declarados el hotel debe tener su configuración de edades válida (Adults Only: sin edades pero rechaza menores). Una regla explícita de la
+  // tarifa publicada NUNCA la reemplaza — esto cubre también tarifas ya publicadas. Solo adultos no consulta nada. Sin consulta extra: la fila del hotel ya está leída.
+  if (input.habitaciones.some((h) => h.edadesMenores.length > 0)) {
+    if (hotelMeta?.adults_only === true) {
+      return { ok: false, codigo: "hotel_solo_adultos", mensaje: `El hotel «${hotelNombre}» es solo para adultos y no admite menores.` };
+    }
+    const gEdades = validarEdadesGeneralesHotel({ infanteMax: hotelMeta?.edad_infante_max ?? null, ninoMax: hotelMeta?.edad_nino_max ?? null }, hotelNombre);
+    if (!gEdades.ok) return { ok: false, codigo: "edades_hotel_incompletas", mensaje: gEdades.error };
+  }
   const proveedorHotel: ProveedorHotelBernalo = hotelMeta?.proveedores
     ? {
         nombre: hotelMeta.proveedores.nombre,

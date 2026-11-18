@@ -22,6 +22,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { temporadaCubreFecha, type TemporadaRango } from "./paquetes.ts";
+import { diaSemanaNoche } from "./gruposDias.ts";
 
 const MS_DIA = 86_400_000;
 // Tope defensivo por rango (un rango mal cargado no debe colgar la vista previa).
@@ -158,6 +159,78 @@ export function resolverBasePromo(promo: string, vigencias: TemporadaRango[], re
     return { ok: false, motivo: "varias_bases", mensaje: `"${nombre}" cruza varias temporadas base (${[...basesUsadas].sort().join(", ")}); falta definir sobre cuál se calcula.` };
   }
   return { ok: true, base: [...basesUsadas][0], pct };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #125 — Plan por noche de una promoción que SIGUE la base ganadora (varias temporadas base sucesivas).
+// Misma resolución de base por noche que `resolverBasePromo` (cobertura, prioridad, empate, régimen), pero sin exigir una sola base: cada noche toma la
+// suya. Solo DIAGNOSTICA y presenta (vista previa); el precio real lo calcula el motor compartido (`resolverNetoNocheDetallado`). Acotado: las noches se
+// agrupan en tramos consecutivos con la misma base/estado y se devuelven a lo sumo `maxSegmentos`.
+// ─────────────────────────────────────────────────────────────────────────
+export type EstadoTramoPlan = "ok" | "sin_base" | "base_empatada" | "prioridad_insuficiente" | "sin_valor_base";
+export type TramoPlanPromo = {
+  desde: string; hasta: string; noches: number; estado: EstadoTramoPlan;
+  base?: string; detalle?: string;
+  pct?: number; netoBase?: number | null; netoPromo?: number | null;
+  /** Solo con «un niño gratis por habitación»: tarifa de niño de la base y con la promoción (el niño gratis no paga estas noches). */
+  ninoGratis?: boolean; netoNinoBase?: number | null; netoNinoPromo?: number | null;
+};
+export type PlanPromoPorNoche = { tramos: TramoPlanPromo[]; noches: number; truncado: boolean; todoOk: boolean };
+
+const sigDia = (iso: string) => new Date(Date.parse(`${iso}T00:00:00Z`) + MS_DIA).toISOString().slice(0, 10);
+
+export function planPromoPorNoche(a: {
+  promo: string;
+  vigencias: TemporadaRango[];
+  regimen: string;
+  /** % de la regla (en modo seguir-base es la regla de la promoción; en la calculadora, `descuento_valor`). */
+  pct: number;
+  ninoGratis?: boolean;
+  /** Días de la semana (1 = lunes … 7 = domingo) en que rige la regla de la promoción; ausente/null = todos. Las demás noches se venden a la base. */
+  dias?: number[] | null;
+  valorBase?: (base: string) => number | null | undefined;
+  valorNinoBase?: (base: string) => number | null | undefined;
+  maxSegmentos?: number;
+}): PlanPromoPorNoche {
+  const nombre = a.promo.trim();
+  const aplicables = a.vigencias.filter((v) => v.nombre?.trim() === nombre && aplicaRegimen(v, a.regimen));
+  const bases = a.vigencias.filter((v) => (v.tipo ?? "tarifa") === "tarifa" && aplicaRegimen(v, a.regimen));
+  const noches = new Map<string, number>(); // fecha → prioridad de la promoción que la cubre (la mayor)
+  for (const p of aplicables) for (const iso of nochesCubiertas(p)) noches.set(iso, Math.max(noches.get(iso) ?? 0, p.prioridad ?? 1));
+  const fechas = [...noches.keys()].sort();
+  const max = a.maxSegmentos ?? 60;
+  const factor = 1 - a.pct / 100;
+  const tramos: TramoPlanPromo[] = [];
+  let truncado = false;
+  for (const iso of fechas) {
+    const t0 = new Date(`${iso}T00:00:00`).getTime();
+    if (a.dias?.length && !a.dias.includes(diaSemanaNoche(t0))) continue; // día sin regla: conserva la base, no es parte de la promoción
+    const cubren = bases.filter((b) => temporadaCubreFecha(b, t0));
+    let tramo: Omit<TramoPlanPromo, "desde" | "hasta" | "noches">;
+    if (cubren.length === 0) {
+      tramo = { estado: "sin_base", detalle: `Ninguna temporada base del régimen ${a.regimen} cubre esta noche.` };
+    } else {
+      const top = Math.max(...cubren.map((b) => b.prioridad ?? 1));
+      const ganadoras = [...new Set(cubren.filter((b) => (b.prioridad ?? 1) === top).map((b) => b.nombre.trim()))].sort();
+      if (ganadoras.length > 1) tramo = { estado: "base_empatada", detalle: `Empatan en prioridad: ${ganadoras.join(", ")}.` };
+      else if ((noches.get(iso) ?? 1) <= top) tramo = { estado: "prioridad_insuficiente", base: ganadoras[0], detalle: `La promoción no tiene mayor prioridad que ${ganadoras[0]}.` };
+      else {
+        const nb = a.valorBase ? a.valorBase(ganadoras[0]) ?? null : null;
+        const nn = a.ninoGratis && a.valorNinoBase ? a.valorNinoBase(ganadoras[0]) ?? null : null;
+        tramo = {
+          estado: a.valorBase && nb == null ? "sin_valor_base" : "ok", base: ganadoras[0], pct: a.pct,
+          ...(a.valorBase ? { netoBase: nb, netoPromo: nb == null ? null : nb * factor } : {}),
+          ...(a.valorBase && nb == null ? { detalle: `${ganadoras[0]} no tiene tarifa cargada: esa noche no se vende.` } : {}),
+          ...(a.ninoGratis ? { ninoGratis: true, ...(a.valorNinoBase ? { netoNinoBase: nn, netoNinoPromo: nn == null ? null : nn * factor } : {}) } : {}),
+        };
+      }
+    }
+    const ult = tramos[tramos.length - 1];
+    if (ult && sigDia(ult.hasta) === iso && ult.estado === tramo.estado && ult.base === tramo.base) { ult.hasta = iso; ult.noches += 1; continue; }
+    if (tramos.length >= max) { truncado = true; break; }
+    tramos.push({ desde: iso, hasta: iso, noches: 1, ...tramo });
+  }
+  return { tramos, noches: fechas.length, truncado, todoOk: fechas.length > 0 && !truncado && tramos.every((t) => t.estado === "ok") };
 }
 
 /** Etiqueta de una fila de `tarifa_hotel` en la tabla interna. Es PROMO si

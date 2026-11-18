@@ -3,7 +3,7 @@
 import { HoraInput24 } from "@/components/ui/HoraInput24";
 import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useRef, useState, useTransition } from "react";
-import Image from "next/image";
+import { ImagenCatalogo } from "@/components/ImagenCatalogo";
 import { MapPin, Users } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
 import { ALCANCE_BUSQUEDA_POR_DEFECTO, ALCANCES_VENTA, ROTULO_ALCANCE_VENTA, ROTULO_TIPO_RECEPTIVO, TIPOS_RECEPTIVO, type AlcanceVenta, type TipoReceptivo } from "@/lib/calc/servicioAlcance";
@@ -369,11 +369,7 @@ export function BuscadorReceptivos({
                 >
                   <button type="button" onClick={() => onVerDetalle(r)} className="flex flex-1 flex-col justify-start text-left">
                     <div className="relative aspect-[16/10] w-full bg-gray-100">
-                      {fotosPorServicio[r.servicioId] ? (
-                        <Image src={fotosPorServicio[r.servicioId]} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-                      )}
+                      <ImagenCatalogo src={fotosPorServicio[r.servicioId]} alt={r.nombre} className="transition-transform group-hover:scale-[1.03]" />
                     </div>
                     <div className="p-4 pb-0">
                       <div className="font-semibold text-gray-800">{r.nombre}</div>

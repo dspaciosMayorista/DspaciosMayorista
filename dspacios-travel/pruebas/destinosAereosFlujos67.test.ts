@@ -381,7 +381,7 @@ function tablasGenerar(o: Parameters<typeof tablasBase>[0] = {}, extra: Tablas =
   return {
     ...t,
     armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: 217, categorias: null, regimenes: null }],
-    hoteles: [{ id: 217, nombre: "Hotel JD", moneda: "COP", modelo_tarifario: "persona", adults_only: false }],
+    hoteles: [{ id: 217, nombre: "Hotel JD", moneda: "COP", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 }],
     armado_servicios: [],
     hotel_temporadas: [{
       hotel_id: 217, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1,

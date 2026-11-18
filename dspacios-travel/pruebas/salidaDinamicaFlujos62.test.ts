@@ -684,7 +684,7 @@ function tablasGenerar(salidas: FilaFalsa[], paquete: Record<string, unknown> = 
     armado_vuelos: [], armado_empaquetados: [], armado_servicios: [],
     armado_hoteles: [{
       paquete_id: PAQUETE_ID, hotel_id: HOTEL_ID, categorias: null, regimenes: null,
-      hoteles: { nombre: "Hotel Dinámico", moneda: "COP", modelo_tarifario: "persona" },
+      hoteles: { nombre: "Hotel Dinámico", moneda: "COP", modelo_tarifario: "persona", edad_infante_max: 2, edad_nino_max: 10 },
     }],
     hotel_temporadas: [{
       hotel_id: HOTEL_ID, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1,

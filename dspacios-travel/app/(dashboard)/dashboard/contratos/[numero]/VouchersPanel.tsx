@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { generarVouchersServicios, generarVoucherHotel, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
 import { ComboCiudad } from "@/components/ComboCiudad";
+import { Info } from "lucide-react";
 import type { DestinoOpt } from "@/components/ComboDestino";
 
 export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; share_token: string; contenido: VoucherContenido };
@@ -15,7 +16,7 @@ export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
 
-export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [], puedeEditar = true, identidad }: { identidad: IdentidadContrato; numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[]; puedeEditar?: boolean }) {
+export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, destinos = [], puedeEditar = true, identidad, pagoCompleto = null }: { identidad: IdentidadContrato; numero: string; vouchers: VoucherRow[]; puedeGenerar: boolean; motivoBloqueo?: string; destinos?: DestinoOpt[]; puedeEditar?: boolean; /** #53: ¿contrato 100 % pagado según la base? null = no se pudo verificar (el aliado no accede). */ pagoCompleto?: boolean | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -68,7 +69,17 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
           </Button>
         </div>
       </div>
-      {!puedeGenerar && <p className="mt-2 text-xs text-amber-600">{motivoBloqueo ?? "El contrato debe estar 100% pago para generar los vouchers (o pídelo a un superadmin)."}</p>}
+      {!puedeGenerar && motivoBloqueo && <p className="mt-2 text-xs text-amber-600">{motivoBloqueo}</p>}
+      {vouchers.length > 0 && (
+        <p className={`mt-2 flex items-start gap-1.5 text-xs ${pagoCompleto === true ? "text-green-700" : "text-amber-700"}`} role="note">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          {pagoCompleto === true
+            ? "Contrato 100 % pagado: el aliado ya puede abrir estos vouchers desde su portal."
+            : pagoCompleto === false
+              ? "Vista previa interna: el aliado solo podrá abrir estos vouchers cuando el contrato esté 100 % pagado. Si el saldo vuelve a subir, el acceso se bloquea de nuevo (el voucher no se borra)."
+              : "No se pudo verificar el pago del contrato: por seguridad el aliado no accede a los vouchers hasta confirmarlo."}
+        </p>
+      )}
       {msg && <p className={`mt-2 text-sm ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
 
       {vouchers.length > 0 && (

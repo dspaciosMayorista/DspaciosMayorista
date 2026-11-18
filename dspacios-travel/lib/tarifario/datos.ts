@@ -19,6 +19,7 @@ import { salidasDinamicasVigentes } from "../reservar/salidaDinamicaVigente.ts";
 import { filtrarFilasPorOrigenAereo } from "../paquetes/destinosAereos67.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico } from "../observabilidad/medicion.ts";
 import { galeriaPorHotel as galeriaDe, leerFotosHotel } from "./fotosHotel.ts";
+import { leerFotosServicios } from "./fotosServicio.ts";
 
 // Columnas completas que necesita Vista Booking (Reservar/tarifario público)
 // — más que las que pide /dashboard/tarifario, ver lib/tarifario/paginacion.ts.
@@ -383,8 +384,9 @@ export async function cargarDatosTarifario(
         })()
       : null,
     // Foto de portada por servicio adicional (tour/receptivo).
+    // O1: foto pública de cada receptivo publicado, igual para visitante, aliado e interno (ver lib/tarifario/fotosServicio.ts).
     servicioIds.length
-      ? sb.from("servicios_adicionales").select("id, foto_url").in("id", servicioIds)
+      ? leerFotosServicios(sb, admin, servicioIds)
       : null,
     // Régimen de alimentación: qué incluye cada plan (sin dependencia de ningún id-set).
     sb.from("planes_alimentacion").select("codigo, nombre, descripcion, nota_especial"),

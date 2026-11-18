@@ -1,5 +1,9 @@
 # CURRENT_GOAL.md
 
+## Current release objective — 2026-11-18
+
+Hand off the owner-reviewed consolidated #1/#53/#102/#105/#106/#124/#125 batch for owner staging/commit/push and one final PR Preview. Technical re-audit passed; Production migrations 307–311 applied and postchecked by the owner. Preserve #97 OFF, reuse ON, owner data and all worktrees. #126 improvements are deferred, not an implementation objective. Do not rerun applied migrations, publish automatically or infer hosted acceptance. See docs/tecnico/release-integrated-batch-2026-11-18.md. Older goals below are historical.
+
 Estado al 2026-09-30.
 
 **En `main`** (además de lo registrado al 2026-09-24): selectores buscables de catálogo en el panel (`27fa9402`, `eb274b5b`), resumen de política de reservas con "Ver más" (PR #332) y separación de los datos sensibles de proveedores cerrada con la migración 191 (PR #333, `92b3c51e`). Las migraciones 189 y 190 son prerrequisito de la 191; el usuario reporta la 191 aplicada en producción (no verificado desde el repositorio).

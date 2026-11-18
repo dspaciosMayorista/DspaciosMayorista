@@ -21,6 +21,8 @@ export function costoHotelPersona(
   comp: {
     lineasHab: ReadonlyArray<{ acom: string; pax: number; habitaciones?: number }>; netoPorAcom: Record<string, number | null | undefined>; numNinos: number; numNinos2: number;
     netoHabitacionPorAcom?: Record<string, { total: number } | undefined>;
+    /** #125: neto del hotel que NO se paga por el niño gratis de una promoción (solo alojamiento promocionado). */
+    beneficioNinoGratis?: { costoNeto: number } | null;
   },
   numInfantes: number,
 ): number {
@@ -33,6 +35,7 @@ export function costoHotelPersona(
   if (comp.numNinos > 0 && comp.netoPorAcom["nino"] != null) costo += (comp.netoPorAcom["nino"] as number) * comp.numNinos;
   if (comp.numNinos2 > 0 && comp.netoPorAcom["nino2"] != null) costo += (comp.netoPorAcom["nino2"] as number) * comp.numNinos2;
   if (numInfantes > 0 && comp.netoPorAcom["infante"] != null) costo += (comp.netoPorAcom["infante"] as number) * numInfantes;
+  if (comp.beneficioNinoGratis) costo -= comp.beneficioNinoGratis.costoNeto;
   return costo;
 }
 

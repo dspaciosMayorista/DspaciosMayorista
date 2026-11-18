@@ -213,7 +213,7 @@ describe("revisión: alcance", () => {
 // ── Acciones con cliente simulado ──────────────────────────────────────────────────────
 type Llamada = { tabla: string; op: string; datos: unknown; filtros: [string, unknown][] };
 const est = {
-  rpc: [] as [string, Record<string, unknown>][], resp: null as unknown,
+  rpc: [] as [string, Record<string, unknown>][], resp: null as unknown, respFn: {} as Record<string, unknown>,
   llamadas: [] as Llamada[], programa: {} as Record<string, unknown | ((l: Llamada) => unknown)>, revalida: [] as string[], regen: 0,
 };
 (globalThis as unknown as { __c297: typeof est }).__c297 = est;
@@ -250,12 +250,12 @@ function consulta(tabla: string) {
   return b;
 }
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => ({
-  rpc: async (fn: string, args: Record<string, unknown>) => { est.rpc.push([fn, args]); return est.resp ?? { data: { config: cfg(), nuevas: 1, actualizadas: 1, bases_version: 3 }, error: null }; },
+  rpc: async (fn: string, args: Record<string, unknown>) => { est.rpc.push([fn, args]); if (fn in est.respFn) return est.respFn[fn]; return est.resp ?? { data: { config: cfg(), nuevas: 1, actualizadas: 1, bases_version: 3 }, error: null }; },
   from: (t: string) => consulta(t),
 }) } });
 const acc = await import("../app/(dashboard)/dashboard/producto/hoteles/[id]/grupos-actions.ts");
 const hot = await import("../app/(dashboard)/dashboard/producto/hoteles/actions.ts");
-beforeEach(() => { est.rpc.length = 0; est.resp = null; est.llamadas.length = 0; est.programa = {}; est.revalida.length = 0; est.regen = 0; });
+beforeEach(() => { est.rpc.length = 0; est.resp = null; est.respFn = {}; est.llamadas.length = 0; est.programa = {}; est.revalida.length = 0; est.regen = 0; });
 
 describe("acción guardarCalculoGrupo: una RPC atómica, sin revalidar ni regenerar", () => {
   const filas = rev(decidirTodas(rev(), DECISIONES_VACIAS, "sin_venta")).filas;
@@ -305,19 +305,62 @@ describe("escritores de hotel_calculadora: condicionados a la versión leída, s
     assert.deepEqual(u.filtros, [["hotel_id", 5], ["version", 7]]);
     assert.equal("updated_at" in (u.datos as object) || "version" in (u.datos as object), false, "la versión y la fecha las pone el trigger");
   });
-  test("versión vieja ⇒ 0 filas: no se escribe nada más y se pide recargar", async () => {
+  test("versión vieja ⇒ 0 filas: no se escribe nada más, se devuelve la copia guardada (#124) y no se adivina un actor", async () => {
     est.programa["hotel_calculadora.update"] = { data: [], error: null };
-    const r = await hot.guardarCalculadora(5, "dubai", DUBAI, 7) as { ok: false; desactualizada?: true; error: string };
+    est.programa["hotel_calculadora.select"] = { data: { version: 9, tipo: "dubai", params: { regimen_base: "PAM" } }, error: null };
+    const r = await hot.guardarCalculadora(5, "dubai", DUBAI, 7) as { ok: false; desactualizada?: true; motivo?: string; actual?: { version: number; tipo: string }; error: string };
     assert.equal(r.desactualizada, true);
-    assert.match(r.error, /Recarga/);
-    assert.equal(est.llamadas.filter((l) => l.op !== "select").length, 1, "un solo intento");
+    assert.equal(r.motivo, "cambio");
+    assert.deepEqual([r.actual?.version, r.actual?.tipo], [9, "dubai"]);
+    assert.match(r.error, /No se guardó nada.*tenías la versión 7; la actual es la 9/);
+    assert.doesNotMatch(r.error, /otra persona|alguien/i);
+    assert.equal(est.llamadas.filter((l) => l.op !== "select").length, 1, "un solo intento de escritura");
+    assert.equal(est.llamadas.filter((l) => l.op === "select").length, 1, "una sola lectura por clave, solo al rechazar");
     assert.equal(est.revalida.length, 0);
   });
-  test("primera calculadora del hotel: insert; si otra persona la creó a la vez (23505), recargar", async () => {
+  test("0 filas con la MISMA versión y la base DEMUESTRA que la agencia/sesión no puede escribir el catálogo: sin_permiso", async () => {
+    est.programa["hotel_calculadora.update"] = { data: [], error: null };
+    est.programa["hotel_calculadora.select"] = { data: { version: 7, tipo: "dubai", params: {} }, error: null };
+    est.respFn = { puede_escribir_catalogo_global: { data: false, error: null }, mi_rol: { data: "operaciones", error: null } };
+    const r = await hot.guardarCalculadora(5, "dubai", DUBAI, 7) as { ok: false; desactualizada?: true; motivo?: string; error: string };
+    assert.equal(r.motivo, "sin_permiso");
+    assert.equal(r.desactualizada, undefined);
+    assert.match(r.error, /NO cambió.*La base confirma que tu sesión o la agencia activa/);
+  });
+  test("0 filas con la MISMA versión y la base demuestra que el ROL no puede: sin_permiso (con la causa del rol)", async () => {
+    est.programa["hotel_calculadora.update"] = { data: [], error: null };
+    est.programa["hotel_calculadora.select"] = { data: { version: 7, tipo: "dubai", params: {} }, error: null };
+    est.respFn = { puede_escribir_catalogo_global: { data: true, error: null }, mi_rol: { data: "venta", error: null } };
+    const r = await hot.guardarCalculadora(5, "dubai", DUBAI, 7) as { motivo?: string; error: string };
+    assert.equal(r.motivo, "sin_permiso"); assert.match(r.error, /tu rol no puede editar calculadoras/);
+  });
+  test("0 filas con la MISMA versión y NINGÚN permiso fallido demostrado: rechazo SIN diagnosticar (no se inventa una causa)", async () => {
+    est.programa["hotel_calculadora.update"] = { data: [], error: null };
+    est.programa["hotel_calculadora.select"] = { data: { version: 7, tipo: "dubai", params: {} }, error: null };
+    est.respFn = { puede_escribir_catalogo_global: { data: true, error: null }, mi_rol: { data: "operaciones", error: null } };
+    const r = await hot.guardarCalculadora(5, "dubai", DUBAI, 7) as { motivo?: string; desactualizada?: true; error: string };
+    assert.equal(r.motivo, "rechazo_sin_diagnostico"); assert.equal(r.desactualizada, undefined);
+    assert.match(r.error, /NO se pudo demostrar un problema de permisos.*sin diagnosticar/);
+    // Si las funciones de permiso fallan, tampoco se afirma un permiso perdido.
+    est.respFn = { puede_escribir_catalogo_global: { data: null, error: { message: "x" } }, mi_rol: { data: null, error: { message: "x" } } };
+    assert.equal(((await hot.guardarCalculadora(5, "dubai", DUBAI, 7)) as { motivo?: string }).motivo, "rechazo_sin_diagnostico");
+  });
+  test("0 filas y la lectura de diagnóstico falla: texto honesto, sin causa inventada", async () => {
+    est.programa["hotel_calculadora.update"] = { data: [], error: null };
+    est.programa["hotel_calculadora.select"] = { data: null, error: { message: "boom" } };
+    const r = await hot.guardarCalculadora(5, "dubai", DUBAI, 7) as { ok: false; motivo?: string; error: string };
+    assert.equal(r.motivo, "sin_diagnostico");
+    assert.match(r.error, /no se pudo comprobar el motivo/);
+  });
+  test("primera calculadora del hotel: insert; si otra sesión la creó a la vez (23505), se devuelve su copia", async () => {
     est.programa["hotel_calculadora.insert"] = { data: [{ version: 1 }], error: null };
     assert.deepEqual(await hot.guardarCalculadora(5, "mixta", MIXTA, null), { ok: true, version: 1 });
     est.programa["hotel_calculadora.insert"] = { data: null, error: { code: "23505", message: "duplicate" } };
-    assert.equal((await hot.guardarCalculadora(5, "mixta", MIXTA, null) as { desactualizada?: true }).desactualizada, true);
+    est.programa["hotel_calculadora.select"] = { data: { version: 1, tipo: "mixta", params: {} }, error: null };
+    const r = await hot.guardarCalculadora(5, "mixta", MIXTA, null) as { desactualizada?: true; motivo?: string; error: string };
+    assert.equal(r.desactualizada, true);
+    assert.equal(r.motivo, "cambio");
+    assert.match(r.error, /no había calculadora guardada/);
   });
   test("renombrar una vigencia: la cascada a la calculadora va condicionada a la versión y avisa si no pudo", async () => {
     est.programa["hotel_temporadas.select"] = { data: { nombre: "ALTA", hotel_id: 5, fecha_inicio: "2027-01-01", fecha_fin: "2027-01-31", rangos: [], blackouts: [], compra_inicio: null, compra_fin: null }, error: null };

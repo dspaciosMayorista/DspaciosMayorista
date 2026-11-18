@@ -77,12 +77,13 @@ describe("destinos_extra: cada id debe existir (validación en la base)", () => 
 
 describe("CRM del titular según el canal (hallazgo de la verificación en local)", () => {
   const src = sinComentarios(leer("app/(dashboard)/dashboard/cotizaciones/din-actions.ts"));
-  test("el visitante va al contacto de CRM del checkout (el registro de personas rechaza anónimos que no sean carrito)", () => {
+  test("el visitante conserva además el contacto auxiliar de campañas del checkout (crm_contactos)", () => {
     assert.match(src, /canal === "publico"[\s\S]{0,400}from\("crm_contactos"\)\.insert\(/);
     assert.match(src, /tenant: "mayorista"/);
   });
-  test("con sesión (B2B o personal) sigue el registro de personas", () => {
-    assert.match(src, /else \{\s*alta = await altaPersonasCotizacion\(/);
+  test("#1: TODOS los canales (visitante, aliado B2B y personal) entran al registro de personas; el visitante como anónimo de un paquete dinámico (migración 308)", () => {
+    assert.doesNotMatch(src, /else \{\s*alta = await altaPersonasCotizacion\(/, "el alta ya no es exclusiva de quien tiene sesión");
+    assert.match(src, /const alta = await altaPersonasCotizacion\(admin, \{[\s\S]{0,260}paquete_din_id: p\.id/);
   });
 });
 

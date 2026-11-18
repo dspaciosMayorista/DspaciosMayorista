@@ -3,7 +3,7 @@ import { formatMoneda } from "@/lib/utils";
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
 import type { Composicion, ComposicionCotizacion } from "@/lib/cotizacion/composicionPrecio";
 
-const ROTULO_ADICIONAL = { servicio_opcional: "Servicio opcional", servicio_grupo: "Servicio incluido por grupo", mascota: "Mascota", ajuste_redondeo: "Ajuste de redondeo" } as const;
+const ROTULO_ADICIONAL = { servicio_opcional: "Servicio opcional", servicio_grupo: "Servicio incluido por grupo", mascota: "Mascota", ajuste_redondeo: "Ajuste de redondeo", nino_gratis: "Niño gratis por habitación" } as const;
 
 function Hotel({ nombre, c, totalCotizacion }: { nombre: string | null; c: Composicion; totalCotizacion: number | null }) {
   const m = c.moneda;

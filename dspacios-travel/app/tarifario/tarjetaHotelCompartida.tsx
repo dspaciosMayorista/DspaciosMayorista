@@ -21,7 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import Image from "next/image";
+import { ImagenCatalogo } from "@/components/ImagenCatalogo";
 import { Popover } from "@base-ui/react/popover";
 import { Check, ChevronDown, ChevronRight, Circle, CircleCheck, Info, Star, X } from "lucide-react";
 import { formatMoneda } from "@/lib/utils";
@@ -451,11 +451,7 @@ export function ReceptivoModal({ receptivo, onClose, seleccion }: {
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={receptivo.nombre} className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl bg-white sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="relative aspect-[16/9] w-full bg-gray-100">
-          {receptivo.foto ? (
-            <Image src={receptivo.foto} alt={receptivo.nombre} fill sizes="500px" className="object-cover" unoptimized />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-          )}
+          <ImagenCatalogo src={receptivo.foto} alt={receptivo.nombre} prioridad />
           <button type="button" onClick={onClose} className="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-white/90 px-3 py-1 text-sm font-medium text-gray-700 shadow">
             Cerrar <X size={14} aria-hidden />
           </button>

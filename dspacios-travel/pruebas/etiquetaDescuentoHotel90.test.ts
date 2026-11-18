@@ -70,7 +70,9 @@ describe("dónde se muestra", () => {
     assert.ok(c.includes("<EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : r.descuentoHotel} />"), "tras revalidar, la etiqueta es la de la revalidación (par con el precio nuevo)");
     assert.ok(c.indexOf("<EtiquetasHotel adultsOnly") < c.indexOf("<EtiquetaDescuentoHotel descuento={tarifaHotel"), "va con las demás etiquetas del hotel");
     // Entrega 5: la etiqueta de la búsqueda sale de descuentoMostrado (por acomodación de la composición consultada si difiere).
-    assert.ok(leer("lib/reservar/cotizar.ts").includes("descuento: descuentoMostrado(res.descuentoHotel, combo.descuentoPorAcom,"));
+    // #102 (integración con main): la evaluación por combo vive en el motor compartido; cotizar.ts solo toma el descuento del mejor combo.
+    assert.ok(leer("lib/reservar/composicionHotelBusqueda.ts").includes("descuento: descuentoMostrado(e.res.descuentoHotel, combo.descuentoPorAcom,"));
+    assert.ok(leer("lib/reservar/cotizar.ts").includes("descuentoHotel: mejor.descuento ?? null"));
   });
   test("el documento de la cotización NO lleva la etiqueta", () => {
     for (const f of ["components/contrato/ContratoDocumento.tsx", "lib/reservar/hotelSnapPersona.ts", "app/(dashboard)/dashboard/reservar/actions.ts"]) assert.doesNotMatch(leer(f), /descuento_hotel/, f);

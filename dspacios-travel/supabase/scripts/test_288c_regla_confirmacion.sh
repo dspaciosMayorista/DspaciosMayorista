@@ -1,6 +1,8 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────
-# PRUEBAS de la migración 288 — PARTE 3: UNA sola regla del mínimo para CONFIRMAR por pago (condición congelada; NETO aliado = total NETO; legacy 30 % solo históricos sin condiciones).
+# PRUEBAS de la migración 288 — PARTE 3: UNA sola regla del mínimo para CONFIRMAR por pago (condición congelada; legacy 30 % sin condiciones).
+# #53 (migración 307): NETO y PVP se resuelven IGUAL — la rama «NETO = total» de la 288 se retiró y los casos NETO de abajo (secciones 5 y 8) esperan la paridad.
+# Con la 307 aplicada esta prueba es la regresión de la regla; sin ella, los casos NETO fallan A PROPÓSITO (documentan la regla anterior).
 # Uso:  bash supabase/scripts/test_288c_regla_confirmacion.sh <contenedor> <base>
 #   · <base>: Postgres local DESECHABLE con 281, 283, 284, 285, 287 y 288 aplicadas. NUNCA contra producción.
 # Los casos usan contratos pendientes con condiciones congeladas (contrato_condiciones) y abonos por registrar_abono (como el servidor, service_role).
@@ -63,15 +65,13 @@ expect "1.000.000 COP = 250 USD < 300: pendiente" "$(estado $N4)" '^pendiente$'
 abono "$N4" 200000 1 >/dev/null
 expect "1.200.000 COP = 300 USD: confirma" "$(estado $N4)" '^confirmado$'
 
-echo "=== 5) NETO aliado: el mínimo para confirmar es el TOTAL NETO exigible (aunque la condición congelada pida menos)"
+echo "=== 5) NETO aliado: MISMA resolución que PVP (#53): la condición congelada manda, no el total NETO"
 N5="DTM-5$B"; mkc "$N5" COP 900000 "comision_estado='descontada', comision_b2b=100000"; cond "$N5" 300000 COP 1
-expect "regla neto_total con mínimo = total NETO (900.000)" "$(regla $N5)" '^neto_total\|900000\|COP'
-abono "$N5" 300000 1 >/dev/null
-expect "pagar la condición (300.000) NO alcanza en NETO" "$(estado $N5)" '^pendiente$'
-abono "$N5" 500000 1 >/dev/null
-expect "800.000: aún pendiente" "$(estado $N5)" '^pendiente$'
+expect "regla condicion_congelada con mínimo = condición (300.000), igual que PVP" "$(regla $N5)" '^condicion_congelada\|300000\|COP'
+abono "$N5" 200000 1 >/dev/null
+expect "200.000 (< condición): pendiente" "$(estado $N5)" '^pendiente$'
 abono "$N5" 100000 1 >/dev/null
-expect "900.000 (total NETO): confirma" "$(estado $N5)" '^confirmado$'
+expect "300.000 (la condición): confirma en NETO igual que en PVP" "$(estado $N5)" '^confirmado$'
 
 echo "=== 6) Histórico SIN condiciones congeladas: único caso del 30 % (legacy), identificado"
 N6="DTM-4$B"; mkc "$N6" COP 1000000
@@ -89,12 +89,12 @@ expect "confirmar_tras_conversion no confirma sin pagos" "$(QS "select public.co
 abono "$N7" 1000 1 >/dev/null
 expect "cualquier pago positivo cumple una condición de 0 → confirma" "$(estado $N7)" '^confirmado$'
 
-echo "=== 8) Mínimo para CONVERTIR ≠ mínimo para CONFIRMAR (identificados): en NETO el de convertir es la condición y el de confirmar el total"
+echo "=== 8) Mínimo para CONVERTIR = mínimo para CONFIRMAR en NETO (#53): ambos son la condición congelada"
 N8="DTM-2$B"; mkc "$N8" COP 900000 "comision_estado='descontada', comision_b2b=100000"; cond "$N8" 300000 COP 1
 Q "insert into public.abonos(numero_contrato,tenant,valor_abono,monto_cop,trm,fecha_abono,forma_pago) values ('$N8','mayorista',300000,300000,1,current_date,'efectivo')" >/dev/null
 RC=$(QS "select public.confirmar_tras_conversion('$N8','$SU'::uuid)")
-expect "con 300.000 (lo exigido para CONVERTIR) el contrato NETO queda PENDIENTE: confirmar exige el total" "$RC|$(estado $N8)" '"confirmada": false.*\|pendiente$'
-expect "…y la respuesta identifica la regla vigente" "$RC" '"regla": "neto_total"'
+expect "con 300.000 (lo exigido para CONVERTIR) el contrato NETO se confirma: misma condición" "$RC|$(estado $N8)" '"confirmada": true.*\|confirmado$'
+expect "…y la respuesta identifica la regla vigente" "$RC" '"regla": "condicion_congelada"'
 
 echo "=== 9) Conversión REAL con pago previo en USD: el abono queda en USD (no en pesos), la TRM del pago se conserva y la regla compara en la moneda congelada"
 CID=$((990000+RANDOM%9000))

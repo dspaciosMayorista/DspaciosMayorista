@@ -128,7 +128,8 @@ describe("cableado: los cargadores pasan el vínculo de promociones y la acomoda
     assert.match(leer("app/(dashboard)/dashboard/paquetes/actions.ts"), /sb\.from\("tarifa_hotel"\)\.select\("\*"\)/);
   });
   test("la calculadora Mixta no deriva filas de una promoción con reglas (no tiene filas propias)", () => {
-    assert.match(leer("lib/calc/calculadoras.ts"), /=== "descuento_pct" && v\.promo_base_id == null\)/);
-    assert.match(leer("lib/hoteles/contextoGeneracionTarifas.ts"), /hotel_temporada_grupos\(id, dias, activo\), promo_base_id"\)/);
+    // #125: tampoco las que siguen la base ganadora (se calculan por noche en el motor).
+    assert.match(leer("lib/calc/calculadoras.ts"), /=== "descuento_pct" && v\.promo_base_id == null && !v\.promo_sigue_base\)/);
+    assert.match(leer("lib/hoteles/contextoGeneracionTarifas.ts"), /hotel_temporada_grupos\(id, dias, activo\), promo_base_id, promo_sigue_base"\)/);
   });
 });

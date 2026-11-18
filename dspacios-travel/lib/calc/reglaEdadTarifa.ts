@@ -9,8 +9,10 @@
 // Cadena de resolución (orden fijo, nunca al revés):
 //   override de la fila `tarifa_hotel` (4 columnas nuevas, migración 177,
 //   propuesta y NO aplicada aún — ver el informe de la ronda anterior)
-//     ?? regla general de `hoteles` (edad_infante_min/max, edad_nino_min/max)
-//     ?? defaults históricos (infanteMin=0, infanteMax=2, ninoMin=3, ninoMax=10)
+//     ?? regla general de `hoteles` (edad_infante_max, edad_nino_max) — OBLIGATORIA si hay menores
+//   O3 (2026-11-17): ya NO hay defaults inventados. La configuración de edades del hotel es obligatoria para todo hotel que acepta menores;
+//   si falta o es inválida, cotizar/reservar CON menores falla con un motivo accionable (`validarEdadesGeneralesHotel`) y un override de una
+//   tarifa NO la reemplaza en silencio. Sin menores en la consulta la regla es irrelevante (`REGLA_SIN_MENORES`, nunca se aplica).
 //
 // El override de la fila es "todo o nada": las 4 columnas son NULL (sin
 // override → sigue la cadena) o las 4 tienen valor (override completo) — el
@@ -64,7 +66,64 @@ export type ReglaEdadGeneralParcial = {
  * forma compatible (nunca se leían antes; `ninoMin` nace de `infanteMax+1`,
  * no de un número fijo, para no dejar un hueco/solape con el default de
  * infante). */
+/** SOLO punto de partida visual del editor de «edades propias» de una tarifa/promoción cuando una persona decide activarlas (CalculadoraEditor). NUNCA se usa
+ * para resolver ni cobrar: la regla del hotel es obligatoria (O3). */
 export const REGLA_EDAD_DEFAULT: ReglaEdadTarifa = { infanteMin: 0, infanteMax: 2, ninoMin: 3, ninoMax: 10 };
+
+/** Marcador para consultas SIN menores: la regla no clasifica a nadie (clasificar cero menores no consulta umbrales). No es un dato del hotel. */
+export const REGLA_SIN_MENORES: ReglaEdadTarifa = { infanteMin: 0, infanteMax: 0, ninoMin: 0, ninoMax: 0 };
+
+/** Campos obligatorios de la configuración de edades de un hotel que acepta menores (el mínimo de infante es siempre 0 y el de niño, infante+1). */
+export const CAMPOS_EDAD_HOTEL = [
+  { col: "edad_infante_max", etiqueta: "Infante hasta (edad)" },
+  { col: "edad_nino_max", etiqueta: "Niño hasta (edad)" },
+] as const;
+
+export type ValidacionEdadesHotel =
+  | { ok: true; regla: ReglaEdadTarifa }
+  | { ok: false; faltantes: string[]; invalidos: string[]; error: string };
+
+/** Mensaje accionable (se muestra tal cual al personal y al visitante; no expone datos internos). */
+export function mensajeEdadesHotel(nombreHotel: string | null | undefined, faltantes: readonly string[], invalidos: readonly string[]): string {
+  const quien = nombreHotel && nombreHotel.trim() ? `El hotel «${nombreHotel.trim()}»` : "Este hotel";
+  const detalle = [
+    faltantes.length ? `falta: ${faltantes.map((x) => `«${x}»`).join(", ")}` : "",
+    invalidos.length ? `valor no válido: ${invalidos.join("; ")}` : "",
+  ].filter(Boolean).join(" · ");
+  return `${quien} no tiene completa la configuración de edades de infantes y niños (${detalle}), por eso no se puede cotizar ni reservar con menores. ` +
+    "Producto debe completarla en Producto → Hoteles → Configuración del hotel (campos «Infante hasta» y «Niño hasta»); mientras tanto se puede cotizar solo con adultos.";
+}
+
+/** Mensaje al GUARDAR/PUBLICAR un hotel que acepta menores: indica exactamente qué falta o es inválido y cómo salir (completarlo o marcar el hotel como Adults Only). */
+export function mensajeEdadesAlGuardar(faltantes: readonly string[], invalidos: readonly string[]): string {
+  const detalle = [
+    faltantes.length ? `falta: ${faltantes.map((x) => `«${x}»`).join(", ")}` : "",
+    invalidos.length ? `valor no válido: ${invalidos.join("; ")}` : "",
+  ].filter(Boolean).join(" · ");
+  return `Completa la configuración de edades del hotel antes de guardarlo (${detalle}). Todo hotel que acepta menores necesita «Infante hasta» y «Niño hasta» (enteros, infante menor que niño, máximo 17). Si no admite menores, márcalo como Adults Only.`;
+}
+
+/**
+ * Valida la configuración GENERAL de edades de un hotel (obligatoria si acepta menores): `edad_infante_max` y `edad_nino_max` enteros, 0 <= infante < niño <= 17.
+ * No inventa nada: si falta o es inválida devuelve el motivo. `ok` devuelve la regla completa derivada (infanteMin 0, ninoMin infante+1).
+ */
+export function validarEdadesGeneralesHotel(general: ReglaEdadGeneralParcial, nombreHotel?: string | null): ValidacionEdadesHotel {
+  const inf = general?.infanteMax ?? null;
+  const nino = general?.ninoMax ?? null;
+  const faltantes: string[] = [];
+  const invalidos: string[] = [];
+  const revisar = (v: number | null, etiqueta: string) => {
+    if (v == null) faltantes.push(etiqueta);
+    else if (!Number.isInteger(v) || v < 0 || v > 17) invalidos.push(`«${etiqueta}» = ${v} (debe ser un entero entre 0 y 17)`);
+  };
+  revisar(inf, CAMPOS_EDAD_HOTEL[0].etiqueta);
+  revisar(nino, CAMPOS_EDAD_HOTEL[1].etiqueta);
+  if (!faltantes.length && !invalidos.length && !((inf as number) < (nino as number))) {
+    invalidos.push(`«Infante hasta» (${inf}) debe ser menor que «Niño hasta» (${nino})`);
+  }
+  if (faltantes.length || invalidos.length) return { ok: false, faltantes, invalidos, error: mensajeEdadesHotel(nombreHotel, faltantes, invalidos) };
+  return { ok: true, regla: construirReglaEdadDesdeMaximos(inf as number, nino as number) };
+}
 
 /**
  * Construye una regla de edad COMPLETA a partir de los ÚNICOS dos grados de
@@ -80,25 +139,13 @@ export function construirReglaEdadDesdeMaximos(infanteMax: number, ninoMax: numb
   return { infanteMin: 0, infanteMax, ninoMin: infanteMax + 1, ninoMax };
 }
 
-/** Normaliza la regla GENERAL de `hoteles` (posiblemente parcial) a una
- * regla completa, aplicando los defaults históricos campo a campo — nunca
- * un objeto totalmente reemplazado por el default si solo faltaba un campo. */
-export function normalizarReglaEdadGeneral(general: ReglaEdadGeneralParcial): ReglaEdadTarifa {
-  const infanteMin = general?.infanteMin ?? REGLA_EDAD_DEFAULT.infanteMin;
-  const infanteMax = general?.infanteMax ?? REGLA_EDAD_DEFAULT.infanteMax;
-  const ninoMin = general?.ninoMin ?? infanteMax + 1;
-  const ninoMax = general?.ninoMax ?? REGLA_EDAD_DEFAULT.ninoMax;
-  return { infanteMin, infanteMax, ninoMin, ninoMax };
-}
-
-/** Resuelve la regla EFECTIVA de una sola fila: override de la fila si
- * existe (completo, nunca parcial), si no la regla general normalizada. */
+/** Resuelve la regla EFECTIVA de una sola fila: override de la fila si existe (completo, nunca parcial); si no, la regla general del hotel YA validada
+ * (`validarEdadesGeneralesHotel`) — nunca un valor inventado. */
 export function resolverReglaEdadEfectiva(
   overrideFila: ReglaEdadOverrideFila,
-  general: ReglaEdadGeneralParcial
+  generalValidada: ReglaEdadTarifa
 ): ReglaEdadTarifa {
-  if (overrideFila) return overrideFila;
-  return normalizarReglaEdadGeneral(general);
+  return overrideFila ?? generalValidada;
 }
 
 /** Compara dos reglas YA RESUELTAS — nunca overrides crudos. */
@@ -139,7 +186,11 @@ export type FilaConTemporadaParaEdad = { temporada: string; overrideFila: ReglaE
 
 export type ResultadoReglaEdadEstadia =
   | { ok: true; regla: ReglaEdadTarifa }
-  | { ok: false; error: string; temporadas: string[] };
+  | { ok: false; error: string; temporadas: string[]; codigo?: "edades_hotel_incompletas"; faltantes?: string[]; invalidos?: string[] };
+
+function falloEdadesHotel(g: Extract<ValidacionEdadesHotel, { ok: false }>): Extract<ResultadoReglaEdadEstadia, { ok: false }> {
+  return { ok: false, temporadas: [], error: g.error, codigo: "edades_hotel_incompletas", faltantes: g.faltantes, invalidos: g.invalidos };
+}
 
 /**
  * Resuelve la regla de edad de una estadía completa a partir de TODAS las
@@ -153,8 +204,11 @@ export function resolverReglaEdadEstadia(
   filas: FilaConTemporadaParaEdad[],
   general: ReglaEdadGeneralParcial
 ): ResultadoReglaEdadEstadia {
-  if (filas.length === 0) return { ok: true, regla: normalizarReglaEdadGeneral(general) };
-  const resueltas = filas.map((f) => ({ temporada: f.temporada, regla: resolverReglaEdadEfectiva(f.overrideFila, general) }));
+  // La configuración del hotel es obligatoria aunque una tarifa traiga override: el override no se usa para inventar la del hotel.
+  const g = validarEdadesGeneralesHotel(general);
+  if (!g.ok) return falloEdadesHotel(g);
+  if (filas.length === 0) return { ok: true, regla: g.regla };
+  const resueltas = filas.map((f) => ({ temporada: f.temporada, regla: resolverReglaEdadEfectiva(f.overrideFila, g.regla) }));
   const primera = resueltas[0].regla;
   const hayDistinta = resueltas.some((r) => !reglasEdadIguales(r.regla, primera));
   if (hayDistinta) {
@@ -210,7 +264,7 @@ export type FilaTarifaHotelEdadCruda = {
  *  - las reglas efectivas de las distintas temporadas usadas no coinciden
  *    entre sí (delega en `resolverReglaEdadEstadia`).
  *
- * El fallback general (`normalizarReglaEdadGeneral`) SOLO se aplica cuando
+ * El fallback general (la regla VALIDADA del hotel, nunca un valor inventado) SOLO se aplica cuando
  * `temporadasUsadas` está vacío, o cuando la fila usada existe (única) y sus
  * 4 columnas de override son NULL.
  */
@@ -222,7 +276,9 @@ export function resolverReglaEdadEstadiaSegura(args: {
   general: ReglaEdadGeneralParcial;
 }): ResultadoReglaEdadEstadia {
   const temporadas = [...new Set(args.temporadasUsadas)];
-  if (temporadas.length === 0) return { ok: true, regla: normalizarReglaEdadGeneral(args.general) };
+  const g = validarEdadesGeneralesHotel(args.general);
+  if (!g.ok) return falloEdadesHotel(g);
+  if (temporadas.length === 0) return { ok: true, regla: g.regla };
 
   const filasEdad: FilaConTemporadaParaEdad[] = [];
   for (const temp of temporadas) {

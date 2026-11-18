@@ -289,7 +289,17 @@ describe("P65-4 · contratos propios, participación y documentos", () => {
     assert.equal(c.historicoIncompleto, false); assert.equal(c.participacionCompleta, true);
     // Los abonos y vouchers que se leen son SOLO de contratos propios.
     assert.ok(c.abonos.every((a) => ["DTM-6501", "DTM-6502"].includes(a.numero_contrato)));
-    assert.deepEqual(c.vouchers.map((v) => v.numero_contrato), ["DTM-6501"]);
+    // #53 (307): DTM-6501 tiene voucher pero NO está 100 % pagado → no se enlaza (queda retenido); al completar el pago aparece y si el saldo vuelve a subir se retira, sin borrar el voucher.
+    assert.deepEqual(c.vouchers.map((v) => v.numero_contrato), []);
+    assert.deepEqual([...c.vouchersRetenidos], ["DTM-6501"]);
+    sql(`insert into public.abonos (numero_contrato, valor_abono, forma_pago, tenant) select numero_contrato, precio_venta - 400000, 'Transferencia', 'mayorista' from public.ventas where numero_contrato = 'DTM-6501'`);
+    const pagado = await srv.cargarConjuntoPortal(await ctxDe(U.A), { abonos: true, vouchers: true });
+    assert.deepEqual(pagado.vouchers.map((v) => v.numero_contrato), ["DTM-6501"]);
+    assert.equal(pagado.vouchersRetenidos.size, 0);
+    sql(`delete from public.abonos where id = (select max(id) from public.abonos where numero_contrato = 'DTM-6501')`);
+    const revertido = await srv.cargarConjuntoPortal(await ctxDe(U.A), { abonos: true, vouchers: true });
+    assert.deepEqual(revertido.vouchers.map((v) => v.numero_contrato), []);
+    assert.equal(sql("select count(*) from public.vouchers where numero_contrato = 'DTM-6501'"), "1", "el voucher NO se borra");
   });
   test("B es dueño de lo compartido; A solo participa. C ve solo lo suyo", async () => {
     const b = await srv.cargarConjuntoPortal(await ctxDe(U.B), { abonos: true });
@@ -327,7 +337,9 @@ describe("P65-4 · contratos propios, participación y documentos", () => {
     const d = await pagina(PaginaDocumentos, U.A);
     for (const n of ["DTM-6501", "DTM-6502", "65-A-MIN"]) assert.match(d.texto, new RegExp(n));
     assert.doesNotMatch(d.texto, /DTM-6504|65-A-HIST|DTM-6506|DTM-6509/);
-    assert.ok(d.html.includes(`/voucher/${TOKENS["V:DTM-6501"]}`), "voucher propio enlazado");
+    // #53 (307): DTM-6501 (saldo pendiente) tiene voucher preparado pero el aliado NO recibe el enlace; se le dice cuándo estará disponible.
+    assert.ok(!d.html.includes(`/voucher/${TOKENS["V:DTM-6501"]}`), "voucher sin pago completo: NO se enlaza");
+    assert.match(d.texto, /Disponible cuando el contrato esté 100 % pagado/);
     assert.ok(d.html.includes(`/c/${TOKENS["DTM-6501"]}`), "contrato propio enlazado");
     assert.ok(d.html.includes(`/recibo/${ABONO["DTM-6501"]}`) && d.html.includes(`/estado-cuenta/DTM-6501`));
     for (const ajeno of [TOKENS["V:DTM-6504"], TOKENS["V:DTM-6506"], TOKENS["DTM-6504"], TOKENS["DTM-6506"], String(ABONO["DTM-6504"]) === "undefined" ? "x" : `/recibo/${ABONO["DTM-6504"]}"`]) {

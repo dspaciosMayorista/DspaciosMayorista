@@ -48,6 +48,7 @@ const NAV: NavItem[] = [
     modulo: "contratos",
     children: [{ href: "/dashboard/contratos/nuevo", label: "Nuevo contrato" }],
   },
+  { href: "/dashboard/gestion-contratos", label: "Gestión de contratos", iconKey: "gestion", modulo: "gestion_contratos", rolesPermitidos: ["superadmin"] },
   // Importador de histórico — SOLO visible en la agencia Minorista (ítem propio y
   // visible, no enterrado como sub-ítem, para encontrarlo fácil al probar).
   { href: "/dashboard/contratos/importar", label: "Importar histórico", iconKey: "importar", soloMinorista: true, rolesPermitidos: ["superadmin", "administracion"] },

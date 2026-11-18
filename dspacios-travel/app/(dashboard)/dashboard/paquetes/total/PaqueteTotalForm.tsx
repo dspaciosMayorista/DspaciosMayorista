@@ -11,7 +11,6 @@ import { ajenosAlPrincipal, iataDeDestino, paisComparable, seguirDestinoPrincipa
 import { ComboHotel } from "@/components/ComboHotel";
 import { VueloFilaDin } from "./VueloFilaDin";
 import { ServicioFilaDin } from "./ServicioFilaDin";
-import { EDADES_MANUAL_POR_DEFECTO } from "@/lib/paqueteDinamico/menores";
 import { guardarPaqueteTotal } from "./actions";
 import { ACOMS_SOLO_ADULTOS, GridAcom, lbl, sel } from "./editorUi";
 import { HotelFilaDin } from "./HotelFilaDin";
@@ -85,12 +84,12 @@ export function PaqueteTotalForm({ inicial, destinos, hoteles, servicios, empaqu
     setE((x) => ({ ...x, [k]: (x[k] as object[]).map((r, j) => (j === i ? { ...r, ...p } : r)) }) as EntradaPaqueteTotal);
   const del = (k: "vuelos" | "hoteles" | "servicios", i: number) => setE((x) => ({ ...x, [k]: (x[k] as object[]).filter((_, j) => j !== i) }) as EntradaPaqueteTotal);
 
-  // Hotel con ficha: categoría y plan salen de lo configurado en su ficha (si solo hay uno, ya viene elegido). Manual: edades por defecto del sistema; la capacidad de niños se pide.
+  // Hotel con ficha: categoría y plan salen de lo configurado en su ficha (si solo hay uno, ya viene elegido). Manual: las edades de infante y niño y la capacidad de niños se piden (obligatorias, sin valores por defecto).
   const nuevoHotel = (h?: HotelOpt): EntradaHotel => ({
     hotelId: h?.id ?? null, nombre: h?.nombre ?? "", categoria: h && h.categorias.length === 1 ? h.categorias[0] : "", regimen: h && h.regimenes.length === 1 ? h.regimenes[0] : "",
     descripcion: h?.descripcionFicha ?? "", fotoUrl: "", proveedor: "", estrellas: h?.estrellas ?? null, ubicacion: h?.ubicacionFicha ?? "", neto: {}, pvp: {}, pvpGeneral: null,
     adultsOnly: h?.adultsOnly === true,
-    capacidadNinos: null, edadInfanteMax: h ? null : EDADES_MANUAL_POR_DEFECTO.infanteMax, edadNinoMax: h ? null : EDADES_MANUAL_POR_DEFECTO.ninoMax,
+    capacidadNinos: null, edadInfanteMax: null, edadNinoMax: null,
   });
   const nuevoVuelo = (x?: EmpaquetadoOpt): EntradaVuelo => ({
     empaquetadoId: x?.id ?? null, destinoId: e.multidestino ? (x?.destino_id ?? e.destinoId) : e.destinoId, aerolinea: x?.aerolinea ?? "", ruta: x?.ruta ?? "", origenIata: "", destinoIata: x ? "" : iataDeDestino(destinos, e.destinoId), fechaIda: x?.fecha_ida ?? "", fechaRegreso: x?.fecha_regreso ?? "",

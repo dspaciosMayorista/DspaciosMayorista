@@ -27,6 +27,9 @@ import { Eye } from "lucide-react";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import CondicionesContratoPanel from "@/components/contrato/CondicionesContratoPanel";
+import { cargarAcuerdoMinimo } from "@/lib/contrato/acuerdoMinimo";
+import { contratosPagadosCompletos } from "@/lib/voucher/pagoCompleto";
+import { MinimoConfirmacionPanel, type DetalleMinimo } from "./MinimoConfirmacionPanel";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
 import { SoportesPagoInterno, type SoporteInterno } from "./SoportesPagoInterno";
@@ -37,10 +40,14 @@ export const dynamic = "force-dynamic";
 
 export default async function ContratoDetallePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ numero: string }>;
+  searchParams?: Promise<{ tab?: string }>;
 }) {
   const { numero: raw } = await params;
+  // #106: enlaces directos desde Gestión de contratos (?tab=cartera|comisiones|facturacion…). GestionTabs lo valida contra sus pestañas visibles.
+  const tabInicial = (await searchParams)?.tab;
   const numero = decodeURIComponent(raw);
   const sb = await createClient();
 
@@ -197,6 +204,7 @@ export default async function ContratoDetallePage({
   // Las previstas llevan costos: solo las ve quien ya ve finanzas. Antes de aplicar la 288 estas lecturas no devuelven nada y la ficha queda como siempre.
   let previstas: ObligacionPrevista[] = [];
   let confirmacionPendiente = false;
+  let detalleMinimo: DetalleMinimo | null = null;
   if (venta.estado === "pendiente" && verFinanzas) {
     if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const { data: pv } = await createAdminClient().from("contrato_obligaciones_previstas").select("clave, payload").eq("numero_contrato", numero).eq("clase", "cxp").is("materializada_en", null).order("id");
@@ -207,6 +215,14 @@ export default async function ContratoDetallePage({
     }
     const { data: ec } = await sb.rpc("estado_confirmacion_pago", { p_numero: numero });
     confirmacionPendiente = (ec as { confirmacion_pendiente?: boolean } | null)?.confirmacion_pendiente === true;
+    // #53 (307): el mínimo vigente (regla, importe, pagado) lo calcula la base con la MISMA regla que confirma; sin detalle (RLS o base sin la 307) no se pinta el panel.
+    const d = (ec as { detalle?: { regla?: string; minimo?: number | string; moneda?: string; pagado?: number | string; alcanza?: boolean; acuerdo_tipo?: string } } | null)?.detalle;
+    if (d && (d.regla === "acuerdo" || d.regla === "condicion_congelada" || d.regla === "legacy_pct")) {
+      detalleMinimo = {
+        regla: d.regla, minimo: Number(d.minimo) || 0, moneda: d.moneda === "USD" ? "USD" : "COP", pagado: Number(d.pagado) || 0, alcanza: d.alcanza === true,
+        acuerdoTipo: d.acuerdo_tipo === "total" || d.acuerdo_tipo === "porcentaje" || d.acuerdo_tipo === "importe" ? d.acuerdo_tipo : null,
+      };
+    }
   }
 
   // Datos financieros del contrato (costos, impuesto). Solo existen si quien
@@ -269,6 +285,9 @@ export default async function ContratoDetallePage({
   // congelado al contratar (la oferta, el precio de venta y los costos no cambian).
   const cobro = cobroDeVenta(venta);
   const saldo = Math.max(cobro.total - totalPagado, 0);
+  // #53 (307): ¿el aliado ya puede abrir los vouchers? Criterio único de la base (moneda de cobro y tolerancia); solo se consulta si hay vouchers. null = no verificable.
+  const pagadosVoucher = (vouchers ?? []).length > 0 ? await contratosPagadosCompletos([numero]) : null;
+  const pagoCompletoVoucher: boolean | null = pagadosVoucher ? pagadosVoucher.has(numero) : null;
   const notaCobro = cobro.convertido
     ? `Oferta en ${cobro.monedaOferta}: ${formatMoneda(cobro.precioOferta, cobro.monedaOferta)}. Se cobra en ${cobro.moneda}: ${formatMoneda(cobro.total, cobro.moneda)}, convertido una sola vez con TRM ${cobro.trm} al contratar; no cambia.`
     : null;
@@ -276,13 +295,12 @@ export default async function ContratoDetallePage({
   // Condiciones PERMANENTES del contrato — mismo resolver que usa el PDF
   // (ContratoDocumento.tsx), así que lo que ve el asesor aquí es exactamente
   // lo que trae el documento descargable.
-  // Parte 3 (#75): ¿contrato NETO de aliado? La vista básica no trae comision_estado; la base responde solo un booleano (y solo de contratos que quien llama puede ver).
-  const { data: esNetoRpc } = await sb.rpc("contrato_es_neto", { p_numero: numero });
-  const esNetoContrato = esNetoRpc === true;
+  // #53 (307): el mínimo vigente lo fija el acuerdo de superadmin (si hay); NETO y PVP se resuelven igual. Lectura de servidor, ya autorizado el contrato.
+  const acuerdoMinimo = await cargarAcuerdoMinimo(numero);
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida, netoTotalExigible: esNetoContrato ? cobro.total : null },
+    { monedaContrato: cobro.moneda, precioVenta: cobro.total, fechaViaje: venta.fecha_salida, acuerdo: acuerdoMinimo.estado === "acuerdo" ? acuerdoMinimo.acuerdo : null, minimoNoVerificable: acuerdoMinimo.estado === "error" },
   );
 
   // Formulario de excepción por fila restringida, YA ARMADO aquí (Server
@@ -401,6 +419,8 @@ export default async function ContratoDetallePage({
         </div>
       )}
 
+      {detalleMinimo && <MinimoConfirmacionPanel numero={venta.numero_contrato} identidad={identidad} detalle={detalleMinimo} puedeEditar={esSuperadmin} />}
+
       <CondicionesContratoPanel
         resuelto={condicionesResueltas}
         puedeAutorizarExcepcion={esSuperadmin}
@@ -476,6 +496,7 @@ export default async function ContratoDetallePage({
 
       {/* Flujo de la venta */}
       <GestionTabs
+        tabInicial={tabInicial}
         identidad={identidad}
         numero={numero}
         precioVenta={venta.precio_venta}
@@ -530,11 +551,13 @@ export default async function ContratoDetallePage({
         puedeEditar={puedeEditar}
       />
 
+      <div id="vouchers" />
       <VouchersPanel
         identidad={identidad}
         numero={numero}
         vouchers={(vouchers ?? []) as unknown as VoucherRow[]}
-        puedeGenerar={(esSuperadmin || saldo <= 0) && puedeEditar}
+        puedeGenerar={puedeEditar}
+        pagoCompleto={pagoCompletoVoucher}
         destinos={destinos ?? []}
         puedeEditar={puedeEditar}
       />

@@ -16,6 +16,8 @@ export type FilaResumen = {
   tarifaNino: number;
   /** Suma de los subtotales de los grupos de la fila (centavos). */
   total: number;
+  /** Solo presentación: los menores de la fila son niños (no infantes) cuyo alojamiento no cuesta nada → el documento los rotula «Niño gratis». */
+  ninoGratis?: boolean;
 };
 
 const firmaCobertura = (g: GrupoResumen) => JSON.stringify(g.incluye);
@@ -89,10 +91,22 @@ export function filasDeUnidad(unidad: UnidadResumen): FilaResumen[] {
     const adultos = racimos(delaCobertura.filter((x) => x.g.tipo === "adulto"));
     const menores = racimos(delaCobertura.filter((x) => x.g.tipo !== "adulto"));
     const fila = (a: Racimo[], m: Racimo[]): FilaResumen => {
-      return { clave: claveDe(u.ref, [...a, ...m]), ajuste: false, adultos: cantidadDe(a), ninos: cantidadDe(m), tarifaAdulto: tarifaMedia(a), tarifaNino: tarifaMedia(m), total: totalDe(a) + totalDe(m) };
+      const ninoGratis = m.length > 0 && m.every((r) => r.tipo !== "infante" && r.partes.every((p) => tarifaDe(p.g) === 0));
+      return { clave: claveDe(u.ref, [...a, ...m]), ajuste: false, adultos: cantidadDe(a), ninos: cantidadDe(m), tarifaAdulto: tarifaMedia(a), tarifaNino: tarifaMedia(m), total: totalDe(a) + totalDe(m), ...(ninoGratis ? { ninoGratis } : {}) };
     };
     // Una sola fila por unidad y cobertura cuando adultos y niños tienen cada uno UNA tarifa (las que solo difieren por el centavo del reparto cuentan como una): el niño nunca queda como otro paquete.
     if (adultos.length <= 1 && menores.length <= 1 && adultos.length + menores.length > 1) { filas.push(fila(adultos, menores)); return; }
+    // Owner 2026-11-18 (C1): los menores en CERO (niño gratis) van dentro de la fila de adultos del paquete cuando hay UNA sola tarifa de adulto (no hay a qué otra habitación atribuirlos); los menores con otra tarifa real
+    // (el niño que sí paga, un beneficio parcial) conservan su propia fila. Con varias tarifas de adulto el resumen no dice a qué habitación pertenece el niño: no se adivina.
+    const ceros = menores.filter((r) => r.tipo !== "infante" && r.partes.every((p) => tarifaDe(p.g) === 0));
+    if (adultos.length === 1 && menores.length > 1 && ceros.length > 0) {
+      const combinadas = [
+        { primero: Math.min(adultos[0].primero, ...ceros.map((c) => c.primero)), f: fila(adultos, ceros) },
+        ...menores.filter((r) => !ceros.includes(r)).map((r) => ({ primero: r.primero, f: fila([], [r]) })),
+      ].sort((x, y) => x.primero - y.primero);
+      for (const c of combinadas) filas.push(c.f);
+      return;
+    }
     for (const r of [...adultos, ...menores].sort((x, y) => x.primero - y.primero)) filas.push(r.tipo === "adulto" ? fila([r], []) : fila([], [r]));
   });
   if (u.ajusteCentavos > 0) filas.push({ clave: `${u.ref}-ajuste`, ajuste: true, adultos: 0, ninos: 0, tarifaAdulto: 0, tarifaNino: 0, total: u.ajusteCentavos });

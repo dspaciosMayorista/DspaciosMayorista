@@ -174,6 +174,7 @@ describe("inventario de orígenes de cotización", () => {
       ["app/(dashboard)/dashboard/cotizaciones/manual-actions.ts", 2],
       ["app/(dashboard)/dashboard/reservar/actions.ts", 1],
       ["app/tarifario/checkout/actions.ts", 2],
+      ["app/tarifario/solicitudHotelActions.ts", 1], // #1: la solicitud de hotel registra a su titular al crearse (antes esperaba a la neta)
     ];
     for (const [archivo, creadores] of inventario) {
       const altas = cuenta(ALTAS, leer(join(raiz, archivo)));
@@ -192,8 +193,10 @@ describe("inventario de orígenes de cotización", () => {
       "app/(dashboard)/dashboard/cotizaciones/[id]/page.tsx": 1,       // «Reintentar»
       "app/(dashboard)/dashboard/cotizaciones/din-actions.ts": 1,       // #82: paquete dinámico total
       "app/(dashboard)/dashboard/cotizaciones/manual-actions.ts": 3,   // manual, comparativa, hija
-      "app/(dashboard)/dashboard/reservar/actions.ts": 2,              // Reservar + #120: titular de una solicitud al valorarla (la 219 solo admite abiertas)
+      "app/(dashboard)/dashboard/reservar/actions.ts": 1,              // Reservar (el alta de la solicitud al valorarla pasa por altaPersonasDeCotizacionGuardada, abajo)
       "app/tarifario/checkout/actions.ts": 3,                          // carrito, comparativa, hija
+      "app/tarifario/solicitudHotelActions.ts": 1,                     // #1: titular de la solicitud al crearla (migración 308)
+      "lib/personas/altaGuardada.ts": 1,                               // #1: reparación al repetir una solicitud ya atendida (checkout con la misma clave, solicitud de hotel)
     });
   });
 

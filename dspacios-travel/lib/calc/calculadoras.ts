@@ -727,14 +727,17 @@ export function analizarMixta(p: MixtaParams, ctx?: ContextoCalculadora): { fila
 
   // Vigencias promocionales con precio por noche que esta calculadora deriva.
   const promosPct = ctx
-    ? [...new Set(ctx.vigencias.filter((v) => (v.tipo ?? "tarifa") === "descuento_pct" && v.promo_base_id == null).map((v) => v.nombre.trim()))].sort()
+    ? [...new Set(ctx.vigencias.filter((v) => (v.tipo ?? "tarifa") === "descuento_pct" && v.promo_base_id == null && !v.promo_sigue_base).map((v) => v.nombre.trim()))].sort()
     : [];
   const esPromoPct = new Set(promosPct);
+  // #125: una promoción que sigue la base ganadora se calcula por noche en el motor: lo tecleado para ella nunca se guarda como fila de tarifa.
+  const sigueBase = new Set(ctx ? ctx.vigencias.filter((v) => v.promo_sigue_base === true).map((v) => v.nombre.trim()) : []);
 
   const out: TarifaGenerada[] = [];
   for (const b of p.bases ?? []) {
     if (!b.categoria?.trim() || !b.temporada?.trim()) continue;
     if (esPromoPct.has(b.temporada.trim())) continue; // la promo se deriva abajo, nunca se copia tal cual
+    if (sigueBase.has(b.temporada.trim())) continue;
     const f = fila(b);
     if (f.neto_sencilla + f.neto_doble + f.neto_triple + f.neto_multiple <= 0) continue; // fila sin valores
     out.push(f);

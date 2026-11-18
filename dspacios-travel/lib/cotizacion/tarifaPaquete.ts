@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { leerPlanB2BDePayload } from "@/lib/cotizacion/asistidaB2B";
 import { descripcionCotizacionManual, validarServicioManual } from "@/lib/cart/servicioManual";
+import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
 
 /** `cantidad` personas pagan `tarifa` (en unidades de moneda, con centavos). */
 export type ParteTarifa = { tarifa: number; cantidad: number };
@@ -114,12 +115,14 @@ export function tarifaPaqueteOpcion(resumen: unknown, plantilla: unknown, totalC
   const filas = lista(detalle.items);
   const esAdicional = (d: unknown) => typeof d === "string" && (d.startsWith("Servicio · ") || d.startsWith("Vuelo · "));
   const lineasGrupo = filas.filter(esLineaGrupoIncluido);
-  const habitaciones = filas.filter((i) => !esAdicional(i.descripcion) && !esLineaGrupoIncluido(i));
+  // #125: la línea firmada del niño gratis NO es un adulto: no cuenta personas; su importe (negativo) baja la base de los niños.
+  const habitaciones = filas.filter((i) => !esAdicional(i.descripcion) && !esLineaGrupoIncluido(i) && !esLineaNinoGratis(i.descripcion));
   if (habitaciones.some((i) => i.modo_precio === "total")) return null;
   const adultos = habitaciones.reduce((s, i) => s + Number(i.adultos), 0);
   const ninos = habitaciones.reduce((s, i) => s + Number(i.ninos), 0);
   let baseA = habitaciones.reduce((s, i) => s + cent(Number(i.adultos) * Number(i.tarifa_adulto)), 0);
-  let baseN = habitaciones.reduce((s, i) => s + cent(Number(i.ninos) * Number(i.tarifa_nino)), 0);
+  let baseN = habitaciones.reduce((s, i) => s + cent(Number(i.ninos) * Number(i.tarifa_nino)), 0)
+    + filas.filter((i) => esLineaNinoGratis(i.descripcion)).reduce((s, i) => s + cent(Number(i.adultos) * Number(i.tarifa_adulto)), 0);
   const nombre = (x: Record<string, unknown>) => (x.clase === "vuelo" ? "el vuelo" : `«${typeof x.nombre === "string" && x.nombre.trim() ? x.nombre.trim() : "servicio adicional"}»`);
   const paxDe = (x: Record<string, unknown>) => (typeof x.pax === "number" && Number.isInteger(x.pax) && x.pax > 0 ? x.pax : null);
   const lineaDe = (x: Record<string, unknown>): { nombre: string; pvp: number; pax: number | null } | null =>

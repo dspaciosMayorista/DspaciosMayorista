@@ -62,6 +62,7 @@ import {
   buscarReceptivos as buscarReceptivosImpl,
   type CotizarResult,
   type BusquedaResultado,
+  type HotelEnRevision,
   type ResultadoServicio,
   type SugerenciaFecha,
 } from "@/lib/reservar/cotizar";
@@ -134,6 +135,7 @@ import type { HorasTramos, TramoTraslado } from "@/lib/calc/trasladoFranjas";
 import { cobroDeContratoCarrito, compararConCongelado, leerCobroCongelado, monedaOfertaDeCotizacion, resolverMonedaOferta, validarEleccionCarrito } from "@/lib/finanzas/cobroCarrito";
 import { ROLES_INTERNOS } from "@/lib/constants";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { altaPersonasDeCotizacionGuardada } from "@/lib/personas/altaGuardada";
 import {
   compararLineasConCongeladas, leerPlanB2BDePayload, planDeGrupoB2B, planesDeGruposB2B, verificarCoberturaLineasB2B, MENSAJE_COTIZACION_B2B_INVALIDA, MENSAJE_TERMINOS_CAMBIARON, type PlanGrupoB2B,
   type LineaB2B, type PlanB2BCotizacion,
@@ -236,7 +238,7 @@ export async function cotizarPorFechas(input: unknown): Promise<CotizarResult> {
 // nunca se confía en el tipo `BusquedaInput` en tiempo de ejecución.
 // identidad:n/a — solo lectura (búsqueda): no escribe tablas del contrato
 export async function buscarHoteles(input: unknown): Promise<
-  { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[] } | { ok: false; error: string }
+  { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[]; enRevision?: HotelEnRevision[] } | { ok: false; error: string }
 > {
   return buscarHotelesImpl(input);
 }
@@ -304,7 +306,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   // #120: el precio de una solicitud queda CONGELADO al cargar la neta; si el paquete cambió desde entonces (markup, vuelo, servicios) no se cobra otro en silencio.
   if (solicitud && Math.abs(comp.data.precioVenta - solicitud.precioCongelado) > 0.5)
     return { ok: false, error: "El precio de esta cotización cambió desde que se calculó con la neta del hotel; pide que se recalcule antes de convertirla." };
-  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota, ajusteRedondeo } = comp.data;
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, impuestoTotal, monedaReserva, cargoMascota, ajusteRedondeo, beneficioNinoGratis } = comp.data;
   // Menores (migración 226): líneas de precio y menores de 2 años (fee de vuelo / precio de infante).
   const { lineasMenores, numMenoresDeDos } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
   // #63 — oferta en COP con TRM (salida vinculada a Empaquetados, o manual de un paquete en ese modo). Si la cotización
@@ -913,6 +915,8 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
   }
   // #120: residuo de redondeo de «Distribuir» (mismo total que «Cargar hotel a los adultos»): línea explícita, no escondida en el importe de un viajero.
   if (ajusteRedondeo) items.push({ numero_contrato: numero, descripcion: ajusteRedondeo.descripcion, adultos: 1, ninos: 0, tarifa_adulto: ajusteRedondeo.total, tarifa_nino: 0, orden: 202 });
+  // #125: niño gratis por habitación (solo alojamiento promocionado): línea firmada, sin neto ni detalle por noche.
+  if (beneficioNinoGratis) items.push({ numero_contrato: numero, descripcion: beneficioNinoGratis.descripcion, adultos: 1, ninos: 0, tarifa_adulto: beneficioNinoGratis.total, tarifa_nino: 0, orden: 203 });
   if (aceptacion63) {
     if (aceptacion63.snapshot.items.length) {
       const { error: eit } = await sb.from("contrato_items").insert(aceptacion63.snapshot.items.map((it) => ({ numero_contrato: numero, ...it })));
@@ -1066,6 +1070,7 @@ async function calcularFinancieroReserva(p: {
       // Misma fórmula que el carrito (fuente única, costosObligacionesCarrito.ts): con descuento por habitación suma
       // habitaciones × neto exacto de la habitación. Infante de hotel (0 = gratis): el neto que cobra el hotel por cada uno.
       costoHotelTotal = costoHotelPersona({ lineasHab, netoPorAcom, numNinos, numNinos2, netoHabitacionPorAcom: p.data.netoHabitacionPorAcom }, numInfantes);
+      costoHotelTotal -= p.data.beneficioNinoGratis?.costoNeto ?? 0; // #125: el hotel no cobra el niño gratis (solo el alojamiento promocionado)
       // #120: el costo del hotel de una solicitud es la neta TOTAL cargada, exacta. La suma por tipo (adultos × neta + niños × neta) solo puede diferir de ella por el redondeo mínimo
       // de centavos; cualquier otra diferencia es un error de cálculo y se rechaza antes de numerar.
       if (solicitud) {
@@ -1314,7 +1319,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   const t063 = input.salidaId && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerRevisiones63(createAdminClient(), input.paqueteId) : null; // identidad:n/a — lectura de catálogo/estado: no escribe tablas del contrato
   const comp = await computarReserva(sb, input, solicitud && { neta: solicitud.neta });
   if (!comp.ok) return { ok: false, error: comp.error };
-  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota, ajusteRedondeo, impuestoTotal } = comp.data;
+  const { origen, meta, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, lineasHab, serviciosItems, serviciosIncluidos, monedaReserva, cargoMascota, ajusteRedondeo, beneficioNinoGratis, impuestoTotal } = comp.data;
   const { lineasMenores, numMenoresDeDos } = menoresDelComputo(comp.data, { infantesDeclarados: Number(input.infantes) || 0 });
   // Mismo resumen ÚNICO que usa `reservarDesdeTarifarioInterno` al convertir
   // (lib/reservar/serviciosPaquete.ts) — así la cotización ya muestra, antes
@@ -1472,6 +1477,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
   }
   // #120: mismo residuo explícito en la cotización (los ítems suman el total congelado).
   if (ajusteRedondeo) itemsSnap.push({ id: 202, descripcion: ajusteRedondeo.descripcion, adultos: 1, ninos: 0, tarifa_adulto: ajusteRedondeo.total, tarifa_nino: 0 });
+  if (beneficioNinoGratis) itemsSnap.push({ id: 203, descripcion: beneficioNinoGratis.descripcion, adultos: 1, ninos: 0, tarifa_adulto: beneficioNinoGratis.total, tarifa_nino: 0 });
 
   const detalle = { venta: ventaSnap, pasajeros: pasajerosSnap, hoteles: hotelesSnap, vuelos: vuelosSnap, items: itemsSnap };
 
@@ -1578,7 +1584,7 @@ async function crearCotizacionInterna(input: ReservaInput, opts?: { vigenciaHast
       vigencias: comp.data.vigencias63,
       hotel: hotel63,
       tramos: armarTramos63(datosFin),
-      items: armarItems63({ categoria: input.categoria, regimen: input.regimen, lineasHab, lineasMenores, serviciosItems, cargoMascota }),
+      items: armarItems63({ categoria: input.categoria, regimen: input.regimen, lineasHab, lineasMenores, serviciosItems, cargoMascota, beneficioNinoGratis }),
       costos: fin63.costosContrato,
       cxp: fin63.cxp,
       resumen: { tours_traslados: resumen63.toursTraslados ?? null, asistencia_medica: !!resumen63.asistenciaMedica },
@@ -1695,7 +1701,9 @@ export async function asignarNetaSolicitud(cotizacionId: number, entradaRaw: unk
   if (!res.ok) return res;
   // La cotización ya está ABIERTA: ahora sí se registra al titular en el registro de personas (#42; la 219 solo admite abiertas). Un fallo aquí no deshace la valoración:
   // queda el aviso persistente de la ficha ("Reintentar") y un log sin datos personales.
-  const alta = await altaPersonasCotizacion(admin, { fila: { id: cotizacionId, tenant: cot.tenant, tipo: "tarifario", payload: cot.payload }, usuarioId: user.id, sellar: false });
+  // #1: la solicitud ya quedó registrada al pedirse (migración 308); aquí se REPITE el alta idempotente por si aquel registro falló. El helper lee la fila REAL: la anonimia
+  // de una solicitud de visitante depende de sus columnas, no solo del tipo (el tipo de documento no se registra y debe coincidir con la primera alta).
+  const alta = await altaPersonasDeCotizacionGuardada(admin, cotizacionId, user.id, false);
   if (!alta.ok) console.error(logPersonasCotizacion("reservar", cotizacionId, alta));
   return res;
 }
@@ -3391,13 +3399,15 @@ export async function convertirCotizacionCarrito(
       for (const lm of lineasMenores) {
         itemsHotel.push({ numero_contrato: numero, descripcion: descripcionLineaMenor(lm, it.categoria, it.regimen), adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa, orden: hIdx * 300 + ordenLineaMenor(lm) });
       }
+      // #125: niño gratis por habitación de ESTE hotel (solo su alojamiento): línea firmada; el residual de servicios por grupo se calcula sin ella.
+      if (comp.beneficioNinoGratis) itemsHotel.push({ numero_contrato: numero, descripcion: `${meta.hotel_nombre ?? it.hotelNombre} · ${comp.beneficioNinoGratis.descripcion}`, adultos: 1, ninos: 0, tarifa_adulto: comp.beneficioNinoGratis.total, tarifa_nino: 0, orden: hIdx * 300 + 203 });
       // Servicios incluidos por GRUPO: su cargo (ya dentro de `comp.precioVenta`,
       // una sola vez) no va en ninguna fila de habitación/menores. El total del
       // documento del contrato es la suma de sus líneas, así que sin esta línea
       // mostraba menos que `ventas.precio_venta` y que la cotización (que sí la
       // tiene, checkout/actions.ts). Misma regla y mismo helper: fail-closed.
       const rResidual = calcularResidualServiciosIncluidosPorGrupo({
-        precioVenta: comp.precioVenta, lineasHab,
+        precioVenta: comp.precioVenta, lineasHab, ajusteVisible: comp.beneficioNinoGratis?.total ?? 0,
         numNinos: 0, tarifaNino: null,
         numNinos2: 0, tarifaNino2: null,
         numInfantes: 0, tarifaInfante: null,

@@ -46,8 +46,11 @@ describe("archivos que NO se tocan (decisión del Coordinador)", () => {
     // precioMenorDeDos no se tocaron (lo fijan sus propias pruebas y la caracterización E3).
     // La entrega 5 (historial AK) agregó solo la combinación con EBB / Long Stay en la vigencia, la exclusión de las promociones
     // PENDIENTES en entradasNoche y dos ayudantes puros (promosAplicadas, soloBases); ninguna fórmula cambió.
+    // #125 (migración 310; F1 de la auditoría: `ninoGratisNoches` con indice y neto pagadero tras la promoción de estadía, y el empate de bases solo en el modo nuevo) agregó, sin tocar ninguna fórmula existente: el modo EXPLÍCITO «seguir la base ganadora» (`promo_sigue_base`: la promoción por noche actúa sobre la
+    // base que gana cada noche; infante conserva su base solo en ese modo; empate de bases con precio = noche no vendida solo para ese modo), los campos de «un niño gratis por
+    // habitación» y la salida aditiva `ninoGratisNoches`. Sin esos campos el motor da exactamente lo de antes (lo fijan promoMultibase125.baseline/motor.test.ts).
     // Cualquier otro cambio debe volver a actualizar esta huella con su motivo.
-    assert.equal(huella("lib/calc/paquetes.ts"), "d4bd14caad1bce6d");
+    assert.equal(huella("lib/calc/paquetes.ts"), "db769a69692d1b35");
   });
   test("origen.ts y salidaDinamicaVigente.ts (#62) quedan intactos", () => {
     assert.equal(huella("lib/reservar/origen.ts"), "346a364394e5a31b");

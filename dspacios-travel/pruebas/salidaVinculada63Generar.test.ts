@@ -114,7 +114,7 @@ function tablas(o: Opciones): Record<string, Fila[]> {
     armado_servicios: o.servicios ?? [],
     armado_hoteles: [{
       paquete_id: PAQUETE_ID, hotel_id: HOTEL_ID, categorias: null, regimenes: null,
-      hoteles: { nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona", adults_only: false },
+      hoteles: { nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 },
     }],
     // #90 D: el cargador de fuentes de moneda lee estas tablas por id (misma moneda que los joins de arriba).
     hoteles: [{ id: HOTEL_ID, nombre: "Hotel Dinámico", moneda: o.hotelMoneda ?? "USD", modelo_tarifario: "persona" }],

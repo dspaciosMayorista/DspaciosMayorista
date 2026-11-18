@@ -1,7 +1,8 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState, useTransition, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { Info, Lock, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatNetoTarifa } from "@/lib/hoteles/tarifasVista";
@@ -16,7 +17,8 @@ import {
   CAMPOS_MIXTA, claveMixta, valoresPorRegimenIniciales, basesDesdeValores, basesPorRegimen, quitarValoresCelda,
   type CampoMixta, type ValoresPorRegimen,
 } from "@/lib/calc/mixtaValores";
-import { separarFilasConGrupos, separarFilasVencidas, nombreVigenciaVencida, vigenciasConGrupos } from "@/lib/calc/promoCalculadora";
+import { separarFilasConGrupos, separarFilasVencidas, nombreVigenciaVencida, vigenciasConGrupos, resolverBasePromo } from "@/lib/calc/promoCalculadora";
+import { promocionesSigueBase, type FilaTarifaFicha } from "@/lib/hoteles/promocionesDinamicas";
 import type { TemporadaRango } from "@/lib/calc/paquetes";
 import { REGLA_EDAD_DEFAULT, construirReglaEdadDesdeMaximos } from "@/lib/calc/reglaEdadTarifa";
 import { PAX_TARIFA_DEFAULT } from "@/lib/acomodaciones";
@@ -26,7 +28,10 @@ import {
   type BasesGrupo, type BasesGuardadasGrupo, type GeneralesGrupo, type ParamsCalculadora,
 } from "@/lib/hoteles/calculadoraGrupos";
 import { textoDias } from "@/lib/hoteles/alcanceGrupos";
+import { aplicarRenombre, clasificarCambio, estable, nombresTemporada, textoAviso, type CalcGuardada } from "@/lib/hoteles/calculadoraConflicto";
 import { CalculoGrupoPanel } from "./CalculoGrupoPanel";
+import { SeccionCruceBases } from "./CruceBasesMixta";
+import { PromocionesDinamicasBox } from "./PromocionesDinamicasBox";
 
 /** Vigencia de tarifa con sus grupos de días y las bases de calculadora de cada grupo (#43/#60 3b; `activo` = se vende, 299). */
 export type VigenciaConGrupos = {
@@ -36,8 +41,16 @@ export type VigenciaConGrupos = {
 /** Modo grupo de un formulario: elección explícita de generales (del hotel o propios), y en vez de generar,
  *  la revisión del grupo. Con los del hotel, los generales quedan de solo lectura. */
 type ModoGrupo = { pie: (params: ParamsCalculadora) => ReactNode; cabecera: (params: ParamsCalculadora) => ReactNode; bloquearGenerales: boolean };
-/** Versión de `hotel_calculadora` (297): cada guardado la condiciona y devuelve la nueva. */
-type VersionCalc = { version: number | null; onVersion: (v: number) => void };
+/** Guardado de la calculadora general (297/#124): el editor lleva la versión leída en una referencia (no en un cierre que
+ *  pueda quedar viejo), la condiciona en el servidor y, si la base rechaza, explica qué cambió en vez de adivinar. */
+type VersionCalc = {
+  version: number | null;
+  guardar: (tipo: CalcTipo, params: ParamsCalculadora) => Promise<{ ok: true; version: number } | { ok: false; error: string }>;
+  /** El formulario avisa su estado inicial al montarse y cada cambio; solo el formulario general (no el de un grupo). */
+  iniciar?: (params: ParamsCalculadora) => void;
+  reportar?: (params: ParamsCalculadora) => void;
+};
+type AvisoCalc = { tono: "info" | "alerta"; texto: string; cargar?: CalcGuardada };
 const AVISO_GRUPO = "Modo grupo: elige si este grupo usa los parámetros generales del hotel o valores propios, y carga sus bases. Nada cambia en la calculadora general ni en otros grupos.";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -68,8 +81,8 @@ function useFormatoMoneda() {
 }
 
 export function CalculadoraEditor({
-  hotelId, categorias, temporadas, regimenes, tipoInicial, dubaiInicial, mixtaInicial, corporativaInicial, adultsOnly = false,
-  vigencias, hoy, tarifasExistentes, moneda = "COP", versionInicial = null, gruposCalc = [],
+  hotelId, categorias, temporadas, regimenes, tipoInicial: tipoProp, dubaiInicial: dubaiProp, mixtaInicial: mixtaProp, corporativaInicial: corporativaProp,
+  adultsOnly = false, vigencias, hoy, tarifasExistentes, moneda = "COP", versionInicial = null, gruposCalc = [],
 }: {
   moneda?: string;
   versionInicial?: number | null;
@@ -91,9 +104,112 @@ export function CalculadoraEditor({
   tarifasExistentes: TarifaExistente[];
 }) {
   const [open, setOpen] = useState(false);
-  const [tipoCalc, setTipoCalc] = useState<CalcTipo>(tipoInicial ?? "dubai");
-  const [version, setVersion] = useState<number | null>(versionInicial);
-  const ver: VersionCalc = { version, onVersion: setVersion };
+  const [tipoCalc, setTipoCalc] = useState<CalcTipo>(tipoProp ?? "dubai");
+  const router = useRouter();
+  const temporadasRef = useRef(temporadas); temporadasRef.current = temporadas;
+  const clicPendiente = useRef(false); // un rechazo de guardado esperaba la página actualizada: el aviso final sigue diciendo «tu clic no guardó nada»
+
+  // ── #124: la calculadora guardada que ESTE editor conoce ────────────────────────────────────────────────────────────────
+  // Antes la versión se leía una sola vez de las props y los formularios conservaban su estado aunque la página se refrescara:
+  // renombrar una vigencia (la cascada reescribe `hotel_calculadora` y sube su versión) dejaba el editor con la versión vieja y
+  // con las bases bajo el nombre viejo. Ahora el editor guarda la copia que conoce (se actualiza con cada guardado propio),
+  // compara contra lo que llega de la página y, si quedó atrás, lo explica con datos (nunca nombra a una persona).
+  type Guardada = { version: number | null; tipo: CalcTipo | null; params: ParamsCalculadora | null };
+  const paramsDeProps: ParamsCalculadora | null =
+    tipoProp === "dubai" ? dubaiProp : tipoProp === "mixta" ? mixtaProp : tipoProp === "corporativa" ? corporativaProp : null;
+  const [guardada, setGuardada] = useState<Guardada>({ version: versionInicial, tipo: tipoProp, params: paramsDeProps });
+  const guardadaRef = useRef<Guardada>(guardada);
+  const fijarGuardada = (g: Guardada) => { guardadaRef.current = g; setGuardada(g); };
+  const [semilla, setSemilla] = useState<ParamsCalculadora | null>(null); // cambios locales trasladados a un renombre
+  const [montaje, setMontaje] = useState(0); // vuelve a montar los formularios generales con la copia adoptada
+  const [aviso, setAviso] = useState<AvisoCalc | null>(null);
+  const snap = useRef<ParamsCalculadora | null>(null);   // último estado del formulario mientras la página NO va por delante
+  const base = useRef<ParamsCalculadora | null>(null);   // estado del formulario al montarse / tras el último guardado propio
+  const sucio = useRef(false);                           // cambios locales que no se pueden deducir de `snap` vs `base`
+  const enviado = useRef<ParamsCalculadora | null>(null); // lo último que ESTE editor mandó a guardar
+  const adelantada = versionInicial != null && (guardada.version == null || versionInicial > guardada.version);
+  const adelantadaRef = useRef(false); adelantadaRef.current = adelantada; // en render: los hijos leen el valor nuevo en sus efectos
+  const abiertoRef = useRef(false); abiertoRef.current = open;
+  // Enlace directo `…#cruce-bases`: la sección vive dentro del editor cerrado, así que sin esto el ancla nunca existía al cargar (hallazgo VERIF-2). Abre el editor y desplaza hasta ella; sin efectos de red.
+  useEffect(() => { if (window.location.hash === "#cruce-bases") setOpen(true); }, []);
+  useEffect(() => { if (open && window.location.hash === "#cruce-bases") document.getElementById("cruce-bases")?.scrollIntoView({ block: "start" }); }, [open]);
+  const tipoCalcRef = useRef<CalcTipo>(tipoCalc); tipoCalcRef.current = tipoCalc;
+  const version = guardada.version;
+  const tipoInicial = guardada.tipo;
+  const generalGuardado: ParamsCalculadora | null = guardada.params;
+  const inicialDe = (t: CalcTipo): ParamsCalculadora | null => (guardada.tipo === t ? (semilla ?? guardada.params) : null);
+
+  function adoptar(nueva: CalcGuardada, inicial: ParamsCalculadora | null = null) {
+    fijarGuardada({ version: nueva.version, tipo: nueva.tipo as CalcTipo, params: nueva.params as unknown as ParamsCalculadora });
+    setSemilla(inicial); setMontaje((m) => m + 1);
+    snap.current = null; base.current = null; sucio.current = false;
+  }
+  function reconciliar(nueva: CalcGuardada, origenEntrada: "clic" | "pantalla") {
+    const g = guardadaRef.current;
+    const origen: "clic" | "pantalla" = clicPendiente.current ? "clic" : origenEntrada;
+    // La copia guardada nombra vigencias que ESTA pantalla aún no conoce (p. ej. otra sesión renombró una): adoptarla aquí dejaría los formularios
+    // con columnas viejas y la base nueva se perdería en el siguiente guardado. Se pide UNA actualización de la página (no se repite) y se reconcilia
+    // cuando llegue, ya con las vigencias vigentes; mientras tanto no se adopta ni se guarda nada y las ediciones siguen en pantalla.
+    const desconocidas = [...nombresTemporada(nueva.params)].filter((n) => !temporadasRef.current.includes(n));
+    if (desconocidas.length > 0 && origenEntrada === "clic" && !clicPendiente.current) {
+      clicPendiente.current = true;
+      setAviso({ tono: "info", texto: `La calculadora guardada cambió (versión ${g.version ?? "—"} → ${nueva.version}) y usa vigencias que esta pantalla aún no tiene (${desconocidas.join(", ")}). Tu clic no guardó nada. Actualizamos la pantalla con las vigencias vigentes; tus cambios sin guardar siguen aquí. Si no ves el cambio en unos segundos, recarga la página (eso descarta lo no guardado).` });
+      router.refresh();
+      return;
+    }
+    clicPendiente.current = false;
+    const conocida: CalcGuardada | null = g.tipo && g.params ? { version: g.version, tipo: g.tipo, params: g.params as unknown as Record<string, unknown> } : null;
+    const causa = clasificarCambio(conocida, nueva);
+    const meta = { causa, origen, versionAntes: g.version, versionAhora: nueva.version };
+    const propia = enviado.current !== null && estable(nueva.params) === estable(enviado.current);
+    if (causa.causa === "igual" || propia) {
+      // Mismo contenido (escritura propia que volvió con la página, o una copia idéntica): solo se adopta la versión, sin tocar el formulario.
+      fijarGuardada({ version: nueva.version, tipo: nueva.tipo as CalcTipo, params: nueva.params as unknown as ParamsCalculadora });
+      if (propia) { base.current = enviado.current; sucio.current = false; }
+      if (origen === "clic") setAviso({ tono: "info", texto: `La calculadora guardada ya tiene el mismo contenido que enviaste (versión ${nueva.version}); tu clic no escribió nada. Repite la acción si querías generar tarifas.` });
+      return;
+    }
+    if (!abiertoRef.current) { adoptar(nueva); return; } // sin formularios abiertos no hay nada local que proteger
+    const tocado = sucio.current || (snap.current !== null && base.current !== null && estable(snap.current) !== estable(base.current));
+    if (!tocado) { adoptar(nueva); setAviso({ tono: "info", texto: textoAviso({ ...meta, conCambiosLocales: false, conservados: false }) }); return; }
+    if (causa.causa === "renombre" && snap.current && tipoCalcRef.current === nueva.tipo) {
+      // Se conserva lo escrito: se le aplica el MISMO renombre que el servidor hizo a la calculadora guardada.
+      const trasladado = aplicarRenombre(nueva.tipo, snap.current as unknown as Record<string, unknown>, causa.de, causa.a) as unknown as ParamsCalculadora;
+      adoptar(nueva, trasladado); sucio.current = true;
+      setAviso({ tono: "info", texto: textoAviso({ ...meta, conCambiosLocales: true, conservados: true }) });
+      return;
+    }
+    // Cambio que no se puede trasladar con certeza: no se adopta ni se guarda nada; el usuario decide con el aviso.
+    setAviso({ tono: "alerta", texto: textoAviso({ ...meta, conCambiosLocales: true, conservados: false }), cargar: nueva });
+  }
+  const reconciliarRef = useRef(reconciliar); reconciliarRef.current = reconciliar;
+  useEffect(() => {
+    if (!adelantada || !tipoProp || !paramsDeProps) return;
+    reconciliarRef.current({ version: versionInicial, tipo: tipoProp, params: paramsDeProps as unknown as Record<string, unknown> }, "pantalla");
+    // Solo cuando la página trae una versión nueva.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionInicial]);
+
+  const guardar: VersionCalc["guardar"] = async (tipo, params) => {
+    enviado.current = params;
+    const r = await guardarCalculadora(hotelId, tipo, params as DubaiParams | MixtaParams | CorporativaParams, guardadaRef.current.version);
+    if (r.ok) {
+      fijarGuardada({ version: r.version, tipo, params: JSON.parse(JSON.stringify(params)) as ParamsCalculadora });
+      base.current = params; sucio.current = false; setAviso(null);
+      return { ok: true, version: r.version };
+    }
+    if (r.motivo === "cambio" && r.actual) {
+      reconciliar({ version: r.actual.version, tipo: r.actual.tipo, params: r.actual.params }, "clic");
+      return { ok: false, error: "" }; // el aviso del editor ya explica qué pasó
+    }
+    return { ok: false, error: r.error };
+  };
+  const ver: VersionCalc = { version, guardar, iniciar: (p) => { snap.current = p; base.current = p; }, reportar: (p) => { if (!adelantadaRef.current) snap.current = p; } };
+  const verGrupo: VersionCalc = { version, guardar };
+  function cargarGuardada(nueva: CalcGuardada) {
+    if (!confirm("Cargar la versión guardada reemplaza lo que tienes en pantalla y descarta tus cambios sin guardar de esta calculadora. ¿Continuar?")) return;
+    adoptar(nueva); setAviso(null);
+  }
   // Destino del cálculo: "" = todos los días (tarifas actuales, como siempre) o "temporadaId|grupoId".
   const [destino, setDestino] = useState("");
   // Bases por grupo guardadas en esta sesión (la RPC devuelve la versión nueva; no se recarga la página).
@@ -103,8 +219,6 @@ export function CalculadoraEditor({
   const [semillas, setSemillas] = useState<Record<string, {
     propios: boolean; generales: GeneralesGrupo | null; ultimosPropios: GeneralesGrupo | null; bases: BasesGrupo | null; n: number;
   }>>({});
-  const generalGuardado: ParamsCalculadora | null =
-    tipoInicial === "dubai" ? dubaiInicial : tipoInicial === "mixta" ? mixtaInicial : tipoInicial === "corporativa" ? corporativaInicial : null;
   const sel = (() => {
     const [t, g] = destino.split("|");
     const vig = gruposCalc.find((v) => String(v.temporadaId) === t);
@@ -122,7 +236,7 @@ export function CalculadoraEditor({
   return (
     <MonedaCalculadora.Provider value={moneda}>
     <section className="mb-6 rounded-xl border border-gray-200 bg-white">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-4 py-3 text-left">
+      <button type="button" onClick={() => { if (open) { sucio.current = false; setAviso(null); } setOpen((o) => !o); }} className="flex w-full items-center justify-between px-4 py-3 text-left">
         <span className="text-sm font-semibold text-gray-700">
           Tarifa por fórmula (calculadora)
           {tipoInicial && <span className="ml-2 rounded-full bg-[var(--brand-success)]/15 px-2 py-0.5 text-[10px] font-medium text-[var(--brand-success)]">configurada: {tipoInicial}</span>}
@@ -132,9 +246,22 @@ export function CalculadoraEditor({
 
       {open && (
         <div className="space-y-4 border-t border-gray-100 p-4">
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          {aviso && (
+            <div role={aviso.tono === "alerta" ? "alert" : "status"} data-aviso-calculadora={aviso.tono}
+              className={`flex items-start gap-2 rounded-lg border p-3 text-xs ${aviso.tono === "alerta" ? "border-amber-300 bg-amber-50 text-amber-800" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
+              {aviso.tono === "alerta" ? <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /> : <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
+              <div className="space-y-2">
+                <p>{aviso.texto}</p>
+                <div className="flex flex-wrap gap-2">
+                  {aviso.cargar && <Button type="button" variant="outline" onClick={() => cargarGuardada(aviso.cargar!)}>Cargar la versión guardada (descarta mis cambios sin guardar)</Button>}
+                  <Button type="button" variant="outline" onClick={() => setAviso(null)}>Entendido</Button>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600">
             <span>Tipo de calculadora:</span>
-            <select value={tipoCalc} disabled={!!modoGrupo} onChange={(e) => setTipoCalc(e.target.value as CalcTipo)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
+            <select value={tipoCalc} disabled={!!modoGrupo} onChange={(e) => setTipoCalc(e.target.value as CalcTipo)} className="max-w-full rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm">
               <option value="dubai">Dubai (base + modificadores)</option>
               <option value="mixta">Mixta (por hab/pax + IVA)</option>
               <option value="corporativa">Corporativa (tarifa por habitación + suplementos)</option>
@@ -221,7 +348,7 @@ export function CalculadoraEditor({
                 />
               ),
             };
-            const comun = { hotelId, categorias, temporadas: [modoGrupo.vig.vigencia], regimenes, adultsOnly, tarifasExistentes: [] as TarifaExistente[], grupo, ...ver };
+            const comun = { hotelId, categorias, temporadas: [modoGrupo.vig.vigencia], regimenes, adultsOnly, tarifasExistentes: [] as TarifaExistente[], grupo, ...verGrupo };
             return (
               <div key={`${destino}|${semilla.n}`} className="space-y-3 rounded-lg border border-[var(--brand-accent)]/40 p-3">
                 <p className="text-xs text-gray-600">{AVISO_GRUPO}</p>
@@ -233,9 +360,9 @@ export function CalculadoraEditor({
           })()}
           {/* El formulario de «todos los días» queda montado (oculto) en modo grupo: no pierde lo que no se guardó. */}
           <div hidden={!!modoGrupo}>
-            {tipoCalc === "dubai" && <DubaiForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={dubaiInicial} adultsOnly={adultsOnly} tarifasExistentes={tarifasExistentes} {...ver} />}
-            {tipoCalc === "mixta" && <MixtaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={mixtaInicial} adultsOnly={adultsOnly} vigencias={vigencias} hoy={hoy} tarifasExistentes={tarifasExistentes} {...ver} />}
-            {tipoCalc === "corporativa" && <CorporativaForm hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={corporativaInicial} adultsOnly={adultsOnly} tarifasExistentes={tarifasExistentes} {...ver} />}
+            {tipoCalc === "dubai" && <DubaiForm key={`dubai-${montaje}`} hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={inicialDe("dubai") as DubaiParams | null} adultsOnly={adultsOnly} tarifasExistentes={tarifasExistentes} vigencias={vigencias} {...ver} />}
+            {tipoCalc === "mixta" && <MixtaForm key={`mixta-${montaje}`} hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={inicialDe("mixta") as MixtaParams | null} adultsOnly={adultsOnly} vigencias={vigencias} hoy={hoy} tarifasExistentes={tarifasExistentes} {...ver} />}
+            {tipoCalc === "corporativa" && <CorporativaForm key={`corp-${montaje}`} hotelId={hotelId} categorias={categorias} temporadas={temporadas} regimenes={regimenes} inicial={inicialDe("corporativa") as CorporativaParams | null} adultsOnly={adultsOnly} tarifasExistentes={tarifasExistentes} {...ver} />}
           </div>
         </div>
       )}
@@ -246,8 +373,9 @@ export function CalculadoraEditor({
 
 // ── Formulario DUBAI ────────────────────────────────────────────────────
 function DubaiForm({
-  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, tarifasExistentes, version, onVersion, grupo,
-}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null; adultsOnly: boolean; tarifasExistentes: TarifaExistente[]; grupo?: ModoGrupo } & VersionCalc) {
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, tarifasExistentes, vigencias = [], guardar: guardarGeneral, iniciar, reportar, grupo,
+}: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: DubaiParams | null; adultsOnly: boolean; tarifasExistentes: TarifaExistente[]; /** Vigencias del hotel: habilitan la sección «una promoción sobre varias bases» (vacío en el modo grupo). */ vigencias?: TemporadaRango[]; grupo?: ModoGrupo } & VersionCalc) {
+  const monedaCruce = useContext(MonedaCalculadora);
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
@@ -378,6 +506,9 @@ function DubaiForm({
     infante_nota: infanteNota,
   }), [regimenBase, sencillaPct, pax3Pct, pax4Pct, ninoPct, nino2Pct, infantePct, infanteNota, suplementos, basesList, regimenes, promos]);
 
+  // #124: el editor sabe qué hay en pantalla (solo referencias, sin renders extra) para no perder cambios al reconciliar.
+  useEffect(() => { iniciar?.(params); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { reportar?.(params); });
   // Validación EN VIVO (preview) — la misma función pura que revalida el
   // servidor al guardar (`guardarCalculadora` → `validarDubaiParams`); acá
   // solo se usa para mostrar el error ANTES de intentar guardar, nunca como
@@ -386,12 +517,28 @@ function DubaiForm({
   const erroresDeBase = (indice: number) => erroresValidacion.filter((e) => e.origen === "base" && e.indice === indice);
   const erroresDePromo = (indice: number) => erroresValidacion.filter((e) => e.origen === "promo" && e.indice === indice);
 
-  const preview = useMemo(() => generarTarifasDubai(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
+  // Una sola generación por cambio de parámetros: alimenta la vista previa de bases, la de promociones por pares y la matriz de promociones por noche.
+  const filasDubai = useMemo(() => generarTarifasDubai(params), [params]);
+  const preview = useMemo(() => filasDubai.filter((f) => f.alimentacion === regimenBase), [filasDubai, regimenBase]);
   // Vista previa de promos: se muestran aparte porque pueden ser de OTRO régimen.
   const previewPromos = useMemo(() => {
     const nombresPromo = new Set(promos.map((p) => p.temporadaPromo?.trim()).filter(Boolean));
-    return generarTarifasDubai(params).filter((f) => nombresPromo.has(f.temporada));
-  }, [params, promos]);
+    return filasDubai.filter((f) => nombresPromo.has(f.temporada));
+  }, [filasDubai, promos]);
+  // Una promoción que cruza varias bases sucesivas se configura UNA vez (no una por base): el motor compartido toma cada noche la base que gana.
+  // La tarifa de cada base ya trae su suplemento de régimen, así que el % se aplica a la tarifa completa del régimen (misma regla que las promociones por pares).
+  const [regimenCruce, setRegimenCruce] = useState(regimenBase);
+  const promosCruce = useMemo(() => {
+    const aplica = (v: TemporadaRango) => v.regimen_restringido == null || v.regimen_restringido.trim() === regimenCruce.trim();
+    const sinConfigurar = [...new Set(vigencias.filter((v) => (v.tipo ?? "tarifa") === "descuento_pct" && v.promo_base_id == null && !v.promo_sigue_base).map((v) => v.nombre.trim()))]
+      .filter((n) => { const r = resolverBasePromo(n, vigencias, regimenCruce); return !r.ok && r.motivo === "varias_bases"; })
+      .map((nombre) => ({ nombre, activa: false }));
+    const activas = [...new Set(vigencias.filter((v) => v.promo_sigue_base === true && aplica(v)).map((v) => v.nombre.trim()))].map((nombre) => ({ nombre, activa: true }));
+    return [...sinConfigurar, ...activas];
+  }, [vigencias, regimenCruce]);
+  // Una vigencia que cruza varias bases y además está en un par «base → promo» (el mecanismo de siempre, que escribe una fila por base): se avisa en el par y se rotula en su selector.
+  const cruzaNombres = useMemo(() => new Set(promosCruce.map((p) => p.nombre)), [promosCruce]);
+  const matrizPreview = useMemo(() => (vigencias.some((v) => v.promo_sigue_base === true) ? promocionesSigueBase(vigencias, filasDubai as unknown as FilaTarifaFicha[], { adultsOnly }) : []), [vigencias, filasDubai, adultsOnly]);
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
     if (modo === "reemplazar" && !confirm(CONFIRMAR_REEMPLAZO)) return;
@@ -401,9 +548,8 @@ function DubaiForm({
     if (erroresValidacion.length > 0) { setMsg(erroresValidacion.map((e) => e.mensaje).join(" ")); return; }
     setMsg("");
     start(async () => {
-      const r = await guardarCalculadora(hotelId, "dubai", params, version);
+      const r = await guardarGeneral("dubai", params);
       if (!r.ok) { setMsg(r.error); return; }
-      onVersion(r.version);
       if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
       const g = await generarTarifasCalculadora(hotelId, modo, fotoTarifas(tarifasExistentes));
       setMsg(mensajeGeneracion(g, modo));
@@ -578,7 +724,7 @@ function DubaiForm({
                   <span className="text-gray-400">→</span>
                   <select value={p.temporadaPromo} onChange={(e) => editarPromo(i, { temporadaPromo: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
                     <option value="">— Elige la temporada promo —</option>
-                    {temporadas.map((t) => <option key={t} value={t}>{t}</option>)}
+                    {temporadas.map((t) => <option key={t} value={t}>{t}{cruzaNombres.has(t) ? " · cruza varias bases" : ""}</option>)}
                   </select>
                   <select value={p.regimen} onChange={(e) => editarPromo(i, { regimen: e.target.value })} className="rounded-lg border border-gray-300 bg-white px-2 py-1">
                     {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -590,6 +736,11 @@ function DubaiForm({
                   <button type="button" onClick={() => quitarPromo(i)} className="text-gray-400 hover:text-red-500">Quitar</button>
                 </div>
 
+                {cruzaNombres.has(p.temporadaPromo?.trim() ?? "") && (
+                  <p className="mt-1 text-[11px] text-amber-700" data-aviso-cruza>
+                    «{p.temporadaPromo}» cubre noches de varias bases: no necesitas una promoción por base. Usa «Una promoción sobre varias bases sucesivas» (más abajo) y quita este par.
+                  </p>
+                )}
                 {!adultsOnly && (
                   <>
                     <label className="mt-2 flex items-center gap-1.5 text-[11px] text-gray-600">
@@ -657,8 +808,20 @@ function DubaiForm({
         </div>
         <button type="button" onClick={agregarPromo} className="mt-2 text-xs font-medium" style={{ color: "var(--brand-accent)" }}>+ Agregar promoción</button>
       </div>
+      {vigencias.length > 0 && (
+        <div className="space-y-2">
+          <label className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+            Régimen de la vista previa de promociones por noche:
+            <select value={regimenCruce} onChange={(e) => setRegimenCruce(e.target.value)} className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs">
+              {regimenes.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </label>
+          <SeccionCruceBases tipo="dubai" promos={promosCruce} hotelId={hotelId} vigencias={vigencias} regimen={regimenCruce} filas={filasDubai.filter((f) => f.alimentacion === regimenCruce)} moneda={monedaCruce} />
+        </div>
+      )}
       {preview.length > 0 && <PreviewTabla titulo={`Vista previa (${regimenBase})`} filas={preview} ocultarNinos={adultsOnly} />}
       {previewPromos.length > 0 && <PreviewTabla titulo="Vista previa — promociones" filas={previewPromos} ocultarNinos={adultsOnly} />}
+      {matrizPreview.length > 0 && <PromocionesDinamicasBox promos={matrizPreview} moneda={monedaCruce} vistaPrevia />}
       <BotonesGuardar pending={pending} msg={msg} onGuardar={() => guardar("solo")} onAgregar={() => guardar("agregar")} onReemplazar={() => guardar("reemplazar")} />
       </>)}
     </div>
@@ -671,7 +834,7 @@ const ACOM_LABEL: Record<MixtaAcom, string> = { sencilla: "Sencilla", doble: "Do
 const CAMPO_LABEL: Record<CampoMixta, string> = { sencilla: "Sencilla", doble: "Doble", triple: "Triple", multiple: "Múltiple", nino: "Niño 1", nino2: "Niño 2", infante: "Infante" };
 
 function MixtaForm({
-  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, vigencias, hoy, tarifasExistentes, version, onVersion, grupo,
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, vigencias, hoy, tarifasExistentes, guardar: guardarGeneral, iniciar, reportar, grupo,
 }: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: MixtaParams | null; adultsOnly: boolean; vigencias: TemporadaRango[]; hoy: string; tarifasExistentes: TarifaExistente[]; grupo?: ModoGrupo } & VersionCalc) {
   const fmtM = useFormatoMoneda();
   const router = useRouter();
@@ -722,6 +885,8 @@ function MixtaForm({
     infante_nota: infanteNota,
   }), [regimen, acom, ninoIva, pax, vals, valoresPorRegimen, categorias, temporadas, infanteNota]);
 
+  useEffect(() => { iniciar?.(params); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { reportar?.(params); });
   const ctx = useMemo(() => ({ vigencias, hoy, tarifasExistentes }), [vigencias, hoy, tarifasExistentes]);
   const analisis = useMemo(() => analizarMixta(params, ctx), [params, ctx]);
   const { generables: preview, vencidas } = useMemo(() => {
@@ -730,7 +895,17 @@ function MixtaForm({
   }, [analisis, vigencias, hoy]);
   const avisosPromo = analisis.promos.filter((a) => a.estado !== "no_aplica_regimen");
   // Temporadas que son promociones % (se derivan, no se teclean).
-  const promosPct = useMemo(() => new Set(vigencias.filter((v) => v.tipo === "descuento_pct" && v.promo_base_id == null).map((v) => v.nombre.trim())), [vigencias]);
+  const promosPct = useMemo(() => new Set(vigencias.filter((v) => v.tipo === "descuento_pct" && v.promo_base_id == null && !v.promo_sigue_base).map((v) => v.nombre.trim())), [vigencias]);
+  // #125: promociones que cruzan varias bases (vista previa fechada + paso explícito al modo «seguir la base ganadora») y las que ya lo siguen.
+  const promosCruce = useMemo(() => [
+    ...avisosPromo.filter((a) => a.estado === "varias_bases").map((a) => ({ nombre: a.temporada, activa: false })),
+    ...[...new Set(vigencias.filter((v) => v.tipo === "descuento_pct" && v.promo_sigue_base && (v.regimen_restringido == null || v.regimen_restringido.trim() === regimen.trim())).map((v) => v.nombre.trim()))]
+      .map((nombre) => ({ nombre, activa: true })),
+  ], [avisosPromo, vigencias, regimen]);
+  const monedaCruce = useContext(MonedaCalculadora);
+  // #125: una promoción que sigue la base ganadora no tiene fila de tarifa ni valores que teclear: se muestra como fila dinámica de solo lectura y su matriz va abajo.
+  const sigueBaseNombres = useMemo(() => new Set(vigencias.filter((v) => v.promo_sigue_base === true).map((v) => v.nombre.trim())), [vigencias]);
+  const matrizPreview = useMemo(() => (sigueBaseNombres.size ? promocionesSigueBase(vigencias, analisis.filas as unknown as FilaTarifaFicha[], { adultsOnly }) : []), [sigueBaseNombres, vigencias, analisis, adultsOnly]);
   const avisoDe = (t: string) => analisis.promos.find((a) => a.temporada === t);
   const derivadaDe = (c: string, t: string) => analisis.filas.find((f) => f.temporada === t && f.tipo_habitacion === c && f.precio_final_autoritativo);
   const bloqueoDe = (c: string, t: string) => avisoDe(t)?.bloqueadas?.find((b) => b.categoria === c);
@@ -766,18 +941,16 @@ function MixtaForm({
     const [esperada] = aplicarAdultsOnly([calculo.fila], adultsOnly);
     setMsg("");
     start(async () => {
-      const r = await guardarCalculadora(hotelId, "mixta", paramsNuevos, version);
+      const r = await guardarGeneral("mixta", paramsNuevos);
       if (!r.ok) { setMsg(r.error); return; }
-      onVersion(r.version);
       const res = await sustituirPromoManualMixta(hotelId, { temporada: t, regimen, categoria: c }, valoresDeFila(esperada), fotoTarifas(tarifasExistentes));
       if (!res.ok) {
         // No se sustituyó nada: se devuelve la calculadora a como estaba (con
         // los valores tecleados de esa celda) para no perderlos. Condicionada a
         // la versión que dejó el guardado anterior: si otra persona la cambió
         // entretanto, no se pisa su cambio.
-        const rev = await guardarCalculadora(hotelId, "mixta", params, r.version);
-        if (rev.ok) onVersion(rev.version);
-        setMsg(rev.ok ? res.error : `${res.error} Además no se pudo restaurar la calculadora: ${rev.error}`);
+        const rev = await guardarGeneral("mixta", params);
+        setMsg(rev.ok ? res.error : `${res.error} Además no se pudo restaurar la calculadora${rev.error ? `: ${rev.error}` : " (ver el aviso de la calculadora)"}.`);
         router.refresh();
         return;
       }
@@ -791,9 +964,8 @@ function MixtaForm({
     if (modo === "reemplazar" && !confirm(CONFIRMAR_REEMPLAZO)) return;
     setMsg("");
     start(async () => {
-      const r = await guardarCalculadora(hotelId, "mixta", params, version);
+      const r = await guardarGeneral("mixta", params);
       if (!r.ok) { setMsg(r.error); return; }
-      onVersion(r.version);
       if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
       const g = await generarTarifasCalculadora(hotelId, modo, fotoTarifas(tarifasExistentes));
       setMsg(mensajeGeneracion(g, modo));
@@ -873,6 +1045,19 @@ function MixtaForm({
             </thead>
             <tbody>
               {categorias.flatMap((c) => temporadas.map((t) => {
+                if (sigueBaseNombres.has(t)) {
+                  return (
+                    <tr key={`${c}|${t}`} className="border-t border-gray-100 bg-[var(--brand-accent)]/5" data-promo-dinamica-fila={t}>
+                      <td className="px-2 py-1 text-xs font-medium text-gray-700" data-label="Categoría · Temporada">
+                        <span>{c} · {t}</span>
+                        <span className="ml-1.5 rounded-full bg-[var(--brand-accent)]/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[var(--brand-accent)]">Promo dinámica</span>
+                      </td>
+                      <td colSpan={camposVisibles.length} className="px-2 py-1 text-xs text-gray-500" data-label="Tarifa">
+                        <Lock className="mr-1 inline h-3 w-3" aria-hidden /> Se calcula por noche sobre la base ganadora: no se teclean ni se guardan valores aquí. Las tarifas resultantes están en «Tarifas resultantes de promociones por noche», más abajo.
+                      </td>
+                    </tr>
+                  );
+                }
                 const esPromo = promosPct.has(t);
                 const aviso = esPromo ? avisoDe(t) : undefined;
                 const derivada = esPromo ? derivadaDe(c, t) : undefined;
@@ -930,6 +1115,8 @@ function MixtaForm({
           ))}
         </ul>
       )}
+      <SeccionCruceBases tipo="mixta" promos={promosCruce} hotelId={hotelId} vigencias={vigencias} regimen={regimen} filas={analisis.filas} moneda={monedaCruce} />
+      {matrizPreview.length > 0 && <PromocionesDinamicasBox promos={matrizPreview} moneda={monedaCruce} vistaPrevia />}
       {vencidas.length > 0 && (
         <p className="text-[11px] text-gray-500">
           Vigencias con compra cerrada (no se regeneran; sus tarifas guardadas se conservan como histórico): {vencidas.join(", ")}.
@@ -962,7 +1149,7 @@ function valorFila(f: TarifaGenerada, campo: CampoMixta): number | null {
 
 // ── Formulario CORPORATIVA (tarifa por habitación + suplementos) ──────────
 function CorporativaForm({
-  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, tarifasExistentes, version, onVersion, grupo,
+  hotelId, categorias, temporadas, regimenes, inicial, adultsOnly, tarifasExistentes, guardar: guardarGeneral, iniciar, reportar, grupo,
 }: { hotelId: number; categorias: string[]; temporadas: string[]; regimenes: string[]; inicial: CorporativaParams | null; adultsOnly: boolean; tarifasExistentes: TarifaExistente[]; grupo?: ModoGrupo } & VersionCalc) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -999,15 +1186,16 @@ function CorporativaForm({
     infante_nota: infanteNota,
   }), [regimenBase, personaAdicional, ninoAdicional, impuestoPct, descuentoPct, suplementos, bases, infanteNota, regimenes, categorias, temporadas]);
 
+  useEffect(() => { iniciar?.(params); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { reportar?.(params); });
   const preview = useMemo(() => generarTarifasCorporativa(params).filter((f) => f.alimentacion === regimenBase), [params, regimenBase]);
 
   function guardar(modo: "solo" | "agregar" | "reemplazar") {
     if (modo === "reemplazar" && !confirm(CONFIRMAR_REEMPLAZO)) return;
     setMsg("");
     start(async () => {
-      const r = await guardarCalculadora(hotelId, "corporativa", params, version);
+      const r = await guardarGeneral("corporativa", params);
       if (!r.ok) { setMsg(r.error); return; }
-      onVersion(r.version);
       if (modo === "solo") { setMsg("✓ Calculadora guardada."); router.refresh(); return; }
       const g = await generarTarifasCalculadora(hotelId, modo, fotoTarifas(tarifasExistentes));
       setMsg(mensajeGeneracion(g, modo));

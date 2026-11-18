@@ -20,14 +20,18 @@ import {
   toTemporadaRango,
   marcar,
   type TemporadaRango,
+  type NocheNinoGratis,
 } from "@/lib/calc/paquetes";
+import { calcularBeneficioNinoGratis, asignarMenores } from "@/lib/hoteles/ninoGratis";
 import { basesPromoDeFilas, clavesPrecioFinal, filasPorClave, netosDeColumna } from "@/lib/calc/netosPorTemporada";
 import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
 import {
-  normalizarReglaEdadGeneral,
+  REGLA_SIN_MENORES,
+  validarEdadesGeneralesHotel,
   resolverReglaEdadEstadiaSegura,
   type FilaTarifaHotelEdadCruda,
   type ReglaEdadGeneralParcial,
+  type ReglaEdadTarifa,
 } from "@/lib/calc/reglaEdadTarifa";
 import { extraerCondicionesTarifa, type CondicionTarifaAplicada } from "@/lib/calc/condicionesTarifa";
 import {
@@ -69,8 +73,9 @@ import { referenciaPublicacion, incluidoPorUnidades, incluidoSeOmite } from "@/l
 import { idsDeJson, MENSAJE_EVIDENCIA_NO_DISPONIBLE, verificarComposicionPublicada } from "@/lib/reservar/composicionPublicada";
 import { resolverTarifaServicio, rangoCubrePax, MENSAJE_SIN_TARIFA } from "@/lib/calc/servicioTarifa";
 import { precioInfanteConServiciosOpcionales, type ServicioOpcionalSeleccionado } from "@/lib/paquetes/pvpInfanteFijo";
-import { contarMenoresDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
-import { impuestoPorPersona63, impuestoTotal63, monedaNormalizada63 } from "@/lib/reservar/ofertaDinamica63";
+import { contarMenoresDeDos, esMenorDeDos, tarifarMenores, totalMenoresDeDos, type ConteoMenores, type LineaMenor } from "@/lib/reservar/menoresDeDos";
+import { impuestoPorPersona63, impuestoTotal63, monedaNormalizada63, aMoneda63 } from "@/lib/reservar/ofertaDinamica63";
+import { ajustarNochesNinoGratis, ventaNinoCondonada } from "@/lib/reservar/ninoGratisPrecio";
 import { resolverOfertaSalida63, type Oferta63 } from "@/lib/reservar/prepararOferta63";
 import type { VigenciaCompra63 } from "@/lib/reservar/aceptacion63";
 
@@ -149,6 +154,12 @@ export type ReservaInput = {
     monedaCobro?: string | null; trmCobro?: number | null } | null;
 };
 
+/** #125: niño(s) gratis concedidos. `ninos[].venta` = lo condonado del PVP de ESE niño (alojamiento; el resumen por pasajero y la línea firmada usan exactamente este importe); `posicion` = lugar dentro de su línea de tarifa. */
+export type BeneficioNinoGratisComputo = {
+  total: number; descripcion: string; costoNeto: number;
+  ninos: { clase: "nino" | "nino2"; venta: number; edad: number | null; habitacion: number; posicion: number }[];
+};
+
 export type ComputoReserva = {
   origen: OrigenVuelo;
   meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
@@ -213,6 +224,8 @@ export type ComputoReserva = {
   cargoMascota: { total: number; descripcion: string | null } | null; // cargo de mascota (0 = gratis), ya incluido en precioVenta
   // #120: residuo de redondeo de «Distribuir» frente a «Cargar hotel a los adultos» (mismo total vendido), ya incluido en precioVenta; línea explícita en cotización y contrato. null = sin residuo.
   ajusteRedondeo?: { total: number; descripcion: string } | null;
+  // #125: «un niño gratis por habitación» (solo alojamiento del hotel promocionado), ya restado de precioVenta. `total` ≤ 0; `costoNeto` = neto del hotel que deja de pagarse. null = sin beneficio.
+  beneficioNinoGratis?: BeneficioNinoGratisComputo | null;
   notaMascota: string | null;  // anotación informativa (ej. "máximo 1 mascota por habitación")
   // Condiciones de tarifa/promoción REALMENTE APLICADAS (texto libre de
   // `tarifa_hotel.notas`, ej. "No reembolsable") — solo de las filas que
@@ -282,7 +295,7 @@ function resolverMenoresPorEdad(
   pvpPorAcom: Record<string, number>,
   reglas: AcomConfig[],
   adultosReales?: number | null
-): { ok: true; numNinos: number; numNinos2: number; numInfantes: number; distribucion: AsignacionHabitacion[]; edades: number[] } | { ok: false; error: string } {
+): { ok: true; numNinos: number; numNinos2: number; numInfantes: number; distribucion: AsignacionHabitacion[]; edades: number[]; edadesNinos: number[] } | { ok: false; error: string } {
   const vCant = validarCantidadMenores(input.cantidadMenores);
   if (!vCant.ok) return { ok: false, error: vCant.error };
   const vEdades = validarEdadesMenores(input.edadesMenores, vCant.cantidad);
@@ -322,7 +335,9 @@ function resolverMenoresPorEdad(
   // (nunca la misma referencia que `input.edadesMenores`) — mutar el objeto
   // original del llamador después de este punto no puede alterar lo que se
   // devuelve aquí ni lo que termine en el snapshot (ver checkout/actions.ts).
-  return { ok: true, numNinos: rDist.totales.nino, numNinos2: rDist.totales.nino2, numInfantes: rDist.totales.infantes, distribucion: rDist.habitaciones, edades: vEdades.edades };
+  return { ok: true, numNinos: rDist.totales.nino, numNinos2: rDist.totales.nino2, numInfantes: rDist.totales.infantes, distribucion: rDist.habitaciones, edades: vEdades.edades,
+    // #125: edades (años cumplidos) de los menores de tarifa NIÑO — sin infantes —; el reparto por habitación no las liga a una habitación concreta.
+    edadesNinos: vEdades.edades.filter((e) => clasificarPorEdad([e], infanteMax, ninoMax).ninos === 1) };
 }
 
 // Best-effort: ¿la generación del tarifario de este paquete falló? Cualquier error de lectura se trata como «no» (queda el mensaje genérico de siempre).
@@ -489,6 +504,10 @@ export async function computarReserva(
   let numInfantes = Math.max(0, Math.trunc(Number(input.infantes) || 0));
   let distribucionMenores: AsignacionHabitacion[] | null = null;
   let edadesMenoresUsadas: number[] | null = null;
+  // #125: edades de los menores de tarifa Niño y noches que ganó una promoción con «un niño gratis por habitación» (neto de la clase, ya ajustado).
+  let edadesNinosUsadas: number[] | null = null;
+  const nochesNinoGratis: Partial<Record<"nino" | "nino2", NocheNinoGratis[]>> = {};
+  const nochesNinoGratisSet = (clase: "nino" | "nino2", n: NocheNinoGratis[] | undefined) => { if (n?.length) nochesNinoGratis[clase] = n; };
   const numMascotas = Math.max(0, Math.trunc(Number(input.mascotas) || 0));
   let meta: { hotel_nombre: string | null; destino_nombre: string | null; fecha_ida: string | null; fecha_regreso: string | null };
   let monedaReserva = "COP";  // moneda del paquete (USD si los hoteles son internacionales)
@@ -609,7 +628,14 @@ export async function computarReserva(
       infanteMin: hotelRowF?.edad_infante_min ?? null, infanteMax: hotelRowF?.edad_infante_max ?? null,
       ninoMin: hotelRowF?.edad_nino_min ?? null, ninoMax: hotelRowF?.edad_nino_max ?? null,
     };
-    let reglaEdadF = normalizarReglaEdadGeneral(generalEdadF);
+    // O3: la configuración de edades del hotel es OBLIGATORIA si hay menores (declarados por edad o por conteo): sin ella no se cotiza ni se reserva y el motivo es accionable.
+    // Sin menores la regla no se usa (`REGLA_SIN_MENORES`), así que una reserva de solo adultos nunca depende de ella. Un override de tarifa no la reemplaza.
+    let reglaEdadF: ReglaEdadTarifa = REGLA_SIN_MENORES;
+    if (hayMenoresDeclarados) {
+      const gF = validarEdadesGeneralesHotel(generalEdadF, meta.hotel_nombre);
+      if (!gF.ok) return { ok: false, error: gF.error };
+      reglaEdadF = gF.regla;
+    }
     const acomsSeleccionadasF = ACOM_ROOMS.filter((a) => Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0)) > 0);
     const temporadasSeleccionadasF = new Set<string>();
     for (const a of acomsSeleccionadasF) for (const t of combo.temporadasTarifaPorAcom?.[a] ?? []) temporadasSeleccionadasF.add(t);
@@ -633,12 +659,14 @@ export async function computarReserva(
         .eq("alimentacion", input.regimen)
         .in("temporada", [...temporadasCondicionesF]);
       if (tarEdadErr) return { ok: false, error: `No se pudo validar la regla de edad de la tarifa: ${tarEdadErr.message}` };
-      const rEdadF = resolverReglaEdadEstadiaSegura({
-        filas: (tarEdad ?? []) as FilaTarifaHotelEdadCruda[], categoria: input.categoria, regimen: input.regimen,
-        temporadasUsadas: temporadasSeleccionadasF, general: generalEdadF,
-      });
-      if (!rEdadF.ok) return { ok: false, error: rEdadF.error };
-      reglaEdadF = rEdadF.regla;
+      if (hayMenoresDeclarados) {
+        const rEdadF = resolverReglaEdadEstadiaSegura({
+          filas: (tarEdad ?? []) as FilaTarifaHotelEdadCruda[], categoria: input.categoria, regimen: input.regimen,
+          temporadasUsadas: temporadasSeleccionadasF, general: generalEdadF,
+        });
+        if (!rEdadF.ok) return { ok: false, error: rEdadF.error };
+        reglaEdadF = rEdadF.regla;
+      }
       // Condiciones de tarifa/promoción realmente aplicadas — mismas filas ya
       // cargadas (ampliadas arriba para incluir la vigencia ganadora), nunca
       // una consulta ni resolución paralela (ver lib/calc/condicionesTarifa.ts).
@@ -658,7 +686,10 @@ export async function computarReserva(
       numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
       distribucionMenores = rMenores.distribucion;
       edadesMenoresUsadas = rMenores.edades;
+      edadesNinosUsadas = rMenores.edadesNinos;
     }
+    if (combo.ninoGratisNoches?.nino) nochesNinoGratis.nino = combo.ninoGratisNoches.nino;
+    if (combo.ninoGratisNoches?.nino2) nochesNinoGratis.nino2 = combo.ninoGratisNoches.nino2;
     for (const a of ACOM_ROOMS) {
       const rooms = Math.max(0, Math.trunc(Number(input.habitaciones?.[a]) || 0));
       if (rooms <= 0 || pvpPorAcom[a] == null) continue;
@@ -860,7 +891,13 @@ export async function computarReserva(
       infanteMin: hotelRow?.edad_infante_min ?? null, infanteMax: hotelRow?.edad_infante_max ?? null,
       ninoMin: hotelRow?.edad_nino_min ?? null, ninoMax: hotelRow?.edad_nino_max ?? null,
     };
-    let reglaEdad = normalizarReglaEdadGeneral(generalEdad);
+    // O3: ver la nota de la ruta por fechas — obligatoria con menores, irrelevante sin ellos.
+    let reglaEdad: ReglaEdadTarifa = REGLA_SIN_MENORES;
+    if (hayMenoresDeclarados) {
+      const g = validarEdadesGeneralesHotel(generalEdad, meta?.hotel_nombre ?? null);
+      if (!g.ok) return { ok: false, error: g.error };
+      reglaEdad = g.regla;
+    }
 
     // `lineasHab` se arma ANTES de resolver menores/regla de edad — no
     // depende de ellas (solo de habitaciones × pvp del tarifario congelado).
@@ -953,12 +990,14 @@ export async function computarReserva(
           for (const p of r.procedencia) nombresVigHotel63.add(p.temporadaGanadora);
         }
       }
-      const rEdad = resolverReglaEdadEstadiaSegura({
-        filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen,
-        temporadasUsadas: temporadasEstadia, general: generalEdad,
-      });
-      if (!rEdad.ok) return { ok: false, error: rEdad.error };
-      reglaEdad = rEdad.regla;
+      if (hayMenoresDeclarados) {
+        const rEdad = resolverReglaEdadEstadiaSegura({
+          filas: tarRowsVig, categoria: input.categoria, regimen: input.regimen,
+          temporadasUsadas: temporadasEstadia, general: generalEdad,
+        });
+        if (!rEdad.ok) return { ok: false, error: rEdad.error };
+        reglaEdad = rEdad.regla;
+      }
       // Condiciones de tarifa/promoción realmente aplicadas — mismas filas
       // (`tarRowsVig`), conjunto de temporadas AMPLIADO (`temporadasCondiciones`,
       // ver comentario arriba) — nunca una consulta ni resolución paralela
@@ -974,6 +1013,7 @@ export async function computarReserva(
       numNinos = rMenores.numNinos; numNinos2 = rMenores.numNinos2; numInfantes = rMenores.numInfantes;
       distribucionMenores = rMenores.distribucion;
       edadesMenoresUsadas = rMenores.edades;
+      edadesNinosUsadas = rMenores.edadesNinos;
     }
     // Menores (migración 226) — misma regla que la rama por fechas de arriba.
     menoresDeDos = contarMenoresDeDos(input.edadesMenores !== undefined ? edadesMenoresUsadas : null, reglaEdad.infanteMax, { infante: numInfantes, nino: numNinos, nino2: numNinos2 });
@@ -1010,12 +1050,14 @@ export async function computarReserva(
         if (lp == null) return { ok: false, error: TARIFA_VENCIDA };
         if (!lp.ok) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
         netoPorAcom["nino"] = aplicarDescuentoNeta(lp.r.total, lp.descuento, monedaHotelOrigen63);
+        nochesNinoGratisSet("nino", ajustarNochesNinoGratis(lp.r.ninoGratisNoches, (suma) => aplicarDescuentoNeta(suma, lp.descuento, monedaHotelOrigen63)));
       }
       if (numNinos2 > 0) {
         const lp = costoConPrecedencia({ fechaIda: meta.fecha_ida!, numNoches: numNochesVig, temporadas: temporadasVig, netoPorTemporada: netoPorTemporadaDe(tarRowsVig as TarRow[], "nino2"), regimen: input.regimen, precioFinalTemporadas: precioFinalTemporadasMenores, basePromoPorClave: basePromoMenores, acomodacion: "nino2" });
         if (lp == null) return { ok: false, error: TARIFA_VENCIDA };
         if (!lp.ok) return { ok: false, error: MENSAJE_PRECEDENCIA_90 };
         netoPorAcom["nino2"] = aplicarDescuentoNeta(lp.r.total, lp.descuento, monedaHotelOrigen63);
+        nochesNinoGratisSet("nino2", ajustarNochesNinoGratis(lp.r.ninoGratisNoches, (suma) => aplicarDescuentoNeta(suma, lp.descuento, monedaHotelOrigen63)));
       }
       // Infante: a diferencia de niño, si no está configurado NO bloquea la
       // reserva (queda gratis) — evita romper reservas de hoteles que todavía
@@ -1070,6 +1112,50 @@ export async function computarReserva(
     if (totalMascota > 0) {
       precioVenta += totalMascota;
       cargoMascota = { total: totalMascota, descripcion: petCostoDesc };
+    }
+  }
+
+  // #125: «un niño gratis por habitación» de la promoción que ganó las noches. SOLO alojamiento del hotel promocionado: lo que se condona es el PVP del niño menos el PVP recompuesto SIN
+  // su alojamiento pagadero de esas noches (vuelo, servicios e impuesto se conservan; el redondeo se rehace) — nunca el PVP completo de un paquete. Ninguna omisión silenciosa (F4): si hay niños y
+  // el beneficio no se puede resolver (sin edades por niño, sin desglose del precio, oferta con TRM sin TRM, menor de 2 años en tarifa Niño) la cotización se rechaza con una explicación accionable.
+  let beneficioNinoGratis: BeneficioNinoGratisComputo | null = null;
+  if (!esServicios && (nochesNinoGratis.nino?.length || nochesNinoGratis.nino2?.length) && numNinos + numNinos2 > 0) {
+    if (!distribucionMenores) {
+      return { ok: false, error: "Este hotel tiene una promoción con un niño gratis por habitación, que se calcula con la edad de cada niño y su habitación. Declara la edad de cada niño (no solo las cantidades de Niño 1 y Niño 2) para cotizar con la promoción." };
+    }
+    const monedaHotelNG = rutaVivo90 ? monedaNormalizada63(monedaReserva) : monedaHotelOrigen63;
+    if (oferta63 && monedaHotelNG !== oferta63.moneda && !((oferta63.trm ?? 0) > 0)) {
+      return { ok: false, error: "Este hotel tiene una promoción con un niño gratis por habitación y la oferta convierte monedas con TRM, pero la TRM de la oferta no está disponible: no se puede calcular el beneficio. Define la TRM de la oferta antes de cotizar." };
+    }
+    const aMonedaVentaNG = oferta63 ? (n: number) => aMoneda63(n, monedaHotelNG, oferta63!.moneda, oferta63!.trm ?? null) : undefined;
+    let faltaDesglose = false;
+    const b = calcularBeneficioNinoGratis({
+      habitaciones: distribucionMenores.map((d) => ({ indice: d.indice, adultos: d.adultos, nino: d.nino, nino2: d.nino2, infantes: d.infantes })),
+      edades: edadesNinosUsadas, nochesNino: nochesNinoGratis.nino, nochesNino2: nochesNinoGratis.nino2, pctMk, aMonedaVenta: aMonedaVentaNG,
+      ventaCondonada: (clase, neto) => {
+        if (!composicionBase || pvpPorAcom[clase] == null || netoPorAcom[clase] == null) { faltaDesglose = true; return 0; }
+        return ventaNinoCondonada({ pvpCobrado: pvpPorAcom[clase], netoPagadero: netoPorAcom[clase], netoCondonado: neto, base: composicionBase, moneda: monedaReserva, aMonedaVenta: aMonedaVentaNG });
+      },
+    });
+    if (b?.bloqueo) return { ok: false, error: b.bloqueo };
+    if (faltaDesglose) return { ok: false, error: "Este hotel tiene una promoción con un niño gratis por habitación, pero el tarifario publicado no conserva el desglose de su precio para aplicarla solo al alojamiento. Regenera el tarifario del paquete antes de cotizar." };
+    if (b) {
+      if (b.ninos.some((n) => n.edad != null && esMenorDeDos(n.edad))) {
+        return { ok: false, error: "El niño gratis de la promoción corresponde a un menor de 2 años con tarifa de Niño; ese caso todavía no se calcula. Consulta con el área de producto antes de cotizar." };
+      }
+      // Explicación visible (documentos): quién es el niño gratis y por qué otras habitaciones no lo tienen. Sin netos ni detalle por noche.
+      condicionesTarifa = [...condicionesTarifa, ...b.explicaciones.map((texto) => ({ temporada: b.ninos[0]?.promocion ?? "Niño gratis", texto }))];
+      if (b.total !== 0) {
+        precioVenta += b.total;
+        // Posición de cada niño gratis DENTRO de su línea de tarifa (clase de 2 años o más, en el orden declarado): es la identidad con que el resumen por pasajero le baja SU tarifa.
+        const cont = { nino: 0, nino2: 0 };
+        const posDe = new Map<number, number>();
+        for (const m of asignarMenores(distribucionMenores.map((d) => ({ indice: d.indice, adultos: d.adultos, nino: d.nino, nino2: d.nino2, infantes: d.infantes })), edadesNinosUsadas)) {
+          if (m.edad != null && esMenorDeDos(m.edad)) continue;
+          posDe.set(m.orden, cont[m.clase]++);
+        }
+        beneficioNinoGratis = { total: b.total, descripcion: b.descripcion, costoNeto: b.costoNeto, ninos: b.ninos.map((n) => ({ clase: n.clase, venta: n.venta, edad: n.edad, habitacion: n.habitacion, posicion: posDe.get(n.orden) ?? 0 })) };
+      }
     }
   }
 
@@ -1421,6 +1507,7 @@ export async function computarReserva(
           ...cargosGrupoComposicion.map((x) => ({ tipo: "servicio_grupo" as const, nombre: x.nombre, total: x.pvp })),
           ...(cargoMascota && cargoMascota.total !== 0 ? [{ tipo: "mascota" as const, nombre: cargoMascota.descripcion ?? "Cargo de mascota", total: cargoMascota.total }] : []),
           ...(ajusteRedondeo ? [{ tipo: "ajuste_redondeo" as const, nombre: ajusteRedondeo.descripcion, total: ajusteRedondeo.total }] : []),
+          ...(beneficioNinoGratis ? [{ tipo: "nino_gratis" as const, nombre: beneficioNinoGratis.descripcion, total: beneficioNinoGratis.total }] : []),
         ],
       })
     : null;
@@ -1437,6 +1524,6 @@ export async function computarReserva(
 
   return {
     ok: true,
-    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, pvpInfanteSinFijo: { ...pvpInfanteSinFijo }, netoPorAcom, netoHabitacionPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
+    data: { origen, meta, pvpPorAcom, pvpMenor2PorAcom, pvpInfanteSinFijo: { ...pvpInfanteSinFijo }, netoPorAcom, netoHabitacionPorAcom, precioVenta, paxConSilla, totalPax, numNinos, numNinos2, numInfantes, menoresDeDos, numMenoresDeDos, lineasMenores, distribucionMenores, edadesMenoresUsadas, lineasHab, serviciosItems, serviciosIncluidos, impuestoTotal, monedaReserva, notaNino: ninoNotaTxt, cargoMascota, ajusteRedondeo, notaMascota: petNotaTxt, condicionesTarifa, composicion, descuentoHotel, ...(beneficioNinoGratis ? { beneficioNinoGratis } : {}), oferta63: oferta63 ? { ...oferta63, monedaHotel: monedaHotelOrigen63, monedaServicios: monedaServicios63 } : null, vigencias63 },
   };
 }

@@ -19,7 +19,7 @@ export default async function PortalDocumentos() {
 
   const [conjunto, linkPago] = await Promise.all([cargarConjuntoPortal(ctx, { abonos: true, vouchers: true }), linkPagoPortal()]);
   // Solo contratos PROPIOS: participar por comisión no da acceso a los documentos del contrato.
-  const filas = documentosDe(conjunto.ventas, conjunto.vouchers, conjunto.abonos);
+  const filas = documentosDe(conjunto.ventas, conjunto.vouchers, conjunto.abonos, conjunto.vouchersRetenidos);
   const incompleto = !conjunto.abonosCompletos || !conjunto.vouchersCompletos;
 
   return (
@@ -49,7 +49,7 @@ export default async function PortalDocumentos() {
                   {d.contratoToken ? <Link href={`/c/${d.contratoToken}`} target="_blank" className={ENLACE} style={COLOR}>Imprimir / Guardar PDF</Link> : NO}
                 </td>
                 <td data-label="Voucher" className="px-3 py-2">
-                  {d.vouchers.length === 0 ? NO : (
+                  {d.vouchers.length === 0 ? (d.voucherRetenido ? <span className="text-xs text-gray-500">Disponible cuando el contrato esté 100 % pagado</span> : NO) : (
                     <ul className="space-y-0.5">
                       {d.vouchers.map((v, i) => (
                         <li key={v.token}><Link href={`/voucher/${v.token}`} target="_blank" className={ENLACE} style={COLOR}>{v.tipo ? `Voucher ${v.tipo}` : `Voucher ${i + 1}`}</Link></li>

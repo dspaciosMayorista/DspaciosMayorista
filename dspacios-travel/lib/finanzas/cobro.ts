@@ -121,3 +121,18 @@ export function cobroDeVenta(v: VentaCobro | null | undefined): CobroContrato {
   }
   return { moneda: monedaOferta, total: precioOferta, convertido: false, trm: null, monedaOferta, precioOferta };
 }
+
+/**
+ * Documentos de CLIENTE (owner correction 2026-11-18): lo pagado se muestra en la moneda de la OFERTA. Los abonos se llevan en la moneda de COBRO
+ * (p. ej. COP 1.230.000); con la TRM de cobro CONGELADA se expresan en la de la oferta (÷ TRM si cobro COP y oferta USD; × TRM en el caso inverso).
+ * Pagar el total a cobrar completo (o más) equivale a la oferta completa: el redondeo al mil del total convertido nunca deja un saldo ni un exceso fantasma.
+ * Solo presentación: no toca abonos, saldos internos ni la TRM congelada.
+ */
+export function pagadoEnMonedaOferta(pagadoCobro: number, cobro: CobroContrato): number {
+  const pagado = num(pagadoCobro);
+  if (!cobro.convertido || !cobro.trm) return pagado;
+  if (pagado >= cobro.total) return cobro.precioOferta;
+  const convertido = centavos(cobro.moneda === "COP" ? pagado / cobro.trm : pagado * cobro.trm);
+  // Pagado un peso menos que el total a cobrar: el redondeo a centavos no puede mostrar «saldo 0» mientras aún falta dinero.
+  return Math.min(convertido, centavos(cobro.precioOferta - 0.01));
+}

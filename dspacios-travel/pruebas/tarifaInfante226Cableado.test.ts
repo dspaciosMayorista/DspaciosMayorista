@@ -206,9 +206,11 @@ describe("los caminos de venta usan la fuente única de menores de 2 años", () 
     assert.match(checkout, /lineasMenores,\n\s*\}\);/);
   });
   test("buscador de hoteles: los menores se tarifan con tarifarMenores y el rango de grupo NO cuenta al menor de 2 años", () => {
-    assert.match(buscador, /tarifarMenores\(\{/);
-    assert.match(buscador, /const paxGrupo = pax;/);
-    assert.doesNotMatch(buscador, /pax \+ menores\.infantes/);
+    // #102: el cálculo vive en el motor puro compartido (composicionHotelBusqueda.ts).
+    const motor = leer("lib/reservar/composicionHotelBusqueda.ts");
+    assert.match(motor, /tarifarMenores\(\{/);
+    assert.match(motor, /cargoGrupoIncluido\(e\.res\.serviciosGrupoIncluidos, pax,/);
+    assert.doesNotMatch(motor, /pax \+ menores\.infantes/);
     assert.match(buscador, /precio_persona, precio_infante, liquidacion, proveedor_id/);
   });
   test("generador: cada fuente de vuelo pasa su fee_infante (precio = costo, sin MK ni TA) y el infante sin tarifa de hotel se publica", () => {

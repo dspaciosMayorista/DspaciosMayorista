@@ -1,0 +1,100 @@
+{
+ "origen": "Persisted by real actions on the disposable copy (crearCotizacion → B2B-assisted NETO quotation → convertirCotizacion), VERIF-GAPS 2026-11-18; C-0005 shape. Fixture only: copied, not edited.",
+ "pvp_cotizacion": {
+  "id": 1,
+  "total": 1757000,
+  "estado": "abierta"
+ },
+ "plan": {
+  "version": 1,
+  "aliado_id": 26201,
+  "aliado_nombre": "Agencia Neto 262",
+  "aliado_documento": null,
+  "aliado_tipo_documento": "NIT",
+  "tipo_asesor": "agencia",
+  "modo_compra": "neta",
+  "moneda": "COP",
+  "pvp": 1757000,
+  "impuesto": 0,
+  "base": 1757000,
+  "pct": 0.1,
+  "pct_origen": "aliado",
+  "comision": 175700,
+  "comision_estado": "descontada",
+  "total_exigible": 1581300,
+  "lineas": [
+   {
+    "clave": "item-0",
+    "pvp": 1757000,
+    "impuesto": 0
+   }
+  ],
+  "asistido_por": {
+   "id": "00000000-0000-0000-0000-000000262002",
+   "email": "u262_admin@x.test",
+   "rol": "administracion"
+  },
+  "origen": "asistida",
+  "congelado_en": "2026-11-18T16:07:26.056Z"
+ },
+ "numero": "DTM-0001",
+ "venta": {
+  "numero_contrato": "DTM-0001",
+  "estado": "pendiente",
+  "precio_venta": 1581300,
+  "impuesto": 0,
+  "comision_b2b": 175700,
+  "comision_estado": "descontada",
+  "modo_compra": "neta",
+  "canal": "B2B",
+  "aliado_id": 26201,
+  "moneda": "COP"
+ },
+ "items": [
+  {
+   "id": 1,
+   "orden": 0,
+   "descripcion": "1 hab Doble (2 pax) · Estandar / PAM",
+   "modo_precio": "por_persona",
+   "adultos": 2,
+   "ninos": 0,
+   "tarifa_adulto": 732000,
+   "tarifa_nino": 0,
+   "valor_total": null
+  },
+  {
+   "id": 2,
+   "orden": 50,
+   "descripcion": "Niño 1 · Estandar / PAM",
+   "modo_precio": "por_persona",
+   "adultos": 0,
+   "ninos": 1,
+   "tarifa_adulto": 0,
+   "tarifa_nino": 366000,
+   "valor_total": null
+  },
+  {
+   "id": 3,
+   "orden": 51,
+   "descripcion": "Niño 2 · Estandar / PAM",
+   "modo_precio": "por_persona",
+   "adultos": 0,
+   "ninos": 1,
+   "tarifa_adulto": 0,
+   "tarifa_nino": 293000,
+   "valor_total": null
+  },
+  {
+   "id": 4,
+   "orden": 203,
+   "descripcion": "Hotel PRE BF 125 ACTIVO · Niño gratis por habitación · PRE BF (hab. 1: niño de 8 años (Niño 1))",
+   "modo_precio": "por_persona",
+   "adultos": 1,
+   "ninos": 0,
+   "tarifa_adulto": -366000,
+   "tarifa_nino": 0,
+   "valor_total": null
+  }
+ ],
+ "resumen_precios": "{\"moneda\": \"COP\", \"version\": 1, \"unidades\": [{\"ref\": \"item-0\", \"hotel\": \"Hotel PRE BF 125 ACTIVO\", \"grupos\": [{\"tipo\": \"adulto\", \"cupos\": [\"adulto:doble#1\", \"adulto:doble#2\"], \"incluye\": [], \"cantidad\": 2, \"tarifaCentavos\": 65880000, \"subtotalCentavos\": 131760000, \"tarifaExactaCentavos\": 65880000}, {\"tipo\": \"nino\", \"cupos\": [\"nino#1\"], \"incluye\": [], \"cantidad\": 1, \"tarifaCentavos\": 0, \"subtotalCentavos\": 0, \"tarifaExactaCentavos\": 0}, {\"tipo\": \"nino2\", \"cupos\": [\"nino2#1\"], \"incluye\": [], \"cantidad\": 1, \"tarifaCentavos\": 26370000, \"subtotalCentavos\": 26370000, \"tarifaExactaCentavos\": 26370000}], \"paquete\": {\"id\": 912503, \"nombre\": \"Paquete PRE BF 125 ACTIVO\"}, \"regimen\": \"PAM\", \"categoria\": \"Estandar\", \"totalCentavos\": 158130000, \"ajusteCentavos\": 0}], \"modalidad\": \"neto\", \"totalCentavos\": 158130000}"
+}

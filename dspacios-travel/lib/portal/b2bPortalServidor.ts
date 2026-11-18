@@ -19,6 +19,7 @@ import { contratosPorParticipacion } from "@/lib/auth/participacionComisionB2B";
 import { leerTodoConConteo, PAGINA_FILAS, type PaginaConConteo } from "@/lib/auth/fichaComisionManual";
 import { comisionesDelPortal, type ComisionPortal } from "@/lib/finanzas/comisionPortal";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { contratosPagadosCompletos } from "@/lib/voucher/pagoCompleto";
 import { clasificarComparativas, ordenarContratosDesc, type AbonoPortal, type MetaComparativa, type VentaPortal, type VoucherPortal } from "@/lib/portal/b2bPortal";
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -118,6 +119,8 @@ export type ConjuntoPortal = {
   abonosCompletos: boolean;
   vouchers: VoucherPortal[];
   vouchersCompletos: boolean;
+  /** Contratos con voucher preparado que NO se enlazan porque no están 100 % pagados (o no se pudo verificar: falla cerrado). */
+  vouchersRetenidos: ReadonlySet<string>;
   /** Filas crudas (monedas de oferta para la comisión). */
   crudas: Map<string, Fila>;
 };
@@ -169,6 +172,7 @@ export async function cargarConjuntoPortal(ctx: Ok, opts: { abonos?: boolean; vo
   }
   let vouchers: VoucherPortal[] = [];
   let vouchersCompletos = true;
+  let vouchersRetenidos: ReadonlySet<string> = new Set();
   if (opts.vouchers && nums.length) {
     const r = await leerPorLotes<Fila>(nums, (lote, d, h) =>
       admin.from("vouchers").select("id, numero_contrato, tipo, share_token", { count: "exact" })
@@ -176,11 +180,23 @@ export async function cargarConjuntoPortal(ctx: Ok, opts: { abonos?: boolean; vo
     // `contenido` no se descarga (pesa); el filtro de arriba ya garantiza que existe.
     vouchers = (r.filas as unknown as VoucherPortal[]).map((v) => ({ ...v, contenido: true }));
     vouchersCompletos = r.completa;
+    // #53 (307): el aliado solo recibe el enlace de un voucher cuando el contrato está 100 % pagado (criterio único de la base, moneda de cobro y tolerancia incluidas).
+    // Si no se puede verificar el pago NO se enlaza nada y se avisa que la lista puede estar incompleta (falla cerrado).
+    const conVoucher = [...new Set(vouchers.map((v) => v.numero_contrato))];
+    const pagados = await contratosPagadosCompletos(conVoucher);
+    if (pagados === null) {
+      vouchersRetenidos = new Set(conVoucher);
+      vouchers = [];
+      vouchersCompletos = false;
+    } else {
+      vouchersRetenidos = new Set(conVoucher.filter((n) => !pagados.has(n)));
+      vouchers = vouchers.filter((v) => pagados.has(v.numero_contrato));
+    }
   }
 
   return {
     ventas, participacionCompleta: part.completa, legacyNoVerificado: propios.legacyNoVerificado, historicoIncompleto: propios.incompleto,
-    comisiones, abonos, abonosCompletos, vouchers, vouchersCompletos, crudas,
+    comisiones, abonos, abonosCompletos, vouchers, vouchersCompletos, vouchersRetenidos, crudas,
   };
 }
 

@@ -3,6 +3,7 @@
 // PURO (sin I/O; imports relativos con extensión para probarlo con `node --test`).
 
 import { esLineaAjusteRedondeo } from "../reservar/solicitudHotel.ts";
+import { esLineaNinoGratis } from "../reservar/ninoGratisLinea.ts";
 import { esLineaVueloManual } from "../cart/servicioManual.ts";
 
 export type GrupoDesglose = "hotel" | "paquete" | "vuelo" | "servicio" | "suplemento" | "ajuste" | "otro";
@@ -42,6 +43,7 @@ const RE_UNIDAD = /habitación\(es\), \d+ viajero\(s\)/;
 
 function grupoDe(d: string): GrupoDesglose {
   if (esLineaAjusteRedondeo(d)) return "ajuste";
+  if (esLineaNinoGratis(d)) return "hotel"; // #125: reducción del alojamiento (línea firmada)
   if (esLineaVueloManual(d)) return "vuelo";
   if (d.startsWith("Servicio · ") || d.endsWith("Servicios incluidos por grupo")) return "servicio";
   if (d.startsWith("Mascota · ") || d === "Cargo de mascota") return "suplemento";

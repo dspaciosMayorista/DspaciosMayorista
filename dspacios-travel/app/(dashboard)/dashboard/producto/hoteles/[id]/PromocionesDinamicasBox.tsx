@@ -3,7 +3,8 @@
 // `promocionesDinamicasHotel` en el servidor con la misma cuenta del motor; aquí solo se reorganizan (patrón del tarifario: una
 // tarjeta por categoría y «Ver tarifas» con el detalle por alimentación y acomodación). Abrir el detalle no consulta nada.
 import { useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Lock, Sparkles } from "lucide-react";
+import { formatFechaLarga } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { agruparPromoPorCategoria, formatNetoTarifa, textoCuentaPromo, type CategoriaPromo } from "@/lib/hoteles/tarifasVista";
 import { ETIQUETA_UNIDAD } from "@/lib/calc/promocionesGrupo";
@@ -13,7 +14,10 @@ type Detalle = { promo: PromoDinamica; vigencia: string; categoria: CategoriaPro
 
 const textoTipo = (p: PromoDinamica) => (p.tipo === "descuento_pct" ? "descuento %" : `descuento ${p.unidad ? ETIQUETA_UNIDAD[p.unidad].toLowerCase() : "en monto"}`);
 
-export function PromocionesDinamicasBox({ promos, moneda }: { promos: PromoDinamica[] | null; moneda: string }) {
+const rangoTramo = (t: { desde: string; hasta: string }) => (t.desde === t.hasta ? formatFechaLarga(t.desde) : `${formatFechaLarga(t.desde)} → ${formatFechaLarga(t.hasta)}`);
+
+/** `vistaPrevia`: la misma matriz dentro de la calculadora, calculada con los valores que se ven en pantalla (sin guardar nada). */
+export function PromocionesDinamicasBox({ promos, moneda, vistaPrevia = false }: { promos: PromoDinamica[] | null; moneda: string; vistaPrevia?: boolean }) {
   const [detalle, setDetalle] = useState<Detalle | null>(null);
   if (promos === null) {
     return <p className="text-xs text-gray-500" data-promos-dinamicas="sin-permiso">Las promociones dinámicas se explican con netos (costo del proveedor): se muestran solo a los roles que ven costos.</p>;
@@ -21,26 +25,42 @@ export function PromocionesDinamicasBox({ promos, moneda }: { promos: PromoDinam
   if (!promos.length) return null;
   const fmt = (n: number) => formatNetoTarifa(n, moneda);
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-4" data-promos-dinamicas="lista" aria-labelledby="titulo-promos-dinamicas">
-      <h3 id="titulo-promos-dinamicas" className="flex items-center gap-2 text-sm font-semibold text-[var(--brand-primary)]">
-        <Sparkles className="h-4 w-4" aria-hidden /> Promociones dinámicas por grupo
+    <section className="rounded-xl border border-gray-200 bg-white p-4" data-promos-dinamicas={vistaPrevia ? "vista-previa" : "lista"} aria-labelledby={vistaPrevia ? "titulo-promos-dinamicas-previa" : "titulo-promos-dinamicas"}>
+      <h3 id={vistaPrevia ? "titulo-promos-dinamicas-previa" : "titulo-promos-dinamicas"} className="flex items-center gap-2 text-sm font-semibold text-[var(--brand-primary)]">
+        <Sparkles className="h-4 w-4" aria-hidden /> {vistaPrevia ? "Tarifas resultantes de promociones por noche" : "Promociones dinámicas por grupo"}
+        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600"><Lock className="h-3 w-3" aria-hidden /> Calculadas · solo lectura</span>
       </h3>
       <p className="mt-1 text-xs text-gray-500">
-        Solo lectura. Estas promociones no tienen tarifa propia: el neto se calcula al cotizar desde la tarifa base de su grupo, así
+        {vistaPrevia
+          ? "Vista previa con los valores que ves arriba, sin guardar nada. "
+          : ""}
+        Solo lectura. Estas promociones no tienen tarifa propia: el neto se calcula al cotizar desde la tarifa base de su grupo o de la base que gana cada noche, así
         que cambiar la base cambia el resultado. Son <b>netos</b> (costo del proveedor); el PVP depende del markup de cada paquete y se ve en el tarifario.
       </p>
+      {promos.some((p) => p.sigueBase) && (
+        <p className="mt-1 text-xs text-gray-500" data-matriz-aclaracion>
+          Las promociones «por noche sobre la base ganadora» se muestran por tramo de noches con su base, y por categoría y alimentación con las siete
+          acomodaciones: <b>tarifas de alojamiento del hotel por persona y noche</b>, no una cotización. «Un niño gratis por habitación» depende de la composición
+          de cada habitación y se aplica al cotizar; no vuelve cero la tarifa genérica de niño. El infante conserva la tarifa de su base.
+        </p>
+      )}
       <div className="mt-3 space-y-5">
         {promos.map((p) => (
           <div key={p.id} data-promo-dinamica={p.nombre}>
             <p className="text-sm font-medium text-gray-800">
               {p.nombre} <span className="text-xs font-normal text-gray-500">· prioridad {p.prioridad} · {textoTipo(p)}</span>
+              {p.sigueBase && <span className="ml-2 rounded-full bg-[var(--brand-accent)]/15 px-2 py-0.5 text-[10px] font-medium text-[var(--brand-primary)]" data-derivada>Por noche, sobre la base ganadora · −{p.lineas[0]?.valor ?? ""}%</span>}
+              {p.ninoGratis && <span className="ml-2 rounded-full bg-[var(--brand-highlight)]/25 px-2 py-0.5 text-[10px] text-gray-700">Un niño gratis por habitación (al cotizar)</span>}
               {p.estado === "no_vende" && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">No se vende</span>}
             </p>
             {p.motivo && <p className="text-xs text-amber-700">{p.motivo}</p>}
+            {p.notas && p.notas.length > 0 && p.lineas.length > 0 && (
+              <ul className="list-disc pl-5 text-xs text-amber-700" data-notas-promo>{p.notas.map((n) => <li key={n}>{n}</li>)}</ul>
+            )}
             {p.lineas.length === 0 ? (
               <p className="text-xs text-gray-500">Su base todavía no tiene tarifa en los grupos con regla: no hay nada que calcular.</p>
             ) : agruparPromoPorCategoria(p.lineas).map((b) => {
-              const vigencia = `${b.base} · ${b.grupo}${b.dias ? ` (${b.dias})` : ""}`;
+              const vigencia = `${b.base}${b.tramo ? ` · ${rangoTramo(b.tramo)}` : ""} · ${b.grupo}${b.dias ? ` (${b.dias})` : ""}`;
               return (
                 <div key={b.clave} className="mt-2" data-bloque-promo={vigencia}>
                   <p className="text-xs font-medium text-gray-600">Vigencia base y grupo: {vigencia}</p>

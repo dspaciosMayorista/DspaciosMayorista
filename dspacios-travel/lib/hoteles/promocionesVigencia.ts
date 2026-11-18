@@ -82,6 +82,9 @@ export function mensajePromo300(msg: string): string | null {
   if (/hotel_temporadas_promo_300/.test(msg)) {
     return "La promoción tiene reglas por grupo o una elección que no corresponde a ese tipo: quita sus reglas en «Reglas por grupo» antes de cambiar el tipo o la unidad.";
   }
+  if (/hotel_temporadas_promo_125/.test(msg)) {
+    return "«Seguir la base ganadora» y «Un niño gratis por habitación» solo valen en una promoción de porcentaje con reglas, y la edad del niño lleva mínimo y máximo (0–17, mínimo ≤ máximo).";
+  }
   if (/hotel_temporadas_promo_base_id_fkey/.test(msg)) {
     return "Esta vigencia es la base de una promoción por grupo: desvincula o elimina esa promoción antes de borrarla.";
   }

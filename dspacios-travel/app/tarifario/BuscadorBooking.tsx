@@ -8,13 +8,14 @@ import Image from "next/image";
 import { MapPin, Users, Baby, BedDouble } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatMoneda } from "@/lib/utils";
-import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
+import type { AcomRoom } from "@/lib/acomodaciones";
+import { repartoEstandar, validarOcupacionGlobal } from "@/lib/reservar/asignacionHabitacionesBusqueda";
 import { useCart, type HotelCartItemPersona, type TourCartItem, type TourSinVinculo } from "@/lib/cart/CartContext";
 import { buscarHoteles } from "@/app/(dashboard)/dashboard/reservar/actions";
 import { buscarAlojamientosUnidadPorFechas, type DisponibilidadUnidadHotel, type ResultadoBusquedaUnidad } from "./busquedaUnidadActions";
-import { type BusquedaResultado, type SugerenciaFecha } from "@/lib/reservar/cotizar";
+import { type BusquedaResultado, type HotelEnRevision, type SugerenciaFecha } from "@/lib/reservar/cotizar";
 import { CondicionHotelBadges } from "@/components/cotizacion/CondicionHotelBadges";
-import { EDAD_MENOR_MAX, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
+import { EDAD_MENOR_MAX, MAX_HABITACIONES_CONSULTA, MAX_MENORES_POR_CONSULTA, ajustarCantidadEdades, parseEdadMenor } from "@/lib/reservar/edadesMenores";
 import type { DestinoPorcionOpcion } from "@/lib/tarifario/destinosPorcion";
 import type { ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
 import { BackgroundVideo } from "@/components/BackgroundVideo";
@@ -31,6 +32,7 @@ import {
   etiquetaAgregarConjunto, mensajeRechazoConjunto, revalidarServicios, seleccionParaModal, useCotizacionServicios, useSeleccionServicios,
 } from "./serviciosHotel";
 import { EtiquetaOferta } from "./EtiquetaOferta";
+import { DesgloseTarifas } from "./desgloseTarifas";
 
 // Veredicto POSITIVO del servidor sobre un hotel por unidad para las fechas y
 // la ocupación declaradas (`buscarAlojamientosUnidadPorFechas`). Se deriva del
@@ -83,6 +85,10 @@ export type EstadoBusquedaPorcion = {
    * estructural corregido — ver `busquedaUnidadActions.ts`). `null` = la
    * búsqueda unidad se completó con confianza (o no había nada que evaluar). */
   avisoUnidad: string | null;
+  /** #102 — hoteles que no se pudieron evaluar por una política de edades ambigua o incompleta (pide revisión del catálogo). */
+  enRevision: HotelEnRevision[];
+  /** #102 — composición pedida (para mostrar «qué se evaluó» junto a los resultados). */
+  ocupacion: { numHabitaciones: number; adultos: number; edadesMenores: number[] };
 };
 
 // Huella de los criterios de una búsqueda — sirve para detectar que el usuario
@@ -90,14 +96,22 @@ export type EstadoBusquedaPorcion = {
 // mostrados no corresponden a lo que está en pantalla.
 function huellaBusqueda(a: {
   destino: string; destinoId: number | null; fIda: string; fReg: string; adultos: string;
-  habs: AcomRoom[]; cantidadMenores: number; edadesTxt: string[];
+  nHab: string; cantidadMenores: number; edadesTxt: string[];
 }): string {
-  return [a.destino, a.destinoId ?? "", a.fIda, a.fReg, a.adultos, a.habs.join(","), a.cantidadMenores, a.edadesTxt.join(",")].join("|");
+  return [a.destino, a.destinoId ?? "", a.fIda, a.fReg, a.adultos, a.nHab, a.cantidadMenores, a.edadesTxt.join(",")].join("|");
+}
+
+// La vía por unidad (heredada) pide un tipo por habitación: se arma desde el reparto estándar, de mayor a menor.
+function habitacionesEstandar(porAcom: Partial<Record<AcomRoom, number>>): { acom: AcomRoom }[] {
+  return (["multiple", "triple", "doble", "sencilla"] as AcomRoom[]).flatMap((a) => Array.from({ length: porAcom[a] ?? 0 }, () => ({ acom: a })));
 }
 
 export function BuscadorBooking({
-  destinos = [], onBusqueda, sugerenciaPedida = null, onPendingChange,
+  destinos = [], onBusqueda, sugerenciaPedida = null, onPendingChange, modo = "booking",
 }: {
+  /** "tabla" (Vista tabla): mismo motor y mismas entradas, pide además la noche adicional. Los alojamientos por unidad se buscan igual que
+   * en "booking" (UNA acción por clic, en paralelo); la tabla los pinta en su propia sección y no calcula noche adicional para ellos. */
+  modo?: "booking" | "tabla";
   /** Destinos ofrecibles: la UNIÓN real de Porción terrestre (persona +
    * unidad, deduplicada y ordenada — `destinosPorcionPublica`). Es la lista
    * que hace que un destino que solo existe por hoteles unidad sea
@@ -139,7 +153,6 @@ export function BuscadorBooking({
   // entonces a su camino legado por nombre dentro de la Server Action.
   const [destinoId, setDestinoId] = useState<number | null>(null);
   const [nHab, setNHab] = useState("1");
-  const [habs, setHabs] = useState<AcomRoom[]>(["doble"]);
   const [cantidadMenores, setCantidadMenoresState] = useState(0);
   const [edadesTxt, setEdadesTxt] = useState<string[]>([]);
   const [, start] = useTransition();
@@ -246,24 +259,14 @@ export function BuscadorBooking({
     setBuscando(false);
   }
 
-  // Ajusta el nº de filas de habitación (tope de 8; 9+ requiere asesor).
+  // #102 — solo se captura CUÁNTAS habitaciones (tope de 8; 9+ requiere asesor): el tipo de cada una lo decide
+  // cada hotel según los adultos, los menores y su propia configuración de ocupación.
   function setCantidad(n: number) {
     const pedido = Math.trunc(n) || 1;
     limpiarResultados();
-    setAvisoHab(pedido > 8 ? "A partir de 9 habitaciones, contacta a un asesor." : "");
-    const cant = Math.max(1, Math.min(8, pedido));
-    setNHab(String(cant));
-    setHabs((prev) => {
-      const next = [...prev];
-      while (next.length < cant) next.push("doble");
-      next.length = cant;
-      return next;
-    });
+    setAvisoHab(pedido > MAX_HABITACIONES_CONSULTA ? "A partir de 9 habitaciones, contacta a un asesor." : "");
+    setNHab(String(Math.max(1, Math.min(MAX_HABITACIONES_CONSULTA, pedido))));
   }
-  const setHab = (i: number, acom: AcomRoom) => {
-    limpiarResultados();
-    setHabs((p) => p.map((h, n) => (n === i ? acom : h)));
-  };
 
   // Cantidad de menores: agrega campos de edad vacíos al final o quita solo
   // los sobrantes del final — las edades ya escritas nunca se pierden/reordenan.
@@ -290,6 +293,13 @@ export function BuscadorBooking({
   const adultosTrim = adultos.trim();
   const adultosParsed = /^\d+$/.test(adultosTrim) ? Number(adultosTrim) : null;
   const adultosValido = adultosParsed != null && adultosParsed >= 1;
+  const numHab = Number(nHab);
+  // Validación GLOBAL (sin mirar ningún hotel) y reparto ESTÁNDAR de orientación: nunca bloquea la búsqueda por sí
+  // solo — cada hotel confirma su propio reparto (un hotel puede vender otras acomodaciones o tratar a un menor como adulto).
+  const ocupacionGlobal = adultosValido && menoresListos
+    ? validarOcupacionGlobal({ numHabitaciones: numHab, adultos: adultosParsed!, cantidadMenores, maxHabitaciones: MAX_HABITACIONES_CONSULTA })
+    : { ok: true as const };
+  const estandar = adultosValido ? repartoEstandar(numHab, adultosParsed!) : ({ ok: false } as const);
 
   function buscar(overrideIda?: string, overrideRegreso?: string) {
     setErr("");
@@ -322,10 +332,12 @@ export function BuscadorBooking({
     if (!idaUsada || !regresoUsada) { setErr("Indica fecha de ida y de regreso."); onBusqueda?.(null); return; }
     if (!adultosValido) { setErr("La cantidad de adultos debe ser un entero mayor o igual a 1."); onBusqueda?.(null); return; }
     if (!menoresListos) { setErr(`Falta la edad de ${edadesFaltantes} menor(es).`); onBusqueda?.(null); return; }
+    // Antes de cualquier consulta cara: lo que es imposible para cualquier hotel se explica acá, sin llamar al servidor.
+    if (!ocupacionGlobal.ok) { setErr(ocupacionGlobal.error); onBusqueda?.(null); return; }
     // Los criterios de ESTA búsqueda quedan fijados de una vez — la huella
     // sirve para identificarlos (botón "Limpiar resultados"), no para
     // invalidar: eso ya lo hace `miGeneracion` de forma síncrona.
-    const huella = huellaBusqueda({ destino, destinoId, fIda: idaUsada, fReg: regresoUsada, adultos, habs, cantidadMenores, edadesTxt });
+    const huella = huellaBusqueda({ destino, destinoId, fIda: idaUsada, fReg: regresoUsada, adultos, nHab, cantidadMenores, edadesTxt });
     setHuellaBuscada(huella);
     setBuscando(true);
     start(async () => {
@@ -337,21 +349,27 @@ export function BuscadorBooking({
       const [r, unidadRes] = await Promise.all([
         buscarHoteles({
           fechaIda: idaUsada, fechaRegreso: regresoUsada,
-          habitaciones: habs.map((acom) => ({ acom })),
+          numHabitaciones: numHab,
           adultos: adultosParsed,
           cantidadMenores, edadesMenores: edades,
           destino,
+          ...(modo === "tabla" ? { nocheAdicional: true } : {}),
         }),
-        buscarAlojamientosUnidadPorFechas({
-          fechaIda: idaUsada, fechaRegreso: regresoUsada,
-          destino, destinoId,
-          habitaciones: habs.map((acom) => ({ acom })),
-          adultos: adultosParsed,
-          cantidadMenores, edadesMenores: edades,
-        }).catch((e): ResultadoBusquedaUnidad => ({
-          ok: false,
-          error: e instanceof Error ? e.message : "No se pudo completar la búsqueda de alojamientos por unidad.",
-        })),
+        // Alojamientos por unidad: vía heredada, que sigue pidiendo un tipo por habitación. Se evalúa con el reparto
+        // estándar; si no existe uno (p. ej. 5 adultos en 1 habitación) NO se busca y se avisa — nunca se disfraza
+        // de «sin alojamientos por unidad». Igual en Vista Booking y en Vista tabla (precio, capacidad y edades del hotel los decide el servidor).
+        estandar.ok
+          ? buscarAlojamientosUnidadPorFechas({
+              fechaIda: idaUsada, fechaRegreso: regresoUsada,
+              destino, destinoId,
+              habitaciones: habitacionesEstandar(estandar.porAcom),
+              adultos: adultosParsed,
+              cantidadMenores, edadesMenores: edades,
+            }).catch((e): ResultadoBusquedaUnidad => ({
+              ok: false,
+              error: e instanceof Error ? e.message : "No se pudo completar la búsqueda de alojamientos por unidad.",
+            }))
+          : Promise.resolve<ResultadoBusquedaUnidad>({ ok: false, error: "sin_reparto_estandar" }),
       ]);
       // Esta búsqueda quedó obsoleta: algo (otro `buscar()`, una sugerencia
       // de fecha que dispara otro `buscar()`, o `limpiarResultados()` — botón
@@ -398,6 +416,8 @@ export function BuscadorBooking({
         if (unidadRes.incompleto) {
           avisoUnidad = "No pudimos confirmar la disponibilidad de todos los alojamientos por unidad de este destino — algunos podrían faltar. Los resultados por persona sí están completos.";
         }
+      } else if (unidadRes.error === "sin_reparto_estandar") {
+        avisoUnidad = "No se evaluaron los alojamientos por unidad: no hay un reparto estándar de habitaciones para esta cantidad de adultos. Los resultados por persona sí se muestran.";
       } else {
         console.error(`[BuscadorBooking] búsqueda unidad falló: ${unidadRes.error}`);
         avisoUnidad = "No pudimos completar la búsqueda de alojamientos por unidad para este destino. Los resultados por persona sí se muestran.";
@@ -409,6 +429,9 @@ export function BuscadorBooking({
         sugerenciasFecha: r.sugerenciasFecha ?? [],
         unidad,
         avisoUnidad,
+        // O3/U1: los hoteles por unidad sin edades válidas se explican igual que los de persona (nunca se omiten en silencio).
+        enRevision: [...(r.enRevision ?? []), ...(unidadRes.ok ? unidadRes.enRevision : [])],
+        ocupacion: { numHabitaciones: numHab, adultos: adultosParsed!, edadesMenores: edades },
       });
     });
   }
@@ -562,14 +585,14 @@ export function BuscadorBooking({
               <DateInput aria-label="Regreso" type="date" min={fIda} value={fReg} onValueChange={(dateValue) => { limpiarResultados(); setFReg(dateValue); }} className={`${sel} pl-3`} />
             </div>
           </div>
-          <div><label className={lbl}>Adultos (12+)</label>
+          <div><label className={lbl}>Adultos</label>
             <div className="relative">
               <Users className={iconoCls} aria-hidden />
               <input type="number" min={1} value={adultos} onChange={(e) => { limpiarResultados(); setAdultos(e.target.value); }}
                 className={`${sel} ${!adultosValido ? "border-red-400" : ""}`} aria-invalid={!adultosValido ? true : undefined} />
             </div>
           </div>
-          <div><label htmlFor={`${idBase}-cant`} className={lbl}>Cantidad de menores</label>
+          <div><label htmlFor={`${idBase}-cant`} className={lbl}>Menores (0–17 años)</label>
             <div className="relative">
               <Baby className={iconoCls} aria-hidden />
               <input id={`${idBase}-cant`} type="number" inputMode="numeric" min={0} max={MAX_MENORES_POR_CONSULTA} value={cantidadMenores}
@@ -579,26 +602,22 @@ export function BuscadorBooking({
           <div><label className={lbl}>Habitaciones</label>
             <div className="relative">
               <BedDouble className={iconoCls} aria-hidden />
-              <input type="number" min={1} max={8} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={sel} />
+              <input type="number" min={1} max={MAX_HABITACIONES_CONSULTA} value={nHab} onChange={(e) => setCantidad(Number(e.target.value))} className={sel} aria-label="Habitaciones" />
             </div>
           </div>
         </div>
 
-        {/* Una fila por habitación: solo el tipo de acomodación (los menores se
-            declaran aparte, por edad exacta — no por habitación). */}
-        <div className="mt-3 space-y-2">
-          {habs.map((acom, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="w-24 text-slate-500">Habitación {i + 1}</span>
-              <div className="relative">
-                <BedDouble className={iconoCls} aria-hidden />
-                <select value={acom} onChange={(e) => setHab(i, e.target.value as AcomRoom)} className="rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-xs font-medium text-slate-800 focus:border-[var(--brand-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]">
-                  {ACOM_ROOMS.map((a) => <option key={a} value={a}>{ACOM_ROOM_LABEL[a]}</option>)}
-                </select>
-              </div>
-            </div>
-          ))}
-        </div>
+        {/* #102 — ya no se elige el tipo de cada habitación: se muestra el reparto ESTÁNDAR como orientación y cada
+            hotel confirma el suyo (con su propia ocupación y las edades de sus menores) en el resultado. */}
+        {adultosValido && (
+          <p className="mt-3 text-xs text-slate-500" data-testid="reparto-estandar">
+            {!ocupacionGlobal.ok
+              ? <span className="text-amber-700">{ocupacionGlobal.error}</span>
+              : estandar.ok
+                ? <>Reparto estándar de {numHab} habitación(es) para {adultosParsed} adulto(s): <b className="text-slate-700">{estandar.texto}</b>. Cada hotel confirma el suyo según su ocupación y las edades.</>
+                : <>No hay un reparto estándar de {numHab} habitación(es) para {adultosParsed} adulto(s); se buscará con la ocupación propia de cada hotel.</>}
+          </p>
+        )}
 
         {cantidadMenores > 0 && (
           <div className="mt-3">
@@ -688,7 +707,7 @@ export async function revalidarHotelPersona(
   // Debe ser LA MISMA reserva (habitaciones, pax, menores y edades) y la misma
   // moneda: si el motor la clasifica distinto ya es otra oferta.
   const fresca = {
-    ...item, fechaIda: res.fechaIda, fechaRegreso: res.fechaRegreso, habitaciones: res.habitaciones, edadesMenores: res.edadesMenores,
+    ...item, fechaIda: res.fechaIda, fechaRegreso: res.fechaRegreso, habitaciones: combo.habitaciones ?? res.habitaciones, edadesMenores: combo.edadesMenores ?? res.edadesMenores,
     pax: combo.pax, ninos: combo.menores.nino, ninos2: combo.menores.nino2, infantes: combo.menores.infantes,
   };
   const mismaMoneda = (res.moneda || "COP").toUpperCase() === (item.moneda || "COP").toUpperCase();
@@ -797,8 +816,11 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
     modulo: "porcion_terrestre", paqueteId: r.paqueteId, hotelId: r.hotelId, bloqueoId: null,
     hotelNombre: r.hotelNombre ?? "", destino: r.destino, fotoUrl: foto,
     categoria: combo.categoria, regimen: combo.regimen, fechaIda: r.fechaIda, fechaRegreso: r.fechaRegreso, noches: r.noches,
-    habitaciones: r.habitaciones, ninos: combo.menores.nino, ninos2: combo.menores.nino2, infantes: combo.menores.infantes,
-    pax: combo.pax, precio: combo.total, moneda: r.moneda, edadesMenores: r.edadesMenores, condicion: r.condicion,
+    // #102: la ocupación y las edades salen DEL COMBO elegido (cada categoría/alimentación puede tener su propio reparto y
+    // su propia clasificación de edades); el pasajero que el hotel cobra como adulto conserva su edad real aparte.
+    habitaciones: combo.habitaciones ?? r.habitaciones, ninos: combo.menores.nino, ninos2: combo.menores.nino2, infantes: combo.menores.infantes,
+    pax: combo.pax, precio: combo.total, moneda: r.moneda, edadesMenores: combo.edadesMenores ?? r.edadesMenores,
+    ...(combo.edadesComoAdulto?.length ? { edadesComoAdulto: combo.edadesComoAdulto } : {}), condicion: r.condicion,
   };
   // El estado del botón se deriva del carrito real: si se quita del carrito,
   // vuelve a estar disponible para agregar. #54: la identidad es la reserva
@@ -829,7 +851,7 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
     // Todos los viajeros del hotel, infantes incluidos — la misma base que
     // exige el checkout para un servicio vinculado.
     pax: combo.pax + combo.menores.infantes, precio: combo.total, moneda: r.moneda,
-    firma: JSON.stringify([combo.categoria, combo.regimen, r.habitaciones, r.edadesMenores]),
+    firma: JSON.stringify([combo.categoria, combo.regimen, item.habitaciones, item.edadesMenores]),
   };
   // #54: con la tarifa del hotel revalidada (solo con el hotel en el carrito)
   // los servicios se cotizan y se suman sobre ella; si no, es la de la búsqueda.
@@ -964,6 +986,9 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
           </label>
         </div>
         <TextoCategoriaHotel hotelId={r.hotelId} categoria={catEff} />
+
+        {/* Desglose compacto: tarifa de adulto, de cada menor (por su edad) y total, del MISMO cálculo que la reserva. */}
+        <DesgloseTarifas combo={combo} moneda={r.moneda} noches={r.noches} />
 
         <div className="flex items-end justify-between">
           <div>

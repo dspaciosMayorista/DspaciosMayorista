@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { guardarImagenPrograma } from "../actions";
+import { prepararSubidaImagen } from "@/lib/imagenes/reducirImagen";
 
 type Campo = "portada_url" | "flyer_url" | "historia_url";
 const MAX_MB = 10;
@@ -48,14 +49,17 @@ function Uploader({ programaId, campo, titulo, ayuda, url }: { programaId: numbe
 
   async function subir(file: File) {
     setErr("");
-    if (!file.type.startsWith("image/")) { setErr("Solo imágenes (JPG, PNG, WebP)."); return; }
-    if (file.size > MAX_MB * 1024 * 1024) { setErr(`La imagen supera ${MAX_MB} MB.`); return; }
     setSubiendo(true);
     try {
+      // O2: la portada se reduce PRIMERO y el tope FINAL (MAX_MB) se aplica al resultado; flyer/historia son piezas terminadas que se suben tal cual (el tope aplica al original).
+      const prep = await prepararSubidaImagen(file, { maxMb: MAX_MB, reducir: campo === "portada_url", errorTipo: "Solo imágenes (JPG, PNG, WebP)." });
+      if (!prep.ok) { setErr(prep.error); return; }
       const sb = createClient();
-      const ext = file.name.split(".").pop() || "jpg";
+      const archivo = prep.archivo;
+      const ext = archivo.name.split(".").pop() || "jpg";
       const path = `${programaId}/${campo}-${Date.now()}.${ext}`;
-      const { error } = await sb.storage.from("programas").upload(path, file, { upsert: false });
+      // The path is unique per upload (timestamp), so the object can be cached as immutable.
+      const { error } = await sb.storage.from("programas").upload(path, archivo, { upsert: false, cacheControl: "31536000" });
       if (error) throw error;
       const { data: pub } = sb.storage.from("programas").getPublicUrl(path);
       const r = await guardarImagenPrograma(programaId, campo, pub.publicUrl);

@@ -61,6 +61,9 @@ export type HotelCartItemPersona = {
   // ver lib/reservar/edadesMenores.ts. Opcional: ítems del carrito
   // guardados en localStorage ANTES de este cambio no lo traen.
   edadesMenores?: number[];
+  // #102: edades REALES de menores que este hotel cobra con tarifa de adulto (van dentro de las habitaciones, no en
+  // `edadesMenores`). Solo informativo para mostrarlo y volver a cotizar; el pasajero no se reescribe como adulto legal.
+  edadesComoAdulto?: number[];
   // Condición de pago/restricción comercial del hotel para estas fechas
   // (migración 164/165, `lib/reservar/liquidacionHotel.ts::condicionHotelFechas`)
   // — SOLO para mostrar el badge en el carrito, nunca se usa para calcular

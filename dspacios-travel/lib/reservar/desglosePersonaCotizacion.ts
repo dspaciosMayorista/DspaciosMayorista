@@ -44,8 +44,10 @@ export function calcularResidualServiciosIncluidosPorGrupo(params: {
   // pares numNinos/numNinos2/numInfantes de arriba, que ya no alcanzan para
   // describir a los menores (un mismo grupo puede tener dos tarifas).
   lineasMenores?: readonly { cantidad: number; tarifa: number }[];
+  /** #125: líneas firmadas visibles (p. ej. «niño gratis por habitación», negativa) que también salen de `precioVenta` sin ser habitación ni menor. */
+  ajusteVisible?: number;
 }): ResidualServiciosIncluidosPorGrupo {
-  let subtotalVisible = 0;
+  let subtotalVisible = params.ajusteVisible ?? 0;
   for (const l of params.lineasHab) subtotalVisible += l.pax * l.pvp;
   if (params.lineasMenores) {
     for (const l of params.lineasMenores) subtotalVisible += l.cantidad * l.tarifa;

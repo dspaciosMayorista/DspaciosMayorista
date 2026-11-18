@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { ACOM_ROOMS, type AcomRoom } from "@/lib/acomodaciones";
+import { mensajeEdadesAlGuardar, validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import {
   generarTarifas, analizarMixta, clavePromoMixta, renombrarTemporadaEnParams, validarDubaiParams,
   filaSustitucionMixta, aplicarAdultsOnly, valoresDeFila, CAMPOS_VALOR_TARIFA, fotoTarifas,
@@ -20,6 +21,7 @@ import { validarFechasVigencia, fechasGuardadas, anioVigenteBogota, type FechasV
 import { mensajeBorrarVigenciaConGrupos } from "@/lib/hoteles/alcanceGrupos";
 import { validarCamposPromo, mensajePromo300, validarCombinacion, textoFamilias, type ColumnasPromo, type EleccionDias, type CombinacionEntrada } from "@/lib/hoteles/promocionesVigencia";
 import type { ReglaNocheGratis, UnidadMonto } from "@/lib/calc/promocionesGrupo";
+import { validarNinoGratis } from "@/lib/hoteles/ninoGratis";
 
 // `cambioPendiente` (entrega 5, P3): el cambio de una promoción que se vende crea una coincidencia con EBB / Long Stay sin
 // configurar; quedó GUARDADO como pendiente (la versión autorizada sigue vendiéndose) y la UI ofrece configurarla y activarlo.
@@ -33,10 +35,10 @@ export async function crearHotel(input: {
   destinoId: number;
   proveedorId: number | null;
   zona: string;
-  edadInfanteMin: number;
-  edadInfanteMax: number;
-  edadNinoMin: number;
-  edadNinoMax: number;
+  /** O3: obligatorias salvo Adults Only (sin valores por defecto): el servidor valida y rechaza con un mensaje accionable. */
+  edadInfanteMax: number | null;
+  edadNinoMax: number | null;
+  adultsOnly?: boolean;
   categoriaIds: number[];
   regimenIds: number[];
   rangosEdad?: number[];
@@ -45,6 +47,10 @@ export async function crearHotel(input: {
   moneda?: string;
 }): Promise<Result> {
   const sb = await createClient();
+  // O3: un hotel que acepta menores no se guarda sin sus edades; Adults Only queda exento (rechaza menores).
+  const adultsOnlyNuevo = input.adultsOnly === true;
+  const gNuevo = validarEdadesGeneralesHotel({ infanteMax: input.edadInfanteMax ?? null, ninoMax: input.edadNinoMax ?? null });
+  if (!adultsOnlyNuevo && !gNuevo.ok) return { ok: false, error: mensajeEdadesAlGuardar(gNuevo.faltantes, gNuevo.invalidos) };
   const { data: hotel, error } = await sb
     .from("hoteles")
     .insert({
@@ -53,10 +59,12 @@ export async function crearHotel(input: {
       proveedor_id: input.proveedorId,
       zona: oNull(input.zona),
       moneda: input.moneda === "USD" ? "USD" : "COP",
-      edad_infante_min: input.edadInfanteMin,
-      edad_infante_max: input.edadInfanteMax,
-      edad_nino_min: input.edadNinoMin,
-      edad_nino_max: input.edadNinoMax,
+      adults_only: adultsOnlyNuevo,
+      // El mínimo de infante es siempre 0 y el de niño, infante+1 (los dos únicos grados de libertad son «Infante hasta» y «Niño hasta»).
+      edad_infante_min: gNuevo.ok ? 0 : null,
+      edad_infante_max: gNuevo.ok ? gNuevo.regla.infanteMax : null,
+      edad_nino_min: gNuevo.ok ? gNuevo.regla.ninoMin : null,
+      edad_nino_max: gNuevo.ok ? gNuevo.regla.ninoMax : null,
       rangos_edad: input.rangosEdad?.length ? input.rangosEdad : null,
       contacto_telefono: oNull(input.contactoTelefono ?? ""),
       email_comercial: oNull(input.emailComercial ?? ""),
@@ -158,10 +166,8 @@ export async function actualizarHotelConfig(
     destinoId?: number | null;
     proveedorId?: unknown;
     zona: string;
-    edadInfanteMin: number;
-    edadInfanteMax: number;
-    edadNinoMin: number;
-    edadNinoMax: number;
+    edadInfanteMax: number | null;
+    edadNinoMax: number | null;
     rangosEdad: number[];
     contactoTelefono?: string;
     emailComercial?: string;
@@ -180,6 +186,9 @@ export async function actualizarHotelConfig(
   }
 ): Promise<Result> {
   const sb = await createClient();
+  // O3: guardar un hotel que acepta menores exige su configuración de edades completa y válida (Adults Only exento). Los contratos y cotizaciones históricos no se tocan.
+  const gConfig = validarEdadesGeneralesHotel({ infanteMax: input.edadInfanteMax ?? null, ninoMax: input.edadNinoMax ?? null });
+  if (!input.adultsOnly && !gConfig.ok) return { ok: false, error: mensajeEdadesAlGuardar(gConfig.faltantes, gConfig.invalidos) };
   const proveedor = normalizarProveedorHotelId(input.proveedorId);
   if (!proveedor.ok) return proveedor;
   if (proveedor.proveedorId != null) {
@@ -200,10 +209,10 @@ export async function actualizarHotelConfig(
       ...(proveedor.proveedorId !== undefined ? { proveedor_id: proveedor.proveedorId } : {}),
       zona: oNull(input.zona),
       ...(input.moneda ? { moneda: input.moneda === "USD" ? "USD" : "COP" } : {}),
-      edad_infante_min: input.edadInfanteMin,
-      edad_infante_max: input.edadInfanteMax,
-      edad_nino_min: input.edadNinoMin,
-      edad_nino_max: input.edadNinoMax,
+      // Adults Only sin edades válidas conserva lo que ya tenía (no se borra ni se inventa nada); con edades válidas se guardan.
+      ...(gConfig.ok
+        ? { edad_infante_min: 0, edad_infante_max: gConfig.regla.infanteMax, edad_nino_min: gConfig.regla.ninoMin, edad_nino_max: gConfig.regla.ninoMax }
+        : {}),
       rangos_edad: input.rangosEdad.length ? input.rangosEdad : null,
       contacto_telefono: oNull(input.contactoTelefono ?? ""),
       email_comercial: oNull(input.emailComercial ?? ""),
@@ -511,7 +520,7 @@ export async function copiarTemporadasDesdeHotel(
   const { data: origen, error: e1 } = await sb
     .from("hotel_temporadas")
     .select(
-      "nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, descuento_unidad, noche_gratis_regla, dias_promo, promo_base_id"
+      "nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, orden, min_noches, regimen_restringido, condicion_pago_tipo, condicion_pago_pct_inicial, condicion_pago_dias_saldo, descuento_unidad, noche_gratis_regla, dias_promo, promo_base_id, promo_sigue_base, nino_gratis"
     )
     .eq("hotel_id", hotelOrigen);
   if (e1) return { ok: false, error: e1.message };
@@ -529,8 +538,10 @@ export async function copiarTemporadasDesdeHotel(
   // #43/#60 (300): la noche bonificada, la unidad y los días viajan con la vigencia. El vínculo a una base y sus
   // reglas por grupo son de ESTE hotel (ids): la copia queda sin vínculo y se informa para configurarla allá.
   const avisos: string[] = [];
-  const filas = copiables.map(({ promo_base_id, ...t }) => {
+  const filas = copiables.map(({ promo_base_id, promo_sigue_base, nino_gratis, ...t }) => {
     if (promo_base_id != null) avisos.push(`${t.nombre}: se copió sin sus reglas por grupo; configúralas en el hotel destino`);
+    // #125: «seguir la base ganadora» y el niño gratis viven en reglas que no se copian: la copia nace sin ellos (columnas por defecto).
+    else if (promo_sigue_base || nino_gratis) avisos.push(`${t.nombre}: se copió sin seguir la base ganadora ni niño gratis; configúralos en el hotel destino`);
     return { ...t, hotel_id: hotelDestino };
   });
   const { error } = await sb.from("hotel_temporadas").insert(filas);
@@ -686,7 +697,7 @@ export async function actualizarTemporada(id: number, input: TemporadaInput, com
       aviso = `Se actualizó de "${nombreViejo}" a "${nombreNuevo}" en: ${partes.join(" y ")}.`;
     }
     if (r.calculadoraSinActualizar) {
-      aviso = `${aviso ? `${aviso} ` : ""}La calculadora del hotel NO se actualizó (alguien la guardó al mismo tiempo): ábrela, revisa que sus bases digan "${nombreNuevo}" y guárdala.`;
+      aviso = `${aviso ? `${aviso} ` : ""}La calculadora del hotel NO se actualizó (cambió mientras se renombraba o la base no permitió escribirla): ábrela, revisa que sus bases digan "${nombreNuevo}" y guárdala.`;
     }
   }
 
@@ -900,14 +911,19 @@ export async function cargarHotelesMasivo(rows: Record<string, string>[]): Promi
     const destinoId = r.destino ? dmap.get(r.destino.trim().toLowerCase()) : undefined;
     if (!destinoId) { errores.push(`Fila ${linea} (${nombre}): destino "${r.destino ?? ""}" no existe.`); continue; }
     const provId = r.proveedor ? pmap.get(r.proveedor.trim().toLowerCase()) ?? null : null;
+    // O3: sin valores por defecto — un hotel del CSV que acepta menores trae «edad_infante_max» y «edad_nino_max» válidas; Adults Only («adults_only» = si) queda exento.
+    const adultsOnlyCsv = /^(si|sí|true|1|x)$/i.test((r.adults_only || "").trim());
+    const gCsv = validarEdadesGeneralesHotel({ infanteMax: numCsvN(r.edad_infante_max), ninoMax: numCsvN(r.edad_nino_max) });
+    if (!adultsOnlyCsv && !gCsv.ok) { errores.push(`Fila ${linea} (${nombre}): ${mensajeEdadesAlGuardar(gCsv.faltantes, gCsv.invalidos)}`); continue; }
     const rangosEdad = (r.rangos_edad || "")
       .split(/[|;]/).map((x) => remap.get(x.trim().toLowerCase())).filter((x): x is number => !!x);
     const { data: hotel, error } = await sb
       .from("hoteles")
       .insert({
         nombre, destino_id: destinoId, proveedor_id: provId, zona: oNull(r.zona || ""),
-        edad_infante_min: numCsv(r.edad_infante_min) || 0, edad_infante_max: numCsv(r.edad_infante_max) || 2,
-        edad_nino_min: numCsv(r.edad_nino_min) || 2, edad_nino_max: numCsv(r.edad_nino_max) || 10,
+        adults_only: adultsOnlyCsv,
+        edad_infante_min: gCsv.ok ? 0 : null, edad_infante_max: gCsv.ok ? gCsv.regla.infanteMax : null,
+        edad_nino_min: gCsv.ok ? gCsv.regla.ninoMin : null, edad_nino_max: gCsv.ok ? gCsv.regla.ninoMax : null,
         rangos_edad: rangosEdad.length ? rangosEdad : null,
         pax_min: numCsvN(r.pax_min), pax_max: numCsvN(r.pax_max),
         contacto_telefono: oNull(r.contacto_telefono || ""), email_comercial: oNull(r.email_comercial || ""),
@@ -1138,18 +1154,61 @@ export async function cargarAcomodacionesMasivo(rows: Record<string, string>[]):
 
 // ── Calculadora de tarifas (estructura especial por hotel) ──────────────────
 // Guarda el tipo + parámetros de la calculadora del hotel.
-const CALCULADORA_DESACTUALIZADA =
-  "La calculadora cambió desde que la abriste (otra persona la guardó o se renombró una vigencia). Recarga la página y revisa antes de guardar.";
+// #124: un UPDATE condicionado que afecta 0 filas tiene DOS causas distintas y antes se mostraban con el mismo texto
+// ("otra persona la guardó…"): (a) la versión guardada ya no es la que abriste → `motivo: "cambio"`; (b) la versión SÍ coincide pero
+// la base rechazó la escritura. Solo se afirma «permiso» cuando la propia base lo DEMUESTRA (sus funciones `puede_escribir_catalogo_global()` y
+// `mi_rol()`, las mismas que usa la RLS de la tabla, dicen que no puede) → `motivo: "sin_permiso"`; si la versión coincide y esas funciones
+// dicen que SÍ puede, el rechazo queda sin explicar → `motivo: "rechazo_sin_diagnostico"` (no se inventa una causa).
+// Se distingue con UNA lectura por clave única (+ 2 consultas de permiso solo cuando la versión coincide), solo en la ruta de rechazo
+// (nunca en un guardado normal).
+const ROLES_EDITAN_CALCULADORA = ["superadmin", "gerencia", "administracion", "operaciones"]; // = policy «hotel_calculadora: interno»
+export type CalculadoraActual = { version: number; tipo: string; params: Record<string, unknown> };
+export type GuardarCalculadoraResultado =
+  | { ok: true; version: number }
+  | { ok: false; error: string; desactualizada?: true; motivo?: "cambio" | "sin_permiso" | "rechazo_sin_diagnostico" | "sin_diagnostico"; actual?: CalculadoraActual };
+
+async function diagnosticarRechazoCalculadora(
+  sb: Awaited<ReturnType<typeof createClient>>,
+  hotelId: number,
+  versionLeida: number | null,
+): Promise<GuardarCalculadoraResultado & { ok: false }> {
+  const { data: fila, error } = await sb.from("hotel_calculadora").select("version, tipo, params").eq("hotel_id", hotelId).maybeSingle();
+  if (error || !fila) {
+    return { ok: false, motivo: "sin_diagnostico", error:
+      "No se guardó nada. La base no aceptó la escritura y no se pudo comprobar el motivo (la calculadora cambió o se perdió el permiso). " +
+      "Tus valores siguen en pantalla; copia lo que necesites, recarga la página y vuelve a intentarlo." };
+  }
+  const actual: CalculadoraActual = { version: Number(fila.version), tipo: fila.tipo, params: (fila.params ?? {}) as Record<string, unknown> };
+  if (versionLeida !== null && actual.version === versionLeida) {
+    const [catalogo, rol] = await Promise.all([sb.rpc("puede_escribir_catalogo_global"), sb.rpc("mi_rol")]);
+    const sinCatalogo = !catalogo.error && catalogo.data === false;
+    const rolOk = rol.error ? null : ROLES_EDITAN_CALCULADORA.includes(String(rol.data));
+    const base = `No se guardó nada. La calculadora NO cambió (sigue en la versión ${actual.version}, la misma que tenías abierta). `;
+    if (sinCatalogo || rolOk === false) {
+      const causa = rolOk === false
+        ? "La base confirma que tu rol no puede editar calculadoras de hotel."
+        : "La base confirma que tu sesión o la agencia activa no puede editar el catálogo global de hoteles (sesión terminada o agencia distinta de Mayorista).";
+      return { ok: false, motivo: "sin_permiso", error: `${base}${causa} Tus valores siguen en pantalla: cierra sesión, vuelve a entrar y revisa la agencia activa.` };
+    }
+    return { ok: false, motivo: "rechazo_sin_diagnostico", error:
+      `${base}La base rechazó la escritura, pero NO se pudo demostrar un problema de permisos (la base indica que sí puedes escribir). Causa sin diagnosticar. ` +
+      "Tus valores siguen en pantalla; reintenta una vez y, si se repite, avisa a soporte con este texto." };
+  }
+  const antes = versionLeida === null ? "no había calculadora guardada" : `tenías la versión ${versionLeida}`;
+  return { ok: false, desactualizada: true, motivo: "cambio", actual, error:
+    `No se guardó nada. La calculadora guardada en la base cambió después de que abriste este formulario (${antes}; la actual es la ${actual.version}). No se sobrescribió ningún dato.` };
+}
+
 // Escritura CONDICIONADA a la versión leída (migración 297): `versionLeida` null = el hotel aún no tenía
 // calculadora (se inserta; si otra persona la creó a la vez, choca con la unicidad de hotel_id). Si la
-// versión ya no coincide no se escribe nada y se pide recargar (sin reintento). Las bases por grupo viven
-// en otra tabla: guardar o cambiar el tipo de calculadora no las toca.
+// versión ya no coincide no se escribe nada y se devuelve la copia guardada para que la pantalla explique qué cambió
+// (sin reintento automático). Las bases por grupo viven en otra tabla: guardar o cambiar el tipo no las toca.
 export async function guardarCalculadora(
   hotelId: number,
   tipo: string,
   params: DubaiParams | MixtaParams | CorporativaParams,
   versionLeida: number | null,
-): Promise<{ ok: true; version: number } | { ok: false; error: string; desactualizada?: true }> {
+): Promise<GuardarCalculadoraResultado> {
   // Fail-closed ANTES de escribir: un config Dubai con rangos/promos
   // imposibles, solapados o incompletos nunca llega a `hotel_calculadora`
   // (el servidor es la autoridad — nunca confía en que el editor ya validó
@@ -1167,9 +1226,9 @@ export async function guardarCalculadora(
   const { data, error } = versionLeida === null
     ? await sb.from("hotel_calculadora").insert({ hotel_id: hotelId, ...fila }).select("version")
     : await sb.from("hotel_calculadora").update(fila).eq("hotel_id", hotelId).eq("version", versionLeida).select("version");
-  if (error?.code === "23505") return { ok: false, desactualizada: true, error: CALCULADORA_DESACTUALIZADA };
+  if (error?.code === "23505") return diagnosticarRechazoCalculadora(sb, hotelId, versionLeida);
   if (error) return { ok: false, error: error.message };
-  if (!data?.length) return { ok: false, desactualizada: true, error: CALCULADORA_DESACTUALIZADA };
+  if (!data?.length) return diagnosticarRechazoCalculadora(sb, hotelId, versionLeida);
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
   return { ok: true, version: data[0].version };
 }
@@ -1314,9 +1373,15 @@ export type ReglaPromoInput = { grupo_id: string | null; valor: number; dias: nu
 
 /** Guarda el vínculo a la base y las reglas por grupo de una promoción, en UNA transacción (RPC de la 300).
  * `previas` = lo que vio quien edita (foto); si cambió, la base rechaza y se pide recargar. */
+export type NinoGratisInput = { activo: boolean; edadMin: number | null; edadMax: number | null };
 export async function guardarReglasPromocion(input: {
   hotelId: number; promocionId: number; baseId: number | null;
-  reglas: ReglaPromoInput[]; previas: { base: number | null; reglas: ReglaPromoInput[] };
+  reglas: ReglaPromoInput[];
+  previas: { base: number | null; reglas: ReglaPromoInput[]; sigueBase?: boolean; ninoGratis?: NinoGratisInput };
+  /** #125: modo «seguir la base ganadora cada noche»: sin base, UNA regla (grupo nulo) para todas las bases. */
+  sigueBase?: boolean;
+  /** #125: «un niño gratis por habitación» (con al menos 2 adultos), edad propia opcional. */
+  ninoGratis?: NinoGratisInput;
 }): Promise<Result> {
   const reglas = Array.isArray(input.reglas) ? input.reglas : [];
   for (const r of reglas) {
@@ -1324,11 +1389,35 @@ export async function guardarReglasPromocion(input: {
     if (r.dias != null && (!Array.isArray(r.dias) || !r.dias.length)) return { ok: false, error: "Con «Elegir días» marca al menos un día." };
   }
   const sb = await createClient();
+  let extra: Record<string, unknown> = {};
+  let previasExtra: Record<string, unknown> = {};
+  if (input.sigueBase !== undefined || input.ninoGratis !== undefined) {
+    const sigue = input.sigueBase === true;
+    if (sigue && (input.baseId != null || reglas.length !== 1 || reglas[0].grupo_id != null)) {
+      return { ok: false, error: "Seguir la base ganadora lleva UNA sola regla para todas las bases, sin base vinculada." };
+    }
+    const ng = input.ninoGratis ?? { activo: false, edadMin: null, edadMax: null };
+    // El tipo sale de la base de datos, nunca del navegador.
+    let tipo: string | null = null;
+    if (ng.activo) {
+      const { data: fila } = await sb.from("hotel_temporadas").select("tipo").eq("id", input.promocionId).eq("hotel_id", input.hotelId).maybeSingle();
+      tipo = fila?.tipo ?? null;
+    }
+    const v = validarNinoGratis(ng, { tipo, conReglas: sigue || (input.baseId != null && reglas.length > 0) });
+    if (!v.ok) return v;
+    extra = { p_sigue_base: sigue, p_nino_gratis: v.valor.nino_gratis, p_nino_edad_min: v.valor.nino_gratis_edad_min, p_nino_edad_max: v.valor.nino_gratis_edad_max };
+    const pv = input.previas;
+    previasExtra = {
+      sigue_base: pv.sigueBase === true, nino_gratis: pv.ninoGratis?.activo === true,
+      nino_edad_min: pv.ninoGratis?.activo ? pv.ninoGratis.edadMin ?? null : null, nino_edad_max: pv.ninoGratis?.activo ? pv.ninoGratis.edadMax ?? null : null,
+    };
+  }
   const { error } = await sb.rpc("promocion_guardar_reglas", {
     p_promocion_id: input.promocionId,
     p_base_id: input.baseId as number,
     p_reglas: reglas.map((r) => ({ grupo_id: r.grupo_id, valor: Number(r.valor), dias: r.dias })) as unknown as Json,
-    p_previas: { base: input.previas.base, reglas: input.previas.reglas } as unknown as Json,
+    p_previas: { base: input.previas.base, reglas: input.previas.reglas, ...previasExtra } as unknown as Json,
+    ...extra,
   });
   if (error) {
     if (error.code === "PT409") return { ok: false, error: "La promoción cambió mientras la editabas; recarga la página y vuelve a revisarla." };

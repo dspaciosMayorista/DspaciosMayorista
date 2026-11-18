@@ -6,7 +6,6 @@ import { revalidatePath } from "next/cache";
 import { formatFechaLarga, calcularEdad } from "@/lib/utils";
 import type { Json } from "@/types/database";
 import { fechaNegocio } from "@/lib/fechaNegocio";
-import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 // "Adultos" o "Adultos y niños" según las edades de los pasajeros.
 function tipoPaxDe(pasajeros: { fecha_nacimiento: string | null }[], fechaRef: string | null): string {
@@ -80,18 +79,8 @@ export async function generarVouchersServicios(numero: string, identidad: Identi
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
   const tipoPax = tipoPaxDe(pasajeros ?? [], venta.fecha_salida);
 
-  // Gating: solo se generan vouchers si el contrato está 100% pago, o si quien lo
-  // genera es superadmin (override).
-  const { data: { user } } = await sb.auth.getUser();
-  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
-  const esSuperadmin = perfil?.rol === "superadmin";
-  if (!esSuperadmin) {
-    const { data: abonos } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numero);
-    const pagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
-    if (pagado < cobroDeVenta(venta).total) {
-      return { ok: false, error: "El contrato debe estar 100% pago para generar los vouchers (o pídelo a un superadmin)." };
-    }
-  }
+  // #53 (307): preparar el voucher es interno y no depende del pago. El acceso del ALIADO se decide al ABRIR (portal y token: solo con el contrato 100 % pagado, sin excepción);
+  // la RLS de `vouchers` sigue decidiendo quién puede crearlo.
 
   // Servicios add-on seleccionados (se guardan como "Servicio · {nombre}").
   const addonNames = new Set(
@@ -239,14 +228,7 @@ export async function generarVoucherHotel(numero: string, identidad: IdentidadCo
   ]);
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
 
-  // Gating: 100% pago o superadmin.
-  const { data: { user } } = await sb.auth.getUser();
-  const { data: perfil } = user ? await sb.from("usuarios").select("rol").eq("id", user.id).single() : { data: null };
-  if (perfil?.rol !== "superadmin") {
-    const { data: abonos } = await sb.from("abonos").select("valor_abono").eq("numero_contrato", numero);
-    const pagado = (abonos ?? []).reduce((s, a) => s + (a.valor_abono ?? 0), 0);
-    if (pagado < cobroDeVenta(venta).total) return { ok: false, error: "El contrato debe estar 100% pago (o pídelo a un superadmin)." };
-  }
+  // #53 (307): igual que los vouchers de servicios — preparar es interno; el aliado accede solo con el contrato 100 % pagado.
 
   const hoy = fechaNegocio();
   const vendedor =
