@@ -186,8 +186,10 @@ describe("cableado: ninguna lectura de abonos o saldo usa la moneda de la oferta
     assert.match(leer("app/(dashboard)/dashboard/cartera/page.tsx"), /moneda_cobro, trm_cobro, total_cobro/);
     assert.match(leer("lib/cuenta/estado.ts"), /moneda_cobro, trm_cobro, total_cobro/);
     const doc = leer("components/contrato/ContratoDocumento.tsx");
-    assert.match(doc, /Math\.max\(cobroConvertido\.total - totalPagado, 0\)/);
-    assert.match(doc, /Total a cobrar/);
+    // Corrección del dueño 2026-11-18: el documento de CLIENTE muestra pagado y saldo en la moneda de la OFERTA (TRM de cobro congelada) y ya no imprime el «Total a cobrar» convertido.
+    assert.match(doc, /pagadoEnMonedaOferta\(totalPagado, cobroConvertido\)/);
+    assert.match(doc, /Math\.max\(total - pagadoDocumento, 0\)/);
+    assert.doesNotMatch(doc, /label="Total a cobrar"/);
   });
 });
 

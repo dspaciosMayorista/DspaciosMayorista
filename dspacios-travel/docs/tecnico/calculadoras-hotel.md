@@ -107,8 +107,13 @@ derivar — el base suma 0. `DubaiParams.modificadores = {sencilla_pct, pax3_pct
 nino_pct, infante_pct?}`, `bases: {categoria, temporada, precio}[]`.
 
 **Promociones (`DubaiParams.promos[]`)**: cada promo (`temporadaBase → temporadaPromo, regimen,
-descuentoPct`) aplica el % **SOLO sobre la base**, ANTES de derivar sencilla/triple/múltiple/
-niño y de sumar el suplemento de régimen — el suplemento **nunca** se descuenta. Aplica **solo
+descuentoPct`) aplica el % ANTES de derivar sencilla/triple/múltiple/niño. **VIGENTE (DECISIONS.md ADL-019,
+PR #316, 2026-09-18, test `promocionDubaiSuplementoDescuento.test.ts`):** el % se aplica sobre la
+tarifa COMPLETA del régimen elegido, o sea base + suplemento efectivo (p. ej. FULL Doble =
+(100.000 + 30.000) × 0,9 = 117.000). El texto anterior de esta sección («SOLO sobre la base,
+el suplemento nunca se descuenta», jul-2026) quedó SUPERADO por ADL-019; no se encontró ninguna
+decisión posterior del dueño que lo restablezca (revisado 2026-11-18), y la corrección de
+2026-11-18 (promoción que sigue la base ganadora) conserva la regla vigente. Aplica **solo
 al régimen elegido**, aunque el hotel tenga varios. `temporadaPromo` debe existir como vigencia
 REAL en `hotel_temporadas` (con su propia fecha/vigencia de compra) — la calculadora solo
 calcula los números y los escribe ahí, no crea la vigencia.

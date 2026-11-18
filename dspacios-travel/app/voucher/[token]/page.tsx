@@ -1,5 +1,5 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
+import { accesoVoucherPorToken } from "@/lib/voucher/accesoVoucher.server";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { VoucherDocumento } from "@/components/voucher/VoucherDocumento";
 import type { VoucherContenido } from "@/app/(dashboard)/dashboard/contratos/[numero]/voucher-actions";
@@ -13,24 +13,24 @@ const ETIQUETA_TIPO_VOUCHER: Record<string, string> = {
   asistencia: "Voucher Asistencia",
 };
 
+// #53 (307): el token identifica el documento, NO autoriza. Metadata y página llaman la MISMA resolución (cacheada por petición): sin sesión válida, sin permiso o, para un aliado,
+// sin el contrato 100 % pagado, el título no revela nada y la página responde 404. El personal interno ve la vista previa en cualquier momento (lo decide la RLS de `vouchers`).
 export async function generateMetadata({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const sb = createAdminClient();
-  const { data } = await sb.from("vouchers").select("contenido, numero_contrato, tipo").eq("share_token", token).maybeSingle();
-  const c = data?.contenido as unknown as VoucherContenido | undefined;
-  const etiqueta = ETIQUETA_TIPO_VOUCHER[data?.tipo ?? ""] ?? "Voucher Servicios";
-  return { title: { absolute: data ? tituloDocumento(etiqueta, data.numero_contrato, c?.titular) : "Voucher" } };
+  const r = await accesoVoucherPorToken(token);
+  if (!r.ok) return { title: { absolute: "Voucher" } };
+  const c = r.voucher.contenido as unknown as VoucherContenido | undefined;
+  const etiqueta = ETIQUETA_TIPO_VOUCHER[r.voucher.tipo ?? ""] ?? "Voucher Servicios";
+  return { title: { absolute: tituloDocumento(etiqueta, r.voucher.numero_contrato, c?.titular) } };
 }
 
-// Vista pública del voucher por token (sin login) para imprimir/guardar.
+// Vista del voucher por token (requiere sesión; ver acceso arriba) para imprimir/guardar.
 export default async function VoucherPublicoPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const sb = createAdminClient();
-  const { data: v } = await sb.from("vouchers").select("contenido, numero_contrato").eq("share_token", token).maybeSingle();
-  if (!v || !v.contenido) notFound();
-  const c = v.contenido as unknown as VoucherContenido;
-  const { data: venta } = await sb.from("ventas").select("tenant").eq("numero_contrato", v.numero_contrato).maybeSingle();
-  const tenant = venta?.tenant === "minorista" ? "minorista" : "mayorista";
+  const r = await accesoVoucherPorToken(token);
+  if (!r.ok) notFound();
+  const c = r.voucher.contenido as unknown as VoucherContenido;
+  const tenant = r.tenant === "minorista" ? "minorista" : "mayorista";
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">

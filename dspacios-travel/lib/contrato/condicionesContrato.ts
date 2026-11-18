@@ -36,7 +36,7 @@
 //     llamador debe mantener el comportamiento de siempre (sin sección).
 // ─────────────────────────────────────────────────────────────────────────
 
-import { reglaConfirmacion, textoMinimoConfirmar, type MonedaRegla, type SalidaRegla } from "@/lib/contrato/reglaConfirmacion";
+import { reglaConfirmacion, textoMinimoConfirmar, type AcuerdoMinimo, type MonedaRegla, type SalidaRegla } from "@/lib/contrato/reglaConfirmacion";
 import {
   esRestriccionComercial,
   sumarDias,
@@ -137,6 +137,9 @@ export interface ResumenCondicionesContrato {
   minimoConfirmar: SalidaRegla;
 }
 
+/** Mínimo ACORDADO por superadmin, presentado sin condiciones congeladas de por medio (F4): es un dato explícito, no una restricción histórica inventada. */
+export interface MinimoAcordadoContrato { texto: string; minimoConfirmar: SalidaRegla }
+
 export interface CondicionesContratoResueltas {
   /** false = contrato histórico sin snapshot (previo a esta migración): el
    *  llamador NO debe mostrar sección ni inventar restricciones. */
@@ -153,6 +156,10 @@ export interface CondicionesContratoResueltas {
    *  autorizó la excepción de todas". */
   huboRestriccionOriginal: boolean;
   resumen: ResumenCondicionesContrato | null;
+  /** F4: el acuerdo vigente, presente AUNQUE el contrato no tenga filas de condiciones. null si no hay acuerdo o no hay total para calcularlo. */
+  minimoAcordado: MinimoAcordadoContrato | null;
+  /** F5: la lectura del acuerdo FALLÓ; no se muestra ningún mínimo (ni el de las condiciones) porque podría no ser el que aplica. */
+  minimoNoVerificable: boolean;
 }
 
 // Uniones válidas (espejo de los CHECK de la migración 164 tras el Commit 6).
@@ -191,9 +198,22 @@ function aRestriccion(s: string): RestriccionComercial {
 export function resolverCondicionesContrato(
   rows: FilaCondicionContratoRow[],
   overrides: OverrideContratoRow[],
-  // `netoTotalExigible` (Parte 3 de #75): total NETO exigible de un contrato NETO de aliado → el mínimo para CONFIRMAR es ese total (no la suma de las condiciones).
-  ctx: { monedaContrato: string; precioVenta?: number | null; fechaViaje?: string | null; netoTotalExigible?: number | null } = { monedaContrato: "COP" },
+  // `acuerdo` (#53, 307): mínimo fijado por superadmin; si existe manda sobre las condiciones congeladas (NETO y PVP por igual).
+  // `monedaContrato` y `precioVenta` son los de COBRO (cobroDeVenta) y es la moneda en que se expresa un acuerdo; la moneda CONGELADA de cada condición es otra cosa y nunca la sustituye.
+  // `minimoNoVerificable` (F5): la lectura del acuerdo falló → no se muestra ningún mínimo.
+  ctx: { monedaContrato: string; precioVenta?: number | null; fechaViaje?: string | null; acuerdo?: AcuerdoMinimo | null; minimoNoVerificable?: boolean } = { monedaContrato: "COP" },
 ): CondicionesContratoResueltas {
+  const monedaCobro: MonedaRegla = String(ctx.monedaContrato).toUpperCase() === "USD" ? "USD" : "COP";
+  const noVerificable = ctx.minimoNoVerificable === true;
+  const totalCobro = Number(ctx.precioVenta) || 0;
+  // F4: el acuerdo explícito se presenta aunque no haya condiciones (sin inventar hoteles ni restricciones). Necesita un total de cobro para calcularse.
+  const minimoAcordado: MinimoAcordadoContrato | null =
+    !noVerificable && ctx.acuerdo && totalCobro > 0
+      ? (() => {
+          const r = reglaConfirmacion({ totalCobro, monedaCobro, condiciones: [], acuerdo: ctx.acuerdo });
+          return { texto: textoMinimoConfirmar(r), minimoConfirmar: r };
+        })()
+      : null;
   if (!rows.length) {
     return {
       hayCondiciones: false,
@@ -202,6 +222,8 @@ export function resolverCondicionesContrato(
       restringidas: [],
       huboRestriccionOriginal: false,
       resumen: null,
+      minimoAcordado,
+      minimoNoVerificable: noVerificable,
     };
   }
 
@@ -277,6 +299,8 @@ export function resolverCondicionesContrato(
       restringidas: [],
       huboRestriccionOriginal: false,
       resumen: null,
+      minimoAcordado,
+      minimoNoVerificable: noVerificable,
     };
   }
 
@@ -286,13 +310,12 @@ export function resolverCondicionesContrato(
     precioVenta > 0 ? Math.round((montoMinimoExigidoTotal / precioVenta) * 10_000) / 100 : null;
   const moneda = filas[0]?.moneda ?? ctx.monedaContrato;
   const montoTexto = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(montoMinimoExigidoTotal);
-  const monedaRegla: MonedaRegla = String(moneda).toUpperCase() === "USD" ? "USD" : "COP";
   const minimoConfirmar = reglaConfirmacion({
-    netoAliado: ctx.netoTotalExigible != null, totalCobro: ctx.netoTotalExigible ?? precioVenta, monedaCobro: monedaRegla,
+    totalCobro: precioVenta, monedaCobro, acuerdo: noVerificable ? null : ctx.acuerdo ?? null,
     condiciones: filas.map((f) => ({ monto_exigido: f.exigido, moneda: f.moneda, trm: f.trm })),
   });
   const texto =
-    ctx.netoTotalExigible != null
+    !noVerificable && ctx.acuerdo
       ? textoMinimoConfirmar(minimoConfirmar)
       : pctEfectivoInformativo != null
       ? `Pago mínimo requerido: $${montoTexto} ${moneda} (${pctEfectivoInformativo.toFixed(0)} % informativo)`
@@ -304,6 +327,9 @@ export function resolverCondicionesContrato(
     filas,
     restringidas,
     huboRestriccionOriginal,
-    resumen: { montoMinimoExigidoTotal, pctEfectivoInformativo, texto, minimoConfirmar },
+    // F5: con la lectura del acuerdo fallida no se publica ningún mínimo (el de las condiciones podría no ser el que aplica); las filas por componente son hechos congelados y se conservan.
+    resumen: noVerificable ? null : { montoMinimoExigidoTotal, pctEfectivoInformativo, texto, minimoConfirmar },
+    minimoAcordado,
+    minimoNoVerificable: noVerificable,
   };
 }

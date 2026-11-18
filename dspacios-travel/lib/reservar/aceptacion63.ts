@@ -321,6 +321,8 @@ export function armarItems63(a: {
   lineasMenores: readonly LineaMenor[];
   serviciosItems: readonly { nombre: string; precio: number }[];
   cargoMascota: { total: number; descripcion: string | null } | null;
+  /** #125: línea firmada del niño gratis por habitación (solo alojamiento); sin neto ni detalle por noche. Como el ajuste de redondeo: adultos 1 × importe (negativo), así Σ ítems = total. */
+  beneficioNinoGratis?: { total: number; descripcion: string } | null;
 }): ItemSnapshot63[] {
   const items: ItemSnapshot63[] = [];
   a.lineasHab.forEach((l, i) => {
@@ -343,6 +345,9 @@ export function armarItems63(a: {
       descripcion: a.cargoMascota.descripcion ? `Mascota · ${a.cargoMascota.descripcion}` : "Cargo de mascota",
       adultos: 0, ninos: 0, tarifa_adulto: a.cargoMascota.total, tarifa_nino: 0, orden: 201,
     });
+  }
+  if (a.beneficioNinoGratis) {
+    items.push({ descripcion: a.beneficioNinoGratis.descripcion, adultos: 1, ninos: 0, tarifa_adulto: a.beneficioNinoGratis.total, tarifa_nino: 0, orden: 203 });
   }
   return items;
 }

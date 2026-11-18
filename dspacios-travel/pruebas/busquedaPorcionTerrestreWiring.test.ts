@@ -372,11 +372,10 @@ describe("BuscadorBooking — canal de búsqueda hacia VistaBooking (requisito A
     ]) {
       assert.ok(codigoBuscador.includes(control), `un control de criterio no invalida los resultados: ${control}`);
     }
-    // ...y los cuatro handlers que cambian habitaciones, acomodación, cantidad
+    // ...y los handlers que cambian la cantidad de habitaciones (#102: ya no hay tipo por habitación), cantidad
     // de menores y edad de un menor.
     for (const ancla of [
       "function setCantidad(n: number)",
-      "const setHab = (i: number, acom: AcomRoom) =>",
       "function setCantidadMenores(nRaw: number)",
       "const setEdadAt = (i: number, v: string) =>",
     ]) {
@@ -886,7 +885,7 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
     assert.doesNotMatch(decl, /ofertas: HotelBernaloDescubierto\[\]/, "nunca debe volver el arreglo completo de ofertas sin verificar");
     assert.match(decl, /hotelId: number; estado: "sin_disponibilidad"/);
     assert.doesNotMatch(decl, /costoNeto|snapshot|proveedor|comision/i);
-    assert.match(codigoAction, /export type ResultadoBusquedaUnidad =\s*\n\s*\| \{ ok: true; disponibilidad: DisponibilidadUnidadHotel\[\]; incompleto: boolean \}\s*\n\s*\| \{ ok: false; error: string \};/);
+    assert.match(codigoAction, /export type ResultadoBusquedaUnidad =\s*\n\s*\| \{ ok: true; disponibilidad: DisponibilidadUnidadHotel\[\]; incompleto: boolean; enRevision: HotelEnRevisionUnidad\[\] \}\s*\n\s*\| \{ ok: false; error: string \};/);
     // `OpcionUnidadConfirmada` (el shape de cada elemento de `opciones`) en
     // sí: identidad + PRECIO PÚBLICO saneado (precioVenta/moneda/paxTotal) +
     // fechas + ocupación — nunca costo/snapshot/proveedor/comisión, y nunca
@@ -923,7 +922,7 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
     assert.match(codigoAction, /return \{ ok: false, error: "No se pudieron consultar las tarifas\/temporadas de los hoteles\." \};/);
     // Solo el caso LEGÍTIMO (no hay ningún hotel unidad en este destino, sin
     // ningún error) sigue devolviendo una lista vacía — nunca un error.
-    assert.match(codigoAction, /if \(!ofertasPorHotel\.size\) return \{ ok: true, disponibilidad: \[\], incompleto: false \};/);
+    assert.match(codigoAction, /if \(!ofertasPorHotel\.size\) return \{ ok: true, disponibilidad: \[\], incompleto: false, enRevision: \[\] \};/);
   });
 
   test("un hotel sin fila maestra o Adults Only con menores declarados nunca se anuncia como disponible (cobertura real de ambos casos en evaluarDisponibilidadUnidad.test.ts)", () => {
@@ -935,7 +934,7 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
   test("un hotel inconcluyente marca la búsqueda como INCOMPLETA y registra el motivo real — nunca desaparece en silencio (el defecto original)", () => {
     assert.match(codigoAction, /incompleto = true;/);
     assert.match(codigoAction, /console\.error\(`\[buscarAlojamientosUnidadPorFechas\] etapa=evaluacion hotelId=\$\{v\.hotelId\} motivo=\$\{v\.motivo\}`\);/);
-    assert.match(codigoAction, /return \{ ok: true, disponibilidad, incompleto \};/);
+    assert.match(codigoAction, /return \{ ok: true, disponibilidad, incompleto, enRevision \};/);
   });
 
   test("no escribe nada (solo lectura): ninguna mutación en la acción", () => {

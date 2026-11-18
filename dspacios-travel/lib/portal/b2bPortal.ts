@@ -184,8 +184,10 @@ export type DocumentosContrato = {
   tenant: string | null;
   /** Enlace público del contrato (`/c/[token]`); null si el contrato no tiene token. */
   contratoToken: string | null;
-  /** Vouchers con contenido generado (`/voucher/[token]`). */
+  /** Vouchers con contenido generado (`/voucher/[token]`) de un contrato 100 % pagado (el servidor ya filtró: #53, 307). */
   vouchers: { token: string; tipo: string | null }[];
+  /** Hay voucher preparado pero NO se enlaza porque el contrato no está 100 % pagado (o no se pudo verificar el pago: falla cerrado). */
+  voucherRetenido: boolean;
   /** Siempre existe para un contrato propio (aunque no tenga abonos). */
   estadoCuenta: true;
   recibos: { id: number; fecha: string | null }[];
@@ -194,7 +196,7 @@ export type DocumentosContrato = {
 export type VoucherPortal = { numero_contrato: string; tipo: string | null; share_token: string | null; contenido: unknown };
 
 /** Una fila por contrato PROPIO; un documento sin fuente real queda vacío (la pantalla muestra «No disponible», nunca un enlace). */
-export function documentosDe(ventas: VentaPortal[], vouchers: VoucherPortal[], abonos: AbonoPortal[]): DocumentosContrato[] {
+export function documentosDe(ventas: VentaPortal[], vouchers: VoucherPortal[], abonos: AbonoPortal[], retenidos: ReadonlySet<string> = new Set()): DocumentosContrato[] {
   return ventas
     .filter((v) => v.relacion === "propio")
     .map((v) => ({
@@ -204,6 +206,7 @@ export function documentosDe(ventas: VentaPortal[], vouchers: VoucherPortal[], a
       vouchers: vouchers
         .filter((x) => x.numero_contrato === v.numero_contrato && !!x.share_token && x.contenido != null)
         .map((x) => ({ token: String(x.share_token), tipo: x.tipo ?? null })),
+      voucherRetenido: retenidos.has(v.numero_contrato),
       estadoCuenta: true as const,
       recibos: abonos
         .filter((a) => a.numero_contrato === v.numero_contrato)

@@ -11,7 +11,7 @@ const TAM_PAGINA = 25;
 
 const TENANT_LABEL: Record<string, string> = { mayorista: "Mayorista", minorista: "Minorista" };
 const FICHA_LABEL: Record<string, string> = { documentada: "Documentada", provisional: "Provisional", revision: "En revisión" };
-const ESTADO_COT_LABEL: Record<string, string> = { abierta: "Abierta", convertida: "Convertida", descartada: "Descartada" };
+const ESTADO_COT_LABEL: Record<string, string> = { abierta: "Abierta", pendiente_tarifa: "Pendiente de tarifa", convertida: "Convertida", descartada: "Descartada" };
 
 function dato(p: PuestoCotizacionCrm, campo: string): string {
   return p.datos.find((d) => d.campo === campo)?.valor ?? "";

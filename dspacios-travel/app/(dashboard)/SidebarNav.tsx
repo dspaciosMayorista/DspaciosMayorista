@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import {
   Tags, Ticket, FileText, ShoppingBag, FileSignature, Plane, Package, Boxes,
   Wallet, Users, UserCheck, Settings, Globe, Contact, ChevronDown, ChevronRight,
-  Circle, History, Calculator, Upload, type LucideIcon,
+  Circle, History, Calculator, Upload, ClipboardList, type LucideIcon,
 } from "lucide-react";
 import markStyles from "@/components/LoadingScreen.module.css";
 import { LoadingScreen } from "@/components/LoadingScreen";
@@ -31,7 +31,7 @@ const ICONS: Record<string, LucideIcon> = {
   tarifario: Tags, reservar: Ticket, cotizaciones: FileText, ventas: ShoppingBag,
   contratos: FileSignature, vuelos: Plane, paquetes: Package, producto: Boxes,
   finanzas: Wallet, usuarios: Users, b2b: UserCheck, configuracion: Settings,
-  cms: Globe, crm: Contact, auditoria: History, contabilidad: Calculator, importar: Upload,
+  cms: Globe, crm: Contact, auditoria: History, contabilidad: Calculator, importar: Upload, gestion: ClipboardList,
 };
 
 // Colores por estilo inline, nunca por clases utilitarias de color de

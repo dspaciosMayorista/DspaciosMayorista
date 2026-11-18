@@ -48,6 +48,7 @@ import {
 import { NO_INCLUYE_DEFAULT, sugerirIncluyeCarrito } from "@/lib/cotizacion/incluye";
 import { snapshotPaqueteDePayload } from "@/lib/cotizacion/tarifaPaquete";
 import { construirResumenCarrito, cuposDeUnidad, type CupoPublico, type UnidadBase } from "@/lib/cotizacion/resumenCarrito";
+import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
 import { leerCobertura, type CoberturaEntrada } from "@/lib/cotizacion/coberturaEntrada";
 import { resumenNetoCarrito } from "@/lib/cotizacion/resumenNeto";
 import type { ResumenPrecios } from "@/lib/cotizacion/resumenPrecios";
@@ -55,6 +56,7 @@ import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { altaPersonasDeCotizacionGuardada } from "@/lib/personas/altaGuardada";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 import {
@@ -611,12 +613,17 @@ async function urlCotizacionPorToken(shareToken: string | null): Promise<string>
 /** La cotización que ya generó esa clave (si existe). Lectura con llave de servicio; solo se devuelven código y enlace público (que quien envió ya conoce). */
 async function cotizacionDeClaveEnvio(clave: string, actor: string, huella: string): Promise<ResultadoEnvioDuplicado | ResultadoClaveEnUso | null> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
-  const { data } = await createAdminClient().from("cotizaciones").select("codigo, share_token, huella_envio, actor_envio").eq("clave_envio", clave).maybeSingle(); // identidad:n/a — lectura; no escribe tablas de contrato
+  const admin = createAdminClient(); // identidad:n/a — lectura y alta idempotente de personas de una cotización; no escribe tablas de contrato
+  const { data } = await admin.from("cotizaciones").select("id, codigo, share_token, huella_envio, actor_envio").eq("clave_envio", clave).maybeSingle(); // identidad:n/a — lectura; no escribe tablas de contrato
   if (!data) return null;
   // «Misma intención» = el MISMO usuario con el MISMO contenido. Cualquier otra combinación usa una clave ajena o reutilizada para otra compra: se rechaza sin revelar la cotización existente.
   if (data.actor_envio !== actor || data.huella_envio !== huella) {
     return { ok: false, tipo: "clave_en_uso", error: "Esta clave de envío ya se usó en otra solicitud. Recarga la página para generar una nueva e inténtalo de nuevo." };
   }
+  // #1: la misma intención repetida (reintento, doble clic, otra pestaña) repara el registro de personas si la primera vez falló; idempotente: no duplica puestos ya registrados.
+  // Aquí `actor` ya es el autor verificado de la clave (actor_envio), así que también recupera el sello faltante (la base exige además su correo y < 15 min).
+  const reparada = await altaPersonasDeCotizacionGuardada(admin, data.id, actor === "anon" ? null : actor, actor !== "anon");
+  if (!reparada.ok) console.error(logPersonasCotizacion("checkout_reintento", data.id, reparada));
   return { ok: false, tipo: "envio_duplicado", error: `Esta solicitud ya se generó: la cotización ${data.codigo} ya existe. No se creó otra.`, cotizacion: { codigo: data.codigo, url: await urlCotizacionPorToken(data.share_token ?? null) } };
 }
 
@@ -911,6 +918,7 @@ async function crearCotizacionCarrito(input: {
     };
     const comp = await computarReserva(sb, reserva);
     if (!comp.ok) return { ok: false, error: `No se pudo cotizar ${it.hotelNombre}: ${comp.error}` };
+    const { beneficioNinoGratis } = comp.data;
     const { meta, precioVenta, monedaReserva, lineasHab, numNinos, numNinos2, numInfantes, totalPax, edadesMenoresUsadas, serviciosIncluidos } = comp.data;
     const { lineasMenores } = menoresDelComputo(comp.data);
     if (monedaPrincipal && monedaReserva !== monedaPrincipal) {
@@ -1021,6 +1029,11 @@ async function crearCotizacionCarrito(input: {
         adultos: 0, ninos: lm.cantidad, tarifa_adulto: 0, tarifa_nino: lm.tarifa,
       });
     }
+    // #125: niño gratis por habitación (solo el alojamiento de ESTE hotel): línea firmada con descripción e importe, nada interno; el residual de servicios por grupo se calcula sin ella.
+    if (beneficioNinoGratis) {
+      iIdx++;
+      itemsSnap.push({ id: iIdx, descripcion: `${hotelEtiqueta} · ${beneficioNinoGratis.descripcion}`, adultos: 1, ninos: 0, tarifa_adulto: beneficioNinoGratis.total, tarifa_nino: 0 });
+    }
 
     // Hallazgo confirmado: las filas de arriba (habitaciones + Niño 1/2 +
     // Infante) NO agotan necesariamente `precioVenta` — un servicio INCLUIDO
@@ -1042,6 +1055,7 @@ async function crearCotizacionCarrito(input: {
       numNinos: 0, tarifaNino: null,
       numNinos2: 0, tarifaNino2: null,
       numInfantes: 0, tarifaInfante: null,
+      ajusteVisible: beneficioNinoGratis?.total ?? 0,
       lineasMenores,
     });
     if (!rResidual.ok) return { ok: false, error: `${it.hotelNombre}: ${rResidual.error}` };
@@ -1065,8 +1079,12 @@ async function crearCotizacionCarrito(input: {
       paxTotal: totalPax, infantes: numInfantes,
       personas: [
         ...lineasHab.map((l) => ({ clave: `adulto:${l.acom}`, etiqueta: `Adulto · ${ACOM_ROOM_LABEL[l.acom]}`, tipo: "adulto" as const, cantidad: l.pax, tarifa: l.pvp })),
-        ...lineasMenores.map((lm) => ({ clave: `${lm.clase}${lm.menorDeDos ? ":menor2" : ""}`, // la identidad no lleva el precio: puede cambiar sin cambiar a la persona
-           etiqueta: descripcionLineaMenor(lm, it.categoria, it.regimen), tipo: lm.clase, cantidad: lm.cantidad, tarifa: lm.tarifa })),
+        ...lineasMenores.map((lm) => {
+          // F3: el niño gratis baja SU tarifa por SU alojamiento condonado (misma clave/identidad; no hay adulto ficticio ni línea aparte). Solo la línea de 2 años o más de su clase.
+          const condonado = lm.menorDeDos ? [] : Array.from({ length: lm.cantidad }, (_, i) => (beneficioNinoGratis?.ninos ?? []).filter((n) => n.clase === lm.clase && n.posicion === i).reduce((t, n) => t + n.venta, 0)); // R2: TODO lo condonado de ese pasajero, no solo la primera entrada
+          return { clave: `${lm.clase}${lm.menorDeDos ? ":menor2" : ""}`, // la identidad no lleva el precio: puede cambiar sin cambiar a la persona
+            etiqueta: descripcionLineaMenor(lm, it.categoria, it.regimen), tipo: lm.clase, cantidad: lm.cantidad, tarifa: lm.tarifa, ...(condonado.some((x) => x > 0) ? { condonado } : {}) };
+        }),
         // Un infante sigue siendo pasajero aunque su alojamiento no tenga línea de precio (tarifa sin configurar = gratis): su identidad no depende de ella.
         ...(infantesSinLinea > 0 ? [{ clave: "infante:sin_cargo", etiqueta: "Infante · alojamiento sin cargo", tipo: "infante" as const, cantidad: infantesSinLinea, tarifa: 0 }] : []),
       ],
@@ -1257,13 +1275,15 @@ async function crearCotizacionCarrito(input: {
       const rango = filasPorUnidad.get(u.ref);
       if (!rango) return { ok: false, error: "No se pudo ubicar el hotel del recobro en la cotización." };
       const filas = itemsSnap.slice(rango[0], rango[1]);
-      const conAdultos = filas.filter((x) => Number(x.adultos) > 0);
+      // La línea firmada del niño gratis lleva `adultos: 1` solo para que Σ ítems = precio: NO es un adulto y no recibe recobro.
+      const esFilaNinoGratis = (x: Record<string, unknown>) => esLineaNinoGratis(x.descripcion);
+      const conAdultos = filas.filter((x) => Number(x.adultos) > 0 && !esFilaNinoGratis(x));
       const aplicado = aplicarRecobroAFilasAdulto(conAdultos as { adultos: number; tarifa_adulto: number }[], porAdulto);
       if (!aplicado.ok) return { ok: false, error: aplicado.error };
       // Se reemplazan SOLO las filas con adultos, conservando el orden relativo de las demás filas del hotel (menores, servicios por grupo).
       let k = 0;
       const nuevas: Record<string, unknown>[] = [];
-      for (const x of filas) { if (Number(x.adultos) > 0) { while (k < aplicado.valor.length && (aplicado.valor[k] as Record<string, unknown>).descripcion === x.descripcion) nuevas.push(aplicado.valor[k++]); } else nuevas.push(x); }
+      for (const x of filas) { if (Number(x.adultos) > 0 && !esFilaNinoGratis(x)) { while (k < aplicado.valor.length && (aplicado.valor[k] as Record<string, unknown>).descripcion === x.descripcion) nuevas.push(aplicado.valor[k++]); } else nuevas.push(x); }
       itemsSnap.splice(rango[0], rango[1] - rango[0], ...nuevas);
       // Los rangos de las unidades siguientes se desplazan por las filas agregadas.
       const delta = nuevas.length - (rango[1] - rango[0]);

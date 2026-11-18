@@ -57,6 +57,7 @@ import {
   type TarifaAlojamiento,
   type UnidadCobro,
 } from "./unidadAlojamiento.ts";
+import { validarEdadesGeneralesHotel } from "./reglaEdadTarifa.ts";
 import {
   adaptarTarifaAlojamientoPersistida,
   type EstadoTarifaUnidad,
@@ -255,9 +256,12 @@ export function construirDuplicado(
 //   adulto tarifario (11-17, política Bernalo del menor que paga tarifa de
 //   adulto): edadNinoMax+1..17 — solo si ese rango no queda vacío.
 export type EdadesGeneralesHotel = {
-  edadInfanteMax: number;
-  edadNinoMax: number;
+  /** O3: `null` = el hotel no tiene la configuración obligatoria; nunca se inventa un valor. */
+  edadInfanteMax: number | null;
+  edadNinoMax: number | null;
   adultsOnly: boolean;
+  /** Solo para nombrar el hotel en el motivo (no interviene en el cálculo). */
+  nombre?: string | null;
 };
 
 export type ResultadoReglasEdadHotel =
@@ -274,19 +278,11 @@ export function reglasEdadDesdeConfiguracionHotel(cfg: EdadesGeneralesHotel): Re
   // la respuesta correcta, no una configuración pendiente (punto 5).
   if (cfg.adultsOnly) return { ok: true, reglas: [] };
 
-  const { edadInfanteMax, edadNinoMax } = cfg;
-  if (!Number.isInteger(edadInfanteMax) || !Number.isInteger(edadNinoMax)) {
-    return {
-      ok: false,
-      error: "La configuración de edades del hotel es inválida: edad_infante_max y edad_nino_max deben ser números enteros.",
-    };
-  }
-  if (!(edadInfanteMax >= 0 && edadInfanteMax < edadNinoMax && edadNinoMax < 18)) {
-    return {
-      ok: false,
-      error: `La configuración de edades del hotel es inválida para derivar reglas de edad: se requiere 0 <= edad_infante_max (${edadInfanteMax}) < edad_nino_max (${edadNinoMax}) < 18. Corrige la configuración general del hotel o carga reglas de edad manuales para esta tarifa.`,
-    };
-  }
+  // O3: la configuración de edades del hotel es OBLIGATORIA si acepta menores (misma validación que cotizar, reservar y publicar): sin ella no se derivan reglas.
+  const g = validarEdadesGeneralesHotel({ infanteMax: cfg.edadInfanteMax, ninoMax: cfg.edadNinoMax }, cfg.nombre);
+  if (!g.ok) return { ok: false, error: g.error };
+  const edadInfanteMax = g.regla.infanteMax;
+  const edadNinoMax = g.regla.ninoMax;
 
   const reglas: ReglaEdadMenor[] = [
     { categoria: "infante", edadMinAnios: 0, edadMaxAnios: edadInfanteMax },
@@ -303,7 +299,10 @@ export function reglasEdadDesdeConfiguracionHotel(cfg: EdadesGeneralesHotel): Re
 // Aplica el respaldo a una tarifa YA CONSTRUIDA (por el formulario o por
 // `construirDuplicado`): si `reglaMenores.reglas` ya tiene contenido, se
 // devuelve TAL CUAL (punto 4 — nunca se sobreescribe una regla explícita,
-// venga de donde venga). Si está vacía, se deriva desde la configuración del
+// venga de donde venga) — PERO solo DESPUÉS de verificar la configuración
+// obligatoria del hotel (O3/U1): una regla explícita puede definir la
+// clasificación efectiva de ESTA tarifa, nunca reemplaza la configuración de
+// edades que todo hotel que acepta menores debe tener. Si está vacía, se deriva desde la configuración del
 // hotel y el resultado se vuelve a pasar por el MOTOR COMPLETO
 // (`validarTarifaAlojamiento`) antes de aceptarse — el respaldo no es una
 // excepción a la validación, es otra forma de llegar a una tarifa que el
@@ -312,10 +311,9 @@ export function aplicarFallbackReglasEdad(
   tarifa: TarifaAlojamiento,
   hotelEdades: EdadesGeneralesHotel
 ): ResultadoConstruccion {
-  if (tarifa.reglaMenores.reglas.length > 0) return { ok: true, tarifa };
-
   const resultado = reglasEdadDesdeConfiguracionHotel(hotelEdades);
   if (!resultado.ok) return { ok: false, error: resultado.error };
+  if (tarifa.reglaMenores.reglas.length > 0) return { ok: true, tarifa };
 
   // Punto 3: las reglas resueltas quedan DENTRO del payload de la tarifa —
   // el snapshot que se persiste no depende de que nadie vuelva a consultar

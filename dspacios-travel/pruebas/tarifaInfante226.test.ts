@@ -329,7 +329,7 @@ function tablasGenerar(o: {
     servicios_adicionales: (o.servicios ?? []).map((s) => ({ id: s.id, tipo_receptivo: null, combo_incluye_traslado: null, combo_traslado_alcance: null })),
     armado_hoteles: hoteles.map((h) => ({
       paquete_id: PAQUETE_ID, hotel_id: h, categorias: null, regimenes: null,
-      hoteles: { nombre: `Hotel ${h}`, moneda, modelo_tarifario: "persona", adults_only: h === HOTEL_C },
+      hoteles: { nombre: `Hotel ${h}`, moneda, modelo_tarifario: "persona", adults_only: h === HOTEL_C, edad_infante_max: 2, edad_nino_max: 10 },
     })),
     hotel_temporadas: hoteles.map((h) => ({
       hotel_id: h, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1,

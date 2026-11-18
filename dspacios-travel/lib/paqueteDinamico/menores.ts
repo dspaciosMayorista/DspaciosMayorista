@@ -6,7 +6,7 @@ import { ACOM_ROOMS, PAX_TARIFA_DEFAULT, defaultAcomConfig, validarReservaHabita
 import { distribuirPorHabitaciones, type AsignacionHabitacion, type HabitacionConsultada } from "@/lib/reservar/distribucionHabitaciones";
 import { MAX_MENORES_POR_CONSULTA, clasificarMenoresPorEdad, validarEdadesMenores } from "@/lib/reservar/edadesMenores";
 import { esMenorDeDos } from "@/lib/reservar/menoresDeDos";
-import { REGLA_EDAD_DEFAULT, construirReglaEdadDesdeMaximos, normalizarReglaEdadGeneral, validarRangoReglaEdad } from "@/lib/calc/reglaEdadTarifa";
+import { construirReglaEdadDesdeMaximos, validarEdadesGeneralesHotel, validarRangoReglaEdad } from "@/lib/calc/reglaEdadTarifa";
 
 /** El sistema cobra como máximo dos niños por habitación (Niño 1 y Niño 2). */
 export const CAPACIDAD_NINOS_MAX = 2;
@@ -20,9 +20,12 @@ export type ReglasHotelDin = {
   paxMax: number | null;
   adultsOnly: boolean;
   origen: "manual" | "ficha";
+  /** O3: motivo accionable cuando el hotel con ficha acepta menores pero su configuración de edades falta o es inválida: con menores no se cotiza (no se inventan umbrales). */
+  edadesIncompletas?: string | null;
 };
 
-export const EDADES_MANUAL_POR_DEFECTO = { infanteMax: REGLA_EDAD_DEFAULT.infanteMax, ninoMax: REGLA_EDAD_DEFAULT.ninoMax };
+/** Umbrales para clasificar menores en un paquete SIN hotel (solo vuelo/servicios): NO es la configuración de ningún hotel. Un hotel nunca los hereda (O3: sus edades son obligatorias). */
+export const EDADES_SIN_HOTEL = { infanteMax: 2, ninoMax: 10 };
 
 /** Valida lo que se pide al armar un hotel MANUAL: capacidad de niños por habitación y los dos umbrales de edad. */
 export function validarConfigMenoresManual(a: { capacidadNinos: unknown; edadInfanteMax: unknown; edadNinoMax: unknown }):
@@ -52,14 +55,20 @@ type FilaHotelFicha = { edad_infante_min?: number | null; edad_infante_max?: num
 
 /** Reglas de un hotel con FICHA: umbrales de edad, capacidad por acomodación, pax y «solo adultos» tal como están en su ficha. */
 export function reglasHotelFicha(h: FilaHotelFicha, acom: Partial<AcomConfig>[]): ReglasHotelDin {
-  const regla = normalizarReglaEdadGeneral({ infanteMin: h.edad_infante_min ?? null, infanteMax: h.edad_infante_max ?? null, ninoMin: h.edad_nino_min ?? null, ninoMax: h.edad_nino_max ?? null });
+  // O3: la configuración de edades es obligatoria para un hotel que acepta menores; un hotel Adults Only no la necesita (rechaza menores).
+  const adultsOnly = h.adults_only === true;
+  const g = validarEdadesGeneralesHotel({ infanteMax: h.edad_infante_max ?? null, ninoMax: h.edad_nino_max ?? null });
   const reglas = ACOM_ROOMS.map((a): AcomConfig => ({ ...defaultAcomConfig(a), ...(acom.find((x) => x.acomodacion === a) ?? {}) } as AcomConfig));
-  return { infanteMax: regla.infanteMax, ninoMax: regla.ninoMax, reglas, paxMin: h.pax_min ?? null, paxMax: h.pax_max ?? null, adultsOnly: h.adults_only === true, origen: "ficha" };
+  return {
+    infanteMax: g.ok ? g.regla.infanteMax : 0, ninoMax: g.ok ? g.regla.ninoMax : 0, reglas, paxMin: h.pax_min ?? null, paxMax: h.pax_max ?? null,
+    adultsOnly, origen: "ficha", edadesIncompletas: !g.ok && !adultsOnly ? g.error : null,
+  };
 }
 
 /** Texto para el cliente: qué edades aplica ESE hotel y qué significan Niño 1 y Niño 2. */
 export function explicarEdades(r: ReglasHotelDin | null): { edades: string; ninos12: string; adultsOnly: string | null } {
-  const inf = r?.infanteMax ?? EDADES_MANUAL_POR_DEFECTO.infanteMax, nino = r?.ninoMax ?? EDADES_MANUAL_POR_DEFECTO.ninoMax;
+  if (r?.edadesIncompletas) return { edades: r.edadesIncompletas, ninos12: "", adultsOnly: null };
+  const inf = r?.infanteMax ?? EDADES_SIN_HOTEL.infanteMax, nino = r?.ninoMax ?? EDADES_SIN_HOTEL.ninoMax;
   return {
     edades: `En este hotel: infante hasta los ${inf} años · niño de ${inf + 1} a ${nino} años · desde los ${nino + 1} años se cuenta como adulto (en el vuelo cuenta la edad: menor de 2 años = infante).`,
     ninos12: "Niño 1 y Niño 2 no son rangos de edad: son las dos tarifas de niño de cada habitación. El primer niño de una habitación paga Niño 1 y el segundo, Niño 2.",
@@ -81,7 +90,7 @@ export function resolverMenores(a: { habitaciones: Partial<Record<AcomRoom, numb
   const v = validarEdadesMenores(bruto, bruto.length);
   if (!v.ok) return v;
   const r = a.reglas;
-  const infMax = r?.infanteMax ?? EDADES_MANUAL_POR_DEFECTO.infanteMax, ninoMax = r?.ninoMax ?? EDADES_MANUAL_POR_DEFECTO.ninoMax;
+  const infMax = r?.infanteMax ?? EDADES_SIN_HOTEL.infanteMax, ninoMax = r?.ninoMax ?? EDADES_SIN_HOTEL.ninoMax;
   const habitaciones: HabitacionConsultada[] = [];
   for (const k of ACOM_ROOMS) {
     const n = Math.max(0, Math.trunc(Number(a.habitaciones[k]) || 0));
@@ -91,6 +100,7 @@ export function resolverMenores(a: { habitaciones: Partial<Record<AcomRoom, numb
   const adultos = habitaciones.reduce((s, h) => s + h.config.pax_tarifa, 0);
   if (!v.edades.length) return { ok: true, ninos: 0, ninos2: 0, infantes: 0, menoresDeDos: 0, edades: [], distribucion: [] };
   if (r?.adultsOnly) return { ok: false, error: "Este hotel es solo para adultos: no admite menores." };
+  if (r?.edadesIncompletas) return { ok: false, error: r.edadesIncompletas };
   const c = clasificarMenoresPorEdad(v.edades, infMax, ninoMax);
   if (!c.ok) return { ok: false, error: c.error };
   if (!r) {

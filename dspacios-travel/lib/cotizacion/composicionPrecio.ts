@@ -29,7 +29,7 @@ export type LineaComposicion = {
    * (suma exacta, residuo a los primeros) y el neto de hotel de la línea = habitaciones × neto por habitación. */
   habitacion?: { habitaciones: number; ocupantes: number; netoPorHabitacion: number; descuento: number; repartoDescuento: number[]; netoHotelLinea: number };
 };
-export type AdicionalComposicion = { tipo: "servicio_opcional" | "servicio_grupo" | "mascota" | "ajuste_redondeo"; nombre: string; total: number };
+export type AdicionalComposicion = { tipo: "servicio_opcional" | "servicio_grupo" | "mascota" | "ajuste_redondeo" | "nino_gratis"; nombre: string; total: number };
 
 export type Composicion = {
   version: 1;

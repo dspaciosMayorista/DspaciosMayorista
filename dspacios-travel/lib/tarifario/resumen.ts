@@ -7,6 +7,7 @@ import { aplicarFiltrosPostCarga } from "./filtrosPostCarga.ts";
 import { esFilaHotelVerificable } from "./vigencia.ts";
 import { registrarEtapa, registrarDatoPagina, registrarErrorTecnico, medirPayloadSiHabilitado, textoEstimacionPayload } from "../observabilidad/medicion.ts";
 import { galeriaPorHotel as galeriaDe, leerFotosHotel } from "./fotosHotel.ts";
+import { leerFotosServicios } from "./fotosServicio.ts";
 import type { InfoHotelDato, CapHotelDato } from "./datos.ts";
 import type { DescripcionPaqueteRaw } from "./descripcionPaquete.ts";
 import { condicionHotelFechas, type FilaTemporadaHotelRaw } from "../reservar/liquidacionHotel.ts";
@@ -460,8 +461,9 @@ export async function cargarResumenTarifario(
           return { acs, tarInfante, e1, e2 };
         })()
       : null,
+    // O1: foto pública de cada receptivo publicado, igual para visitante, aliado e interno (ver lib/tarifario/fotosServicio.ts).
     servicioIds.length
-      ? sb.from("servicios_adicionales").select("id, foto_url").in("id", servicioIds)
+      ? leerFotosServicios(sb, admin, servicioIds)
       : null,
     sb.from("planes_alimentacion").select("codigo, nombre, descripcion, nota_especial"),
     paqIdsPorcion.length && admin

@@ -1,6 +1,10 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
 import { ETIQUETA_AJUSTE_CLIENTE, esLineaAjusteRedondeo } from "@/lib/reservar/solicitudHotel";
+import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
+import { ETIQUETA_NINO_GRATIS_CLIENTE, descripcionClienteNinoGratis, esExplicacionNinoGratis, plegarNinoGratisItems } from "@/lib/contrato/plegarNinoGratis";
+import { pagadoEnMonedaOferta, type CobroContrato } from "@/lib/finanzas/cobro";
+import { textoMinimoEnMonedaOferta } from "@/lib/contrato/reglaConfirmacion";
 import { EstanciaContratoBloque, type EstanciaContratoVista } from "@/components/contrato/EstanciaContratoBloque";
 import {
   EMPRESA,
@@ -94,7 +98,7 @@ type Props = {
    * 235 (#90 F): cómo se COBRA el contrato (`cobroDeVenta`). Si se cobra en una moneda distinta de la de la oferta, el total del contrato sigue
    * siendo el de la oferta y el pago/saldo se expresan en la moneda de cobro con su total convertido y congelado. Ausente = se cobra en la moneda del contrato.
    */
-  cobro?: { moneda: string; total: number; trm: number | null; convertido: boolean } | null;
+  cobro?: CobroContrato | null;
   // Modo COTIZACIÓN: rotula el documento como presupuesto (sin número de
   // contrato) y muestra la vigencia. No constituye reserva en firme.
   esCotizacion?: boolean;
@@ -190,7 +194,7 @@ export function ContratoDocumento({
   pasajeros,
   hoteles,
   vuelos,
-  items,
+  items: itemsEntrada,
   totalPagado,
   cobro = null,
   esCotizacion = false,
@@ -208,9 +212,13 @@ export function ContratoDocumento({
   paqueteSnapshot = null,
   resumenPrecios = null,
 }: Props) {
+  // #125 (corrección del dueño): el beneficio del niño gratis se pliega en la tarifa del niño al que pertenece; solo presentación, el contrato guardado y su total no cambian.
+  const { items, plegado: ninoGratisPlegado } = plegarNinoGratisItems(itemsEntrada);
   const lineasIncluye = lineasTextoDoc(incluye);
   const lineasNoIncluye = lineasTextoDoc(noIncluye);
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
+  // Una reserva ya confirmada no tiene un «mínimo para confirmar» que accionar: el aviso se oculta; las condiciones congeladas (componente, condición, plazos, restricciones) se conservan y la regla de confirmación no cambia.
+  const confirmado = ["confirmado", "confirmada", "activo"].includes((venta.estado ?? "").toLowerCase());
   // Fase 3F-4B: helper ÚNICO (lib/contrato/valorContratoItem.ts) — lee
   // `valor_total` para una línea `modo_precio = "total"` (Bernalo) o la
   // fórmula per-cápita de siempre para cualquier otra fila. Sin este cambio,
@@ -218,10 +226,12 @@ export function ContratoDocumento({
   // 0) se mostraba en $0.
   // #30: en NETO el total y el saldo son los del total exigible, no la suma
   // de ítems a PVP (ver lib/contrato/presentacionValores.ts).
-  const { total, saldo, mostrarValoresItems } = presentacionValoresContrato({
+  const { total, saldo, mostrarValoresItems, sinDetalleItems } = presentacionValoresContrato({
     totalItems: totalVisibleContratoItems(items),
     totalPagado,
     netoTotalExigible,
+    cantidadItems: items.length,
+    precioRegistrado: Number((venta as { precio_venta?: number | string | null }).precio_venta) || null,
   });
   const esNeto = !mostrarValoresItems;
   // El vuelo manual no se pinta como fila: su parte se absorbe en el paquete visible (por persona o de precio total) para que las filas sumen el total de arriba.
@@ -234,8 +244,9 @@ export function ContratoDocumento({
   const paxVuelos = lineasVuelo.map((it) => { const m = /· ([0-9]+) pax/.exec(it.descripcion ?? ""); return m ? Number(m[1]) : null; });
   // 235: con conversión de cobro, lo pagado y el saldo van en la moneda de cobro contra el total convertido (nunca se resta una moneda de la otra).
   const cobroConvertido = cobro?.convertido ? cobro : null;
-  const monedaPago = cobroConvertido ? cobroConvertido.moneda : moneda;
-  const saldoDocumento = cobroConvertido ? Math.max(cobroConvertido.total - totalPagado, 0) : saldo;
+  // Documento de CLIENTE: pagado y saldo en la moneda de la OFERTA (la TRM de cobro congelada convierte lo cobrado); el total a cobrar en la otra moneda es contabilidad interna y no se imprime.
+  const pagadoDocumento = cobroConvertido ? pagadoEnMonedaOferta(totalPagado, cobroConvertido) : totalPagado;
+  const saldoDocumento = cobroConvertido ? Math.max(total - pagadoDocumento, 0) : saldo;
   const importeDocumento = (valor: number) => esNeto ? formatoNetoDocumento(valor, moneda) : formatMoneda(valor, moneda);
   const valorItemDocumento = (item: ContratoItem) => valoresDoc ? (valoresDoc.get(item.id)?.total ?? 0) : valorVisibleContratoItem(item);
   // Separa servicios (línea propia: Servicio · Pax · Valor total) del alojamiento.
@@ -249,14 +260,19 @@ export function ContratoDocumento({
   // tabla (regla F.5).
   const alojItemsTotal = alojItems.filter((it) => it.modo_precio === "total");
   const alojItemsPorPersona = alojItems.filter((it) => it.modo_precio !== "total");
-  const tarifaIndividual = tarifaIndividualSegura(alojItemsPorPersona, paxVuelos);
+  // #125: la línea firmada del niño gratis no es un adulto ni una tarifa: no entra al conteo de personas ni a «tarifa individual»; su importe (negativo) reduce la base de los niños.
+  const alojPersonasSinNG = alojItemsPorPersona.filter((it) => !esLineaNinoGratis(it.descripcion));
+  const ninoGratisCentavos = alojItemsPorPersona.filter((it) => esLineaNinoGratis(it.descripcion)).reduce((x, it) => x + Math.round(Number(it.adultos) * Number(it.tarifa_adulto) * 100), 0);
+  const tarifaIndividual = tarifaIndividualSegura(alojPersonasSinNG, paxVuelos);
   // Cotización con servicio manual: adultos y niños se presentan en UN solo ítem «Paquete Turístico …»; los servicios adicionales siguen en su sección.
   // El vuelo y los servicios adicionales entran en las tarifas de esa fila (repartidos entre los pasajeros que cubren), no en una segunda tabla de importes.
   // Una línea de precio total que NO es de un hotel Bernalo: los servicios incluidos por grupo de un hotel normal. Esa línea no impide el ítem único (se reparte, o se muestra el total).
   const lineasGrupo = alojItemsTotal.filter(esLineaGrupoIncluido);
   // #94: con un resumen aplicable el cliente ve grupos de pasajeros (precio completo por persona y subtotal) y ningún importe por servicio.
   const resumen = resumenAplicable(resumenPrecios, { modalidad: esNeto ? "neto" : "pvp", moneda, totalCentavos: Math.round(total * 100) });
-  const unificarPaquete = !resumen && esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items);
+  // Si el niño gratis separó tarifas de niño DISTINTAS (uno gratis y otro que paga), no se promedian en una sola fila: cada tarifa distinta conserva su fila.
+  const tarifasNinoDistintas = new Set(alojPersonasSinNG.filter((it) => Number(it.ninos) > 0).map((it) => Math.round(Number(it.tarifa_nino) * 100))).size > 1;
+  const unificarPaquete = !resumen && esCotizacion && alojItemsPorPersona.length > 0 && lineasGrupo.length === alojItemsTotal.length && hayServicioManual(items) && !(ninoGratisPlegado && tarifasNinoDistintas) && !items.some((i) => i.tarifaNinoNoAtribuible);
   const ventaTexto = venta as { destino?: string | null; fecha_regreso?: string | null };
   const tituloPaqueteDoc = tituloPaqueteEditado(tituloPaquete) ?? tituloPaqueteTuristico(ventaTexto.destino, venta.fecha_salida, ventaTexto.fecha_regreso);
   // Cotización normal con reparto por pasajero: el Ítem es el texto editado o, por unidad, «Paquete Turístico {nombre comercial}» (#52; sin nombre, el destino).
@@ -269,10 +285,10 @@ export function ContratoDocumento({
   const vinculos = vincularAdicionales(adLineas.map((l) => ({ descripcion: l.descripcion, centavos: centPvp(l) })), paqueteSnapshot ?? null);
   const vinculoPorId = new Map(adLineas.map((l, i) => [l.id, vinculos[i]] as const));
   const filaPaquete = unificarPaquete ? (() => {
-    const adultos = alojItemsPorPersona.reduce((x, it) => x + Number(it.adultos), 0);
-    const ninos = alojItemsPorPersona.reduce((x, it) => x + Number(it.ninos), 0);
-    let baseAdultoCentavos = alojItemsPorPersona.reduce((x, it) => x + Math.round(Number(it.adultos) * Number(it.tarifa_adulto) * 100), 0);
-    let baseNinoCentavos = alojItemsPorPersona.reduce((x, it) => x + Math.round(Number(it.ninos) * Number(it.tarifa_nino) * 100), 0);
+    const adultos = alojPersonasSinNG.reduce((x, it) => x + Number(it.adultos), 0);
+    const ninos = alojPersonasSinNG.reduce((x, it) => x + Number(it.ninos), 0);
+    let baseAdultoCentavos = alojPersonasSinNG.reduce((x, it) => x + Math.round(Number(it.adultos) * Number(it.tarifa_adulto) * 100), 0);
+    let baseNinoCentavos = alojPersonasSinNG.reduce((x, it) => x + Math.round(Number(it.ninos) * Number(it.tarifa_nino) * 100), 0) + ninoGratisCentavos;
     const nombreDe = (l: ContratoItem) => (esLineaVueloManual(l.descripcion) ? "el vuelo" : `«${l.descripcion.replace(/^Servicio · /, "").split(" · ")[0].replace(/ — sujeto a confirmación.*$/, "").split(" — ")[0]}»`);
     const adicionales = adLineas.map((l, i) => ({ nombre: nombreDe(l), centavos: centPvp(l), pax: vinculos[i]?.pax ?? null }));
     // Servicios incluidos por grupo: su importe ya está en el total; entra al reparto solo si el snapshot acredita a cuántos pasajeros cubre.
@@ -578,9 +594,11 @@ export function ContratoDocumento({
                       <span className="font-semibold">Nota especial del plan:</span> {h.nota_regimen}
                     </div>
                   )}
-                  {h.condiciones_tarifa && h.condiciones_tarifa.length > 0 && (
-                    <CondicionesTarifaSection condiciones={h.condiciones_tarifa} />
-                  )}
+                  {/* Contrato: ni nombre de promoción ni cálculo del niño gratis (la tarifa del niño ya lo refleja); la cotización conserva su explicación. */}
+                  {(() => {
+                    const cond = ((h.condiciones_tarifa ?? []) as unknown as CondicionTarifaAplicada[]).filter((c) => esCotizacion || !esExplicacionNinoGratis(c.texto));
+                    return cond.length > 0 ? <CondicionesTarifaSection condiciones={cond} /> : null;
+                  })()}
                   <div className="mt-1 text-xs text-gray-500">
                     {formatFechaLarga(h.fecha_ingreso)} →{" "}
                     {formatFechaLarga(h.fecha_salida)}
@@ -697,11 +715,15 @@ export function ContratoDocumento({
                 </div>
                 <div className="text-base font-bold">{importeDocumento(total)}</div>
               </div>
-              {cobroConvertido && <Pill label="Total a cobrar" value={formatMoneda(cobroConvertido.total, cobroConvertido.moneda)} />}
-              <Pill label="Total pagado" value={formatMoneda(totalPagado, monedaPago)} />
-              <Pill label="Saldo pendiente" value={cobroConvertido ? formatMoneda(saldoDocumento, monedaPago) : importeDocumento(saldo)} />
+              <Pill label="Total pagado" value={formatMoneda(pagadoDocumento, moneda)} />
+              <Pill label="Saldo pendiente" value={cobroConvertido ? importeDocumento(saldoDocumento) : importeDocumento(saldo)} />
               <Pill label="Moneda" value={cobroConvertido ? `${moneda} · cobro en ${cobroConvertido.moneda}` : moneda} />
             </div>
+            {sinDetalleItems && (
+              <p className="mb-3 break-inside-avoid text-[11px] text-gray-500">
+                Este contrato no tiene detalle de ítems (registro histórico): el total es el precio de venta registrado, sin desglose.
+              </p>
+            )}
           </div>
           {/* Hallazgo confirmado (cierre 3F-4B): una línea `modo_precio =
               "total"` (Bernalo) no tiene adultos/niños/tarifa por columna —
@@ -761,7 +783,7 @@ export function ContratoDocumento({
               <dl className="space-y-1 rounded-lg border border-gray-200 p-3 text-xs sm:hidden print:hidden" data-testid="paquete-movil">
                 <dt className="font-semibold text-gray-800">{tituloPaqueteDoc}</dt>
                 {filaPaquete.adultos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Adultos ({filaPaquete.adultos}){filaPaquete.tarifa.ok ? " · tarifa por adulto" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda)}</dd>}</div>}
-                {filaPaquete.ninos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>}
+                {filaPaquete.ninos > 0 && <div className="flex items-baseline justify-between gap-3"><dd className="text-gray-600">Niños ({filaPaquete.ninos}){filaPaquete.tarifa.ok ? " · tarifa por niño" : ""}</dd>{filaPaquete.tarifa.ok && <dd className="shrink-0 whitespace-nowrap tabular-nums">{ninoGratisPlegado && filaPaquete.tarifa.tarifaNino === 0 ? ETIQUETA_NINO_GRATIS_CLIENTE : formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)}</dd>}</div>}
                 <div className="flex items-baseline justify-between gap-3 border-t border-gray-100 pt-1 font-medium"><dd>Total del paquete{esNeto ? " NETO" : ""}</dd><dd className="shrink-0 whitespace-nowrap tabular-nums">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</dd></div>
               </dl>
               <div className="hidden overflow-x-auto sm:block print:block">
@@ -785,7 +807,7 @@ export function ContratoDocumento({
                       {filaPaquete.tarifa.ok ? (filaPaquete.adultos > 0 ? formatoNetoDocumento(filaPaquete.tarifa.tarifaAdulto, moneda) : formatoNetoDocumento(0, moneda)) : "—"}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {filaPaquete.tarifa.ok ? (filaPaquete.ninos > 0 ? formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda) : formatoNetoDocumento(0, moneda)) : "—"}
+                      {filaPaquete.tarifa.ok ? (filaPaquete.ninos > 0 ? (ninoGratisPlegado && filaPaquete.tarifa.tarifaNino === 0 ? ETIQUETA_NINO_GRATIS_CLIENTE : formatoNetoDocumento(filaPaquete.tarifa.tarifaNino, moneda)) : formatoNetoDocumento(0, moneda)) : "—"}
                     </td>
                     <td className="border border-gray-200 px-2 py-1 font-medium" data-testid="valor-total-paquete">{formatoNetoDocumento(filaPaquete.tarifa.totalCentavos / 100, moneda)}</td>
                   </tr>
@@ -830,23 +852,23 @@ export function ContratoDocumento({
                   <tr key={it.id} className="break-inside-avoid">
                     {/* #120: la línea de ajuste de redondeo se muestra al cliente como «Ajuste por redondeo», con el importe solo en «Valor total» y «—» en personas y tarifas. */}
                     <td className="border border-gray-200 px-2 py-1">
-                      {esLineaAjusteRedondeo(it.descripcion) ? ETIQUETA_AJUSTE_CLIENTE : it.descripcion}
+                      {esLineaAjusteRedondeo(it.descripcion) ? ETIQUETA_AJUSTE_CLIENTE : descripcionClienteNinoGratis(it.descripcion)}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {esLineaAjusteRedondeo(it.descripcion) ? "—" : it.adultos}
+                      {esLineaAjusteRedondeo(it.descripcion) || esLineaNinoGratis(it.descripcion) ? "—" : it.adultos}
                     </td>
                     <td className="border border-gray-200 px-2 py-1">
-                      {esLineaAjusteRedondeo(it.descripcion) ? "—" : it.ninos}
+                      {esLineaAjusteRedondeo(it.descripcion) || esLineaNinoGratis(it.descripcion) ? "—" : it.ninos}
                     </td>
                     {mostrarDesglose && (
                       <>
                         <td className="border border-gray-200 px-2 py-1">
-                          {esLineaAjusteRedondeo(it.descripcion) || !tarifaIndividual ? "—" : valoresDoc
+                          {esLineaAjusteRedondeo(it.descripcion) || esLineaNinoGratis(it.descripcion) || !tarifaIndividual ? "—" : valoresDoc
                             ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.adultoTotal ?? 0} cantidad={Number(it.adultos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_adulto, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1">
-                          {esLineaAjusteRedondeo(it.descripcion) || !tarifaIndividual ? "—" : valoresDoc
+                          {esLineaAjusteRedondeo(it.descripcion) || esLineaNinoGratis(it.descripcion) || !tarifaIndividual ? "—" : it.tarifaNinoNoAtribuible ? "—" : (it.descripcion.startsWith(ETIQUETA_NINO_GRATIS_CLIENTE) || it.ninoGratisFusionado) && Number(it.ninos) > 0 && (valoresDoc ? (valoresDoc.get(it.id)?.ninoTotal ?? 0) : Number(it.tarifa_nino)) === 0 ? ETIQUETA_NINO_GRATIS_CLIENTE : valoresDoc
                             ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.ninoTotal ?? 0} cantidad={Number(it.ninos)} moneda={moneda} />
                             : formatMoneda(it.tarifa_nino, moneda)}
                         </td>
@@ -950,7 +972,7 @@ export function ContratoDocumento({
                   <tr className="bg-gray-50 text-left text-gray-500">
                     <th className="border border-gray-200 px-2 py-1">Componente</th>
                     <th className="border border-gray-200 px-2 py-1">Condición</th>
-                    <th className="border border-gray-200 px-2 py-1">Pago mínimo</th>
+                    {!confirmado && <th className="border border-gray-200 px-2 py-1">Pago mínimo</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -967,16 +989,18 @@ export function ContratoDocumento({
                           <div className="text-[10px] text-gray-400">Saldo antes del {formatFechaLarga(l.fechaLimite)}</div>
                         )}
                       </td>
-                      <td className="border border-gray-200 px-2 py-1 font-medium">
-                        {formatMoneda(l.exigido, l.moneda)}
-                      </td>
+                      {!confirmado && (
+                        <td className="border border-gray-200 px-2 py-1 font-medium">
+                          {formatMoneda(l.exigido, l.moneda)}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            {condiciones.resumen && (
-              <p className="mt-2 break-inside-avoid text-[11px] font-semibold text-gray-700">{condiciones.resumen.texto}</p>
+            {condiciones.resumen && !confirmado && (
+              <p className="mt-2 break-inside-avoid text-[11px] font-semibold text-gray-700">{textoMinimoEnMonedaOferta(condiciones.resumen.texto, condiciones.resumen.minimoConfirmar, cobroConvertido)}</p>
             )}
             {/* Restricciones: SOLO se enumeran los componentes que de verdad
                 están restringidos EN LA PRESENTACIÓN (tras overrides). Ningún
@@ -991,6 +1015,15 @@ export function ContratoDocumento({
               </div>
             )}
           </section>
+        )}
+
+        {/* #53 (307): mínimo ACORDADO por superadmin en un contrato SIN condiciones congeladas (F4): se muestra tal cual, sin inventar hoteles ni restricciones. Con condiciones, su resumen ya lo dice. */}
+        {!confirmado && condiciones?.minimoAcordado && !(condiciones.hayCondiciones && condiciones.filas.length > 0) && (
+          <p className="break-inside-avoid text-[11px] font-semibold text-gray-700">{textoMinimoEnMonedaOferta(condiciones.minimoAcordado.texto, condiciones.minimoAcordado.minimoConfirmar, cobroConvertido)}</p>
+        )}
+        {/* F5: la lectura del acuerdo falló → no se publica ningún mínimo que pueda no ser el vigente. */}
+        {!confirmado && condiciones?.minimoNoVerificable && (
+          <p className="break-inside-avoid text-[11px] text-gray-500">Pago mínimo para confirmar: no disponible en este momento; consúltalo con tu asesor.</p>
         )}
 
         {/* ── Cláusulas ────────────────────────────────────────── */}

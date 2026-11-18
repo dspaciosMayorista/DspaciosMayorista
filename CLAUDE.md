@@ -14,6 +14,12 @@
 
 ---
 
+## Idioma de trabajo (regla permanente del dueño)
+
+Write all responses, progress updates, delivery reports, summaries, and new technical documentation in English, unless the owner explicitly requests another language. Preserve existing Spanish UI text, identifiers, and historical documents.
+
+---
+
 ## 0. Resumen en una frase
 
 Construir **una sola aplicación web** para la agencia mayorista de turismo **D'spacios Travel**
@@ -566,6 +572,14 @@ Para migrar datos reales: exportar cada hoja a CSV e importar a Supabase (no es 
 >   —es CLI puro, nunca se importa— y Next a ≥16.2.11); `sitio-web/node_modules`
 >   (14.926 archivos, 165 MB) commiteado en git; sin rate limit ni captcha en formularios
 >   públicos; sin monitoreo de errores (Sentry).
+
+> **CURRENT STATUS 2026-11-18: migrations 307–311 applied/postchecked in Production by the owner; application publication pending. See `dspacios-travel/docs/tecnico/release-integrated-batch-2026-11-18.md`. The original branch note below is history.**
+>
+> **#53 — configurable confirmation minimum, expiration that never cancels a contract with payments, and ally vouchers (original implementation branch `claude/53-confirmacion-vencimiento-voucher`, now integrated into the consolidated batch):**
+> owner rules (2026-11-15): (1) NETO and PVP resolve the confirmation minimum the same way (superadmin agreement → frozen condition → `config_cobros` %); superadmin changes it from the contract page
+> (`contrato_minimo_acuerdo`, insert-only, audited, identity-guarded, classified for consecutive-number reuse; it never confirms by itself); (2) `liberar_vencidas` NEVER cancels a contract with any payment;
+> (3) an ally opens a voucher (portal, direct link and metadata) ONLY with the contract 100 % paid (collection currency, tolerance 0.5 COP / 0.01 USD), no early release; internal staff keep the preview.
+> Does not touch #97 (OFF), the reuse switch, or historical data; no batches. Details, deployment order, tests, Codex findings F1–F5 and limits: `dspacios-travel/docs/tecnico/confirmacion-vencimiento-voucher-307.md`.
 
 > **Novedades recientes (rama `claude/peaceful-noether-713c7c`, en `main`):**
 > - **Programas — tercer tipo de traslado "Salida terrestre" (jul-2026):** el dueño distingue
@@ -1500,6 +1514,9 @@ interno y público) → **RESERVAR** (genera contrato/venta).
   (`lib/calc/paquetes.ts`). UI en `HotelDetalleClient.tsx` (`TemporadasBox`):
   nuevo tipo en el selector + selector de régimen (vacío = todos) + aviso
   explicando la mecánica cuando se elige "N noches, 1 gratis".
+- **⚠️ SUPERADO por DECISIONS.md ADL-019 (PR #316, 2026-09-18; vigente, verificado 2026-11-18):** el % de
+  la promoción Dubai se aplica sobre la tarifa COMPLETA del régimen (base + suplemento efectivo), no solo
+  sobre la base; el texto de abajo (jul-2026) es histórico. No se encontró una decisión posterior del dueño que lo cambie.
 - **Calculadora Dubai: promociones con descuento SOLO sobre la base**
   (`lib/calc/calculadoras.ts`, `DubaiParams.promos[]`): antes, un `descuento_pct`
   genérico de `hotel_temporadas` aplicado sobre una tarifa Dubai ya generada

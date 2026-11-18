@@ -106,6 +106,7 @@ const STUB_PAQUETE_TOTAL_ACTIONS = pathToFileURL(join(AQUI, "stubs", "paqueteTot
 const STUB_SUPABASE_SERVER = pathToFileURL(join(AQUI, "stubs", "supabaseServerStub.mjs")).href;
 const STUB_NEXT_CACHE = pathToFileURL(join(AQUI, "stubs", "nextCacheStub.mjs")).href;
 const STUB_ASIENTOS = pathToFileURL(join(AQUI, "stubs", "asientosStub.mjs")).href;
+const STUB_PAGO_COMPLETO = pathToFileURL(join(AQUI, "stubs", "pagoCompletoStub.mjs")).href;
 const STUB_ASEGURAR_CXP = pathToFileURL(join(AQUI, "stubs", "asegurarCxpStub.mjs")).href;
 // Módulos CSS ("*.module.css", o cualquier ".css") — ver cssModuleStub.mjs.
 // Se revisa ANTES que la resolución genérica de "@/*" de abajo: esa
@@ -359,6 +360,10 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "../paquetes/actions" && context.parentURL?.endsWith("/dashboard/vuelos/actions.ts")) {
     return { url: STUB_PAQUETES_ACTIONS, shortCircuit: true };
   }
+  // #53 (307): «pago completo» para el acceso de aliados a vouchers (server-only + cliente admin) → stub que falla cerrado.
+  // SOLO en las pruebas React aisladas: con PG_ACCIONES_REALES=1 (acciones reales → PostgREST → Postgres) rige el módulo REAL, para que la prueba ejerza la compuerta de pago de verdad
+  // (el stub negaba siempre y ocultaba el acceso pagado; hallazgo F1 de la auditoría integrada). Mismo patrón que el resto de stubs de acciones de este archivo.
+  if (!ACCIONES_REALES && specifier === "@/lib/voucher/pagoCompleto") return { url: STUB_PAGO_COMPLETO, shortCircuit: true };
   if (specifier === "@/lib/contabilidad/asientos" &&
       (context.parentURL?.endsWith("dashboard/pagos/actions.ts") || context.parentURL?.endsWith("/gestion-actions.ts"))) {
     return { url: STUB_ASIENTOS, shortCircuit: true };

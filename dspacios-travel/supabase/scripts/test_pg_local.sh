@@ -36,7 +36,12 @@ docker run -d --name "$REST" --network "$RED" -p "127.0.0.1::3000" -e PGRST_DB_U
 URL="http://127.0.0.1:$(docker port "$REST" 3000/tcp | head -1 | sed 's/.*://')"
 for i in $(seq 1 30); do node -e "fetch('$URL/').then(()=>process.exit(0),()=>process.exit(1))" && break; node -e "setTimeout(()=>{},500)"; done
 echo "PostgREST en $URL contra $DB"
-env "PG_ACCIONES_REALES=${PG_REACT:-0}" "${PRE}_BASE=$DB" "${PRE}_CONTENEDOR=$CT" "${PRE}_POSTGREST=$URL" "${PRE}_JWT_SECRET=$SECRETO" \
+# El estado de salida de Node se conserva (F3 de la auditoría de #1): un `| grep` final lo enmascaraba y una prueba fallida terminaba con 0.
+# El estado viaja por un archivo (sh no tiene pipefail); el filtro de ruido sigue en streaming y `|| true` evita que un filtro sin líneas aborte con `set -e`.
+RCF="/tmp/tpg.$TOKEN.rc"
+{ env "PG_ACCIONES_REALES=${PG_REACT:-0}" "${PRE}_BASE=$DB" "${PRE}_CONTENEDOR=$CT" "${PRE}_POSTGREST=$URL" "${PRE}_JWT_SECRET=$SECRETO" \
   node $( [ "${PG_REACT:-}" = 1 ] && echo "--experimental-test-module-mocks --import ./pruebas/support/registrarProgramasRuta.mjs --experimental-loader ./pruebas/support/reactLoader.mjs" || echo "--experimental-strip-types --experimental-test-module-mocks --experimental-loader ./pruebas/support/aliasLoaderRelativo.mjs" ) \
-       --test --test-force-exit --test-timeout=240000 --test-concurrency=1 --test-reporter="${REPORTER:-spec}" "$PRUEBA" 2>&1 \
-  | grep -v ExperimentalWarning | grep -v "^(node:" | grep -v "Use .node" | grep -v "register(" | grep -v "^--import"
+       --test --test-force-exit --test-timeout=240000 --test-concurrency=1 --test-reporter="${REPORTER:-spec}" "$PRUEBA" 2>&1; echo $? > "$RCF"; } \
+  | grep -v ExperimentalWarning | grep -v "^(node:" | grep -v "Use .node" | grep -v "register(" | grep -v "^--import" || true
+RC="$(cat "$RCF" 2>/dev/null || echo 1)"; rm -f "$RCF"
+exit "$RC"

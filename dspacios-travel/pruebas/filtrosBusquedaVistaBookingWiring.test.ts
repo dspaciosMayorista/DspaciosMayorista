@@ -229,10 +229,11 @@ describe("BuscadorBooking.tsx — Destino usa el Select accesible (Base UI), no 
     assert.match(cuerpo, /bg-\[var\(--brand-success\)\]\/10/);
   });
 
-  test("las fechas conservan sus límites con DateInput y la habitación conserva su selección", () => {
+  test("las fechas conservan sus límites con DateInput y las habitaciones se piden por CANTIDAD (#102: el tipo lo decide cada hotel)", () => {
     assert.match(buscadorBooking, /<DateInput aria-label="Ida" type="date" min=\{hoy\} value=\{fIda\}/);
     assert.match(buscadorBooking, /<DateInput aria-label="Regreso" type="date" min=\{fIda\} value=\{fReg\}/);
-    assert.match(buscadorBooking, /<select value=\{acom\} onChange=\{\(e\) => setHab\(i, e\.target\.value as AcomRoom\)\}/);
+    assert.match(buscadorBooking, /aria-label="Habitaciones"/);
+    assert.doesNotMatch(buscadorBooking, /setHab\(i, e\.target\.value as AcomRoom\)/, "ya no se elige un tipo de acomodación por habitación");
   });
 
   test("cierre de accesibilidad: el <label> 'Destino' y el SelectTrigger comparten idBase vía aria-labelledby — el trigger deja de depender del placeholder/valor para su nombre accesible", () => {

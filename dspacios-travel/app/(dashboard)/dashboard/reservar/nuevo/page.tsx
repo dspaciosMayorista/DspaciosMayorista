@@ -75,8 +75,9 @@ export default async function NuevaReservaPage({
       fechaRegreso: filas[0].fecha_regreso,
       noches: filas[0].noches,
       bloqueoLabel: filas[0].bloqueo_label,
-      edadInfanteMax: hotelRow?.edad_infante_max ?? 2,
-      edadNinoMax: hotelRow?.edad_nino_max ?? 10,
+      // O3: sin valores inventados — si el hotel no tiene configuradas las edades, el formulario lo advierte y el servidor rechaza los menores.
+      edadInfanteMax: hotelRow?.edad_infante_max ?? null,
+      edadNinoMax: hotelRow?.edad_nino_max ?? null,
       paxMinHotel: hotelRow?.pax_min ?? null,
       paxMaxHotel: hotelRow?.pax_max ?? null,
       petFriendly: hotelRow?.pet_friendly ?? false,
@@ -116,7 +117,7 @@ export default async function NuevaReservaPage({
       hotelNombre: m?.paquete_nombre ?? "Servicios",
       destino: m?.destino_nombre ?? "",
       fechaIda: null, fechaRegreso: null, noches: null, bloqueoLabel: null,
-      edadInfanteMax: 2, edadNinoMax: 10, paxMinHotel: null, paxMaxHotel: null,
+      edadInfanteMax: null, edadNinoMax: null, paxMinHotel: null, paxMaxHotel: null,
       petFriendly: false, petNota: null,
     };
   }

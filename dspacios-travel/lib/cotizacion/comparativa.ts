@@ -29,6 +29,7 @@ import { sugerirIncluye } from "@/lib/cotizacion/incluye";
 import { repartoPorPersona, type RepartoTarifa } from "@/lib/contrato/repartoTarifa";
 import { etiquetaIata } from "@/lib/iata";
 import { notaVueloManual, tramosVueloManual, validarServicioManual } from "@/lib/cart/servicioManual";
+import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
 import { hoyBogota, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import type { CotizacionManualInput, ServicioManual } from "@/app/(dashboard)/dashboard/cotizaciones/manual-actions";
 
@@ -930,13 +931,15 @@ export function tarifaVisibleOpcion(resumen: unknown, plantilla: unknown, totalO
     return { etiqueta: Number(r.ninos) > 0 ? "Tarifa por adulto" : "Tarifa por persona", cantidad, total: valor, reparto, soloHotel: false };
   }
   const lineas = (detalle && Array.isArray(detalle.items) ? (detalle.items as unknown[]) : []).filter(obj);
-  const hab = lineas.filter((i) => i.modo_precio !== "total" && Number(i.adultos) > 0 && typeof i.descripcion === "string" && !i.descripcion.startsWith("Servicio · "));
+  const hab = lineas.filter((i) => i.modo_precio !== "total" && Number(i.adultos) > 0 && !esLineaNinoGratis(i.descripcion) && typeof i.descripcion === "string" && !i.descripcion.startsWith("Servicio · "));
   if (!hab.length) return null;
   const tarifa = Number(hab[0].tarifa_adulto);
   if (!(tarifa > 0) || hab.some((i) => Number(i.tarifa_adulto) !== tarifa)) return null;
   const cantidad = hab.reduce((s, i) => s + Number(i.adultos), 0);
   const menores = lineas.filter((i) => i.modo_precio !== "total" && Number(i.adultos) === 0 && Number(i.ninos) > 0);
-  const sumaHotel = tarifa * cantidad + menores.reduce((s, i) => s + Number(i.ninos) * Number(i.tarifa_nino), 0);
+  // #125: el niño gratis reduce lo que se cobra de alojamiento (línea firmada, no es un adulto): entra a la suma del hotel.
+  const sumaHotel = tarifa * cantidad + menores.reduce((s, i) => s + Number(i.ninos) * Number(i.tarifa_nino), 0)
+    + lineas.filter((i) => esLineaNinoGratis(i.descripcion)).reduce((s, i) => s + Number(i.adultos) * Number(i.tarifa_adulto), 0);
   const soloHotel = Math.round(sumaHotel * 100) !== Math.round(Number(totalOpcion) * 100);
   return { etiqueta: menores.length ? "Tarifa por adulto" : "Tarifa por persona", cantidad, total: tarifa * cantidad, reparto: { exacto: true, tarifa }, soloHotel };
 }

@@ -1,5 +1,12 @@
 # TASKS.md - Dspacios Mayorista
 
+## Consolidated batch release — 2026-11-18 (current update)
+
+- [~] #1/#53/#102/#105/#106/#124/#125 implemented, technically re-audited and owner-reviewed locally. Production migrations 307–311 applied/postchecked by the owner. Git publication/final hosted Preview/production merge still pending. Final build FreOT3YH2M3PLd17-pfnV. See [release handoff](docs/tecnico/release-integrated-batch-2026-11-18.md) and [remote SQL journal](docs/tecnico/remote-migrations-307-311-2026-11-18.md).
+- [ ] #126 deferred by the owner: TRM per USD-contract installment, explicit unit child-charge display, clearer infant-only base groups and general applied-promotion badges. No implementation in this batch. #103/#104 remain separate.
+
+Older task entries below retain their historical status; do not treat this batch as merged before the owner completes Git and hosted checks.
+
 Fuente unica y priorizada de pendientes. Ultima actualizacion: 2026-09-30.
 
 Convencion: `[x]` integrado en `main`; `[~]` implementado solo en una rama sin integrar (no cuenta como cerrado); `[ ]` pendiente.

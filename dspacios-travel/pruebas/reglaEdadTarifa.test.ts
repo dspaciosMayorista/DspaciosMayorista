@@ -1,7 +1,11 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
-  normalizarReglaEdadGeneral,
+  validarEdadesGeneralesHotel,
+  mensajeEdadesHotel,
+  mensajeEdadesAlGuardar,
+  REGLA_SIN_MENORES,
+  resolverReglaEdadEstadiaSegura,
   resolverReglaEdadEfectiva,
   reglasEdadIguales,
   validarRangoReglaEdad,
@@ -16,45 +20,88 @@ import {
 // — ver la cabecera de `lib/calc/reglaEdadTarifa.ts`.
 // ─────────────────────────────────────────────────────────────────────────
 
-describe("normalizarReglaEdadGeneral — defaults históricos compatibles", () => {
-  test("sin ningún campo (null) → defaults completos", () => {
-    assert.deepEqual(normalizarReglaEdadGeneral(null), REGLA_EDAD_DEFAULT);
+describe("validarEdadesGeneralesHotel — configuración OBLIGATORIA, sin defaults inventados (O3)", () => {
+  test("sin ningún campo (null) → NO hay regla: faltan los dos campos obligatorios", () => {
+    const r = validarEdadesGeneralesHotel(null, "Hotel Prueba");
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.deepEqual(r.faltantes, ["Infante hasta (edad)", "Niño hasta (edad)"]);
+    assert.match(r.error, /Hotel Prueba/);
+    assert.match(r.error, /Infante hasta/);
+    assert.match(r.error, /solo con adultos/);
   });
 
-  test("objeto vacío → defaults completos", () => {
-    assert.deepEqual(normalizarReglaEdadGeneral({}), REGLA_EDAD_DEFAULT);
+  test("objeto vacío → igual que null (jamás se completa con 2/10)", () => {
+    const r = validarEdadesGeneralesHotel({});
+    assert.equal(r.ok, false);
   });
 
-  test("solo infanteMax presente (caso real: computo.ts solo leía edad_infante_max/edad_nino_max) → ninoMin se deriva de infanteMax+1, no de un default fijo", () => {
-    const r = normalizarReglaEdadGeneral({ infanteMax: 4 });
-    assert.equal(r.infanteMin, 0);
-    assert.equal(r.infanteMax, 4);
-    assert.equal(r.ninoMin, 5); // infanteMax + 1, NUNCA el default fijo de 3
-    assert.equal(r.ninoMax, 10);
+  test("solo infanteMax presente → falta ninoMax; NO se completa con 10", () => {
+    const r = validarEdadesGeneralesHotel({ infanteMax: 4 });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.deepEqual(r.faltantes, ["Niño hasta (edad)"]);
   });
 
-  test("todos los campos presentes → se usan tal cual, sin tocar ninguno", () => {
-    const r = normalizarReglaEdadGeneral({ infanteMin: 0, infanteMax: 3, ninoMin: 4, ninoMax: 12 });
-    assert.deepEqual(r, { infanteMin: 0, infanteMax: 3, ninoMin: 4, ninoMax: 12 });
+  test("valores inválidos: no entero, negativo, mayor a 17, infante >= niño", () => {
+    for (const g of [{ infanteMax: 1.5, ninoMax: 10 }, { infanteMax: -1, ninoMax: 10 }, { infanteMax: 2, ninoMax: 18 }, { infanteMax: 5, ninoMax: 5 }, { infanteMax: 6, ninoMax: 4 }]) {
+      const r = validarEdadesGeneralesHotel(g);
+      assert.equal(r.ok, false, JSON.stringify(g));
+      if (!r.ok) assert.ok(r.invalidos.length > 0);
+    }
+  });
+
+  test("válida: se derivan infanteMin 0 y ninoMin = infanteMax+1 e IGNORA los mínimos guardados (columnas heredadas con el default viejo)", () => {
+    const r = validarEdadesGeneralesHotel({ infanteMin: 0, infanteMax: 3, ninoMin: 2, ninoMax: 12 });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.regla, { infanteMin: 0, infanteMax: 3, ninoMin: 4, ninoMax: 12 });
+  });
+
+  test("los mensajes son accionables: el de cotizar dice cómo seguir; el de guardar ofrece completar o marcar Adults Only", () => {
+    assert.match(mensajeEdadesHotel("H", ["Infante hasta (edad)"], []), /Producto.*Configuración del hotel/);
+    assert.match(mensajeEdadesAlGuardar(["Niño hasta (edad)"], []), /Adults Only/);
+  });
+
+  test("REGLA_SIN_MENORES existe solo para consultas sin menores y no es una regla real de hotel", () => {
+    assert.deepEqual(REGLA_SIN_MENORES, { infanteMin: 0, infanteMax: 0, ninoMin: 0, ninoMax: 0 });
   });
 });
 
-describe("resolverReglaEdadEfectiva — override ?? general ?? default", () => {
+describe("resolverReglaEdadEfectiva — override ?? regla general VALIDADA", () => {
   const OVERRIDE: ReglaEdadTarifa = { infanteMin: 0, infanteMax: 3, ninoMin: 4, ninoMax: 12 };
+  const GENERAL: ReglaEdadTarifa = { infanteMin: 0, infanteMax: 5, ninoMin: 6, ninoMax: 14 };
 
-  test("con override de la fila → gana el override, ignora la general por completo", () => {
-    const r = resolverReglaEdadEfectiva(OVERRIDE, { infanteMax: 999, ninoMax: 999 });
-    assert.deepEqual(r, OVERRIDE);
+  test("con override de la fila → gana el override, ignora la general", () => {
+    assert.deepEqual(resolverReglaEdadEfectiva(OVERRIDE, GENERAL), OVERRIDE);
   });
 
-  test("sin override (null) → cae a la general normalizada", () => {
-    const r = resolverReglaEdadEfectiva(null, { infanteMax: 5 });
-    assert.equal(r.infanteMax, 5);
-    assert.equal(r.ninoMin, 6);
+  test("sin override (null) → la regla general validada", () => {
+    assert.deepEqual(resolverReglaEdadEfectiva(null, GENERAL), GENERAL);
+  });
+});
+
+describe("el override de una tarifa NO inventa la configuración obligatoria del hotel (O3)", () => {
+  const override: ReglaEdadTarifa = { infanteMin: 0, infanteMax: 3, ninoMin: 4, ninoMax: 12 };
+
+  test("hotel sin edades + fila con override completo → falla igual, con código y campos", () => {
+    const r = resolverReglaEdadEstadia([{ temporada: "ALTA", overrideFila: override }], { infanteMax: null, ninoMax: null });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.codigo, "edades_hotel_incompletas");
+    assert.deepEqual(r.faltantes, ["Infante hasta (edad)", "Niño hasta (edad)"]);
   });
 
-  test("sin override y sin general → defaults históricos completos", () => {
-    assert.deepEqual(resolverReglaEdadEfectiva(null, null), REGLA_EDAD_DEFAULT);
+  test("versión SEGURA: filas con override completo no la reemplazan; sin temporadas tampoco devuelve un valor inventado", () => {
+    const filas = [{ tipo_habitacion: "Estándar", alimentacion: "PAM", temporada: "ALTA", edad_infante_min: 0, edad_infante_max: 3, edad_nino_min: 4, edad_nino_max: 12 }];
+    const conOverride = resolverReglaEdadEstadiaSegura({ filas, categoria: "Estándar", regimen: "PAM", temporadasUsadas: ["ALTA"], general: null });
+    assert.equal(conOverride.ok, false);
+    const sinTemporadas = resolverReglaEdadEstadiaSegura({ filas: [], categoria: "Estándar", regimen: "PAM", temporadasUsadas: [], general: {} });
+    assert.equal(sinTemporadas.ok, false);
+  });
+
+  test("con la configuración del hotel completa, el override de la tarifa SÍ se respeta (legítimo)", () => {
+    const r = resolverReglaEdadEstadia([{ temporada: "ALTA", overrideFila: override }], { infanteMax: 2, ninoMax: 10 });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.deepEqual(r.regla, override);
   });
 });
 
@@ -96,7 +143,7 @@ describe("validarRangoReglaEdad — mismas reglas que el CHECK SQL propuesto (mi
 
 describe("resolverReglaEdadEstadia — multitemporada, fail-closed", () => {
   test("una sola fila → su regla efectiva, sin comparación", () => {
-    const r = resolverReglaEdadEstadia([{ temporada: "ALTA", overrideFila: null }], { infanteMax: 3 });
+    const r = resolverReglaEdadEstadia([{ temporada: "ALTA", overrideFila: null }], { infanteMax: 3, ninoMax: 10 });
     assert.equal(r.ok, true);
     if (r.ok) assert.equal(r.regla.infanteMax, 3);
   });
@@ -140,13 +187,13 @@ describe("resolverReglaEdadEstadia — multitemporada, fail-closed", () => {
     // "diferir" — se confirma que el helper no inventa una comparación falsa.
     const r = resolverReglaEdadEstadia(
       [{ temporada: "A", overrideFila: null }, { temporada: "B", overrideFila: null }],
-      { infanteMax: 4 }
+      { infanteMax: 4, ninoMax: 10 }
     );
     assert.equal(r.ok, true);
   });
 
   test("sin filas (estadía sin habitaciones resueltas) → regla general normalizada, sin fallar", () => {
-    const r = resolverReglaEdadEstadia([], { infanteMax: 5 });
+    const r = resolverReglaEdadEstadia([], { infanteMax: 5, ninoMax: 12 });
     assert.equal(r.ok, true);
     if (r.ok) assert.equal(r.regla.infanteMax, 5);
   });

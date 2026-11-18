@@ -46,6 +46,8 @@ type FacturaItem = { descripcion: string | null; valor: number; gravable: boolea
 type Factura = { id: number; numero_factura: string | null; fecha_factura: string | null; base_gravable: number; base_no_gravable: number; estado_dian: string | null; items: FacturaItem[] };
 
 export type GestionProps = {
+  /** #106: pestaña con la que abre (enlace directo desde Gestión de contratos). Si no es una pestaña visible para este rol, abre en Cartera. */
+  tabInicial?: string;
   numero: string;
   /** Identidad del contrato tal como la leyó la página (misma consulta); se reenvía tal cual a cada acción. */
   identidad: IdentidadContrato;
@@ -94,8 +96,24 @@ type AliadoCat = { id: number; nombre: string; nit: string | null; tipo: string 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-300 bg-white p-4 shadow-sm sm:p-5";
 
+/** Pestañas visibles según el rol (única definición: la usan el menú y la validación de `tabInicial`). */
+function pestanasVisibles(p: Pick<GestionProps, "verFinanzas" | "permisosComision">): { value: string; label: string }[] {
+  return [
+    { value: "cartera", label: "Cartera" },
+    // Comisiones: también la ve `venta` (lectura por tenant); control_vuelo no.
+    ...(!p.verFinanzas && p.permisosComision?.ver ? [{ value: "comisiones", label: "Comisiones" }] : []),
+    ...(p.verFinanzas ? [
+      { value: "costos", label: "Costos" },
+      { value: "proveedores", label: "Proveedores" },
+      { value: "comisiones", label: "Comisiones" },
+      { value: "facturacion", label: "Facturación" },
+      { value: "flujo", label: "Flujo de caja" },
+    ] : []),
+  ];
+}
+
 export function GestionTabs(p: GestionProps) {
-  const [tab, setTab] = useState("cartera");
+  const [tab, setTab] = useState(() => (p.tabInicial && pestanasVisibles(p).some((t) => t.value === p.tabInicial) ? p.tabInicial : "cartera"));
   // ── Cálculos vivos ──────────────────────────────────────────────
   const costoDirecto =
     p.costos.costo_hotel + p.costos.costo_aereo + p.costos.costo_receptivo +
@@ -115,18 +133,7 @@ export function GestionTabs(p: GestionProps) {
 
   const ivaGenerado = p.facturas.reduce((s, f) => s + f.base_gravable * fiscal.IVA, 0);
 
-  const tabs: { value: string; label: string }[] = [
-    { value: "cartera", label: "Cartera" },
-    // Comisiones: también la ve `venta` (lectura por tenant); control_vuelo no.
-    ...(!p.verFinanzas && p.permisosComision?.ver ? [{ value: "comisiones", label: "Comisiones" }] : []),
-    ...(p.verFinanzas ? [
-      { value: "costos", label: "Costos" },
-      { value: "proveedores", label: "Proveedores" },
-      { value: "comisiones", label: "Comisiones" },
-      { value: "facturacion", label: "Facturación" },
-      { value: "flujo", label: "Flujo de caja" },
-    ] : []),
-  ];
+  const tabs = pestanasVisibles(p);
 
   return (
     <div className="mt-8 flex flex-col gap-4 sm:flex-row sm:items-start">

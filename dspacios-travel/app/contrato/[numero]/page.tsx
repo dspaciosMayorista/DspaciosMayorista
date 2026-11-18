@@ -13,6 +13,7 @@ import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernalo
 import { leerResumenContrato } from "@/lib/contrato/resumenPreciosContrato";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
+import { cargarAcuerdoMinimo } from "@/lib/contrato/acuerdoMinimo";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
 
 // ¿Quien mira puede ver el contrato COMPLETO, o solo la parte comercial?
@@ -129,13 +130,12 @@ export default async function ContratoImprimiblePage({
   const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []).map((h) => ({
     ...h, condiciones_tarifa: condicionesTarifaParaRender(h.condiciones_tarifa),
   }));
-  // Parte 3 (#75): ¿contrato NETO de aliado? La vista básica no trae comision_estado; la base responde solo un booleano (y solo de contratos que quien llama puede ver).
-  const { data: esNetoRpc } = await sb.rpc("contrato_es_neto", { p_numero: numero });
-  const esNetoContrato = esNetoRpc === true;
+  // #53 (307): el mínimo vigente lo fija el acuerdo de superadmin (si hay); NETO y PVP se resuelven igual. Lectura de servidor, ya autorizado el contrato.
+  const acuerdoMinimo = await cargarAcuerdoMinimo(numero);
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida, netoTotalExigible: esNetoContrato ? cobroDeVenta(venta).total : null },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida, acuerdo: acuerdoMinimo.estado === "acuerdo" ? acuerdoMinimo.acuerdo : null, minimoNoVerificable: acuerdoMinimo.estado === "error" },
   );
 
   return (

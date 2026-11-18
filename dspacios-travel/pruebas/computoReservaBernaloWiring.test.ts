@@ -166,7 +166,8 @@ describe("computoReservaBernalo.ts — B1: sin texto libre en categoría/aliment
 
 describe("computoReservaBernalo.ts — resuelve hotel y proveedores REALES server-side (nunca placeholders)", () => {
   test("hotel: nombre y proveedor (nombre/aplica_retencion/pct_retencion) resueltos desde armado_hoteles.hoteles.proveedores", () => {
-    assert.match(codigo, /hoteles\(moneda, modelo_tarifario, nombre, proveedores\(nombre, aplica_retencion, pct_retencion\)\)/);
+    // U1: la misma lectura trae también Adults Only y las edades del hotel (sin consulta extra) para exigir la configuración obligatoria con menores.
+    assert.match(codigo, /hoteles\(moneda, modelo_tarifario, nombre, adults_only, edad_infante_max, edad_nino_max, proveedores\(nombre, aplica_retencion, pct_retencion\)\)/);
     assert.match(codigo, /const hotelNombre = hotelMeta\?\.nombre \?\? "";/);
     assert.match(codigo, /const proveedorHotel: ProveedorHotelBernalo = hotelMeta\?\.proveedores/);
   });

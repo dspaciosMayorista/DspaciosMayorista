@@ -27,6 +27,7 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { crearPresupuestoDesde, hotelConGrupos } from "@/lib/calc/desdeEstadia";
+import { validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import { basesPromoDeFilas, claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "@/lib/calc/netosPorTemporada";
 import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
 import { PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
@@ -958,7 +959,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_hoteles")
-      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only, tarifa_bajo_solicitud, hotel_acomodaciones(acomodacion, pax_tarifa))")
+      .select("hotel_id, categorias, regimenes, hoteles(nombre, moneda, modelo_tarifario, adults_only, edad_infante_max, edad_nino_max, tarifa_bajo_solicitud, hotel_acomodaciones(acomodacion, pax_tarifa))")
       .eq("paquete_id", paqueteId),
     sb
       .from("armado_servicios")
@@ -969,6 +970,20 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
   if (eEmpaquetadosSel) return await fallarTecnico(eEmpaquetadosSel.message);
   if (eHotelesSel) return await fallarTecnico(eHotelesSel.message);
   if (eServiciosSel) return await fallarTecnico(eServiciosSel.message);
+
+  // O3: publicar el tarifario de un hotel que acepta menores exige su configuración de edades completa y válida (Adults Only exento). Los contratos y cotizaciones
+  // históricos NO se tocan; el motivo nombra el hotel y el campo para que Producto lo complete antes de publicar.
+  {
+    const sinEdades = (hotelesSel ?? []).flatMap((h) => {
+      const m = h.hoteles as unknown as { nombre?: string | null; adults_only?: boolean | null; edad_infante_max?: number | null; edad_nino_max?: number | null } | null;
+      if (!m || m.adults_only === true) return [];
+      const g = validarEdadesGeneralesHotel({ infanteMax: m.edad_infante_max ?? null, ninoMax: m.edad_nino_max ?? null });
+      return g.ok ? [] : [`«${m.nombre ?? `hotel #${h.hotel_id}`}» (${[...g.faltantes.map((x) => `falta «${x}»`), ...g.invalidos].join("; ")})`];
+    });
+    if (sinEdades.length) {
+      return await fallar(`No se puede publicar el tarifario: ${sinEdades.length === 1 ? "este hotel acepta menores y no tiene" : "estos hoteles aceptan menores y no tienen"} completa su configuración de edades de infantes y niños — ${sinEdades.join(", ")}. Complétala en Producto → Hoteles → Configuración del hotel (o márcalo como Adults Only si no admite menores) y vuelve a generar.`);
+    }
+  }
 
   // Vigencias de cada servicio seleccionado. La tarifa base (precio_persona/precio_infante y rangos GENERAL) NO sustituye a una vigencia: solo respalda a un traslado
   // INCLUIDO sin ninguna vigencia para la fecha (incluidoEnEstadia). Todo lo demás se publica desde una vigencia y, por grupo, desde un rango de ESA vigencia — la misma regla con la que luego se cotiza.

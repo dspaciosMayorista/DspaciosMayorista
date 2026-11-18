@@ -1,4 +1,3 @@
-import { esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { notFound } from "next/navigation";
 import { ContratoDocumento } from "@/components/contrato/ContratoDocumento";
@@ -13,6 +12,7 @@ import { leerResumenContrato } from "@/lib/contrato/resumenPreciosContrato";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { desgloseNetoB2B } from "@/lib/finanzas/netoB2B";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { cargarAcuerdoMinimo } from "@/lib/contrato/acuerdoMinimo";
 
 export const dynamic = "force-dynamic";
 
@@ -90,10 +90,11 @@ export default async function ContratoPublicoPage({
   const hotelesConNota = adjuntarNotaRegimen(hoteles ?? [], planes ?? []).map((h) => ({
     ...h, condiciones_tarifa: condicionesTarifaParaRender(h.condiciones_tarifa),
   }));
+  const acuerdoMinimo = await cargarAcuerdoMinimo(venta.numero_contrato);
   const condicionesResueltas = resolverCondicionesContrato(
     (contratoCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[0],
     (overridesCondiciones ?? []) as unknown as Parameters<typeof resolverCondicionesContrato>[1],
-    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida, netoTotalExigible: esVentaNetoDescontada(venta) ? cobroDeVenta(venta).total : null },
+    { monedaContrato: cobroDeVenta(venta).moneda, precioVenta: cobroDeVenta(venta).total, fechaViaje: venta.fecha_salida, acuerdo: acuerdoMinimo.estado === "acuerdo" ? acuerdoMinimo.acuerdo : null, minimoNoVerificable: acuerdoMinimo.estado === "error" },
   );
 
   return (

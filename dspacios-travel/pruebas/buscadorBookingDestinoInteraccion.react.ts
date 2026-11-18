@@ -189,7 +189,7 @@ describe("BuscadorBooking.tsx — Destino: cierre de accesibilidad (nombre acces
     __setBuscarHoteles(async () => ({ ok: true as const, resultados: [], diagnostico: undefined, sugerenciasFecha: [] }));
     __setBuscarAlojamientosUnidadPorFechas(async (input: { destino?: string; destinoId?: number | null }) => {
       capturadoRef.valor = input;
-      return { ok: true as const, disponibilidad: [], incompleto: false };
+      return { ok: true as const, disponibilidad: [], incompleto: false, enRevision: [] };
     });
 
     await elegirDestino(container, "Cartagena");
@@ -233,7 +233,7 @@ describe("BuscadorBooking.tsx — Destino: cierre de accesibilidad (nombre acces
     const capturadoRef: { valor: { destino?: string; destinoId?: number | null } | null } = { valor: null };
     __setBuscarAlojamientosUnidadPorFechas(async (input: { destino?: string; destinoId?: number | null }) => {
       capturadoRef.valor = input;
-      return { ok: true as const, disponibilidad: [], incompleto: false };
+      return { ok: true as const, disponibilidad: [], incompleto: false, enRevision: [] };
     });
 
     const botonBuscar = [...container.querySelectorAll("button")].find((b) => b.textContent?.includes("Buscar hoteles"));

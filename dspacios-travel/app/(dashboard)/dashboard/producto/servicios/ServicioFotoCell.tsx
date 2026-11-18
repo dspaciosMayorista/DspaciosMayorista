@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import { actualizarFotoServicio } from "./actions";
+import { prepararSubidaImagen } from "@/lib/imagenes/reducirImagen";
 
 const MAX_MB = 8;
 const BUCKET = "servicio-fotos";
@@ -18,14 +19,17 @@ export function ServicioFotoCell({ servicioId, fotoUrl }: { servicioId: number; 
 
   async function subir(file: File) {
     setErr("");
-    if (!file.type.startsWith("image/")) { setErr("Solo imágenes."); return; }
-    if (file.size > MAX_MB * 1024 * 1024) { setErr(`Máx ${MAX_MB} MB.`); return; }
     setSubiendo(true);
     try {
+      // O2: primero se reduce, después se aplica el tope FINAL (MAX_MB): un original de cámara de más de 8 MB entra por su versión reducida.
+      const prep = await prepararSubidaImagen(file, { maxMb: MAX_MB, reducir: true, errorTipo: "Solo imágenes." });
+      if (!prep.ok) { setErr(prep.error); return; }
       const sb = createClient();
-      const ext = file.name.split(".").pop() || "jpg";
+      const web = prep.archivo;
+      const ext = web.name.split(".").pop() || "jpg";
       const path = `${servicioId}/foto-${Date.now()}.${ext}`;
-      const { error } = await sb.storage.from(BUCKET).upload(path, file, { upsert: false });
+      // The path is unique per upload (timestamp), so the object can be cached as immutable.
+      const { error } = await sb.storage.from(BUCKET).upload(path, web, { upsert: false, cacheControl: "31536000" });
       if (error) throw error;
       const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(path);
       const r = await actualizarFotoServicio(servicioId, pub.publicUrl);

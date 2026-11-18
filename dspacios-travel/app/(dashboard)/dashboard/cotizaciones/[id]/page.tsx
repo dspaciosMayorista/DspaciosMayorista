@@ -42,6 +42,7 @@ import {
   mensajePersonas, participantesDesdeCotizacion, personasPendientes, versionTitular, type PuestoRegistrado,
 } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { leerFilaCotizacionPersonas } from "@/lib/personas/altaGuardada";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -87,7 +88,9 @@ export default async function CotizacionDetallePage({
     ? await createAdminClient().from("cotizacion_participantes").select("id, rol, activo, version").eq("cotizacion_id", cotizacionId)
     : { data: null };
   const puestos: PuestoRegistrado[] = (puestosFila ?? []).map((p) => ({ id: p.id, rol: p.rol, activo: p.activo, version: p.version }));
-  const pendientesPersonas = c.estado === "abierta" ? personasPendientes(participantesDesdeCotizacion(c), puestos) : 0;
+  // #1: también una solicitud de hotel pendiente de tarifa tiene personas que registrar (migración 308).
+  const admitePersonas = c.estado === "abierta" || c.estado === "pendiente_tarifa";
+  const pendientesPersonas = admitePersonas ? personasPendientes(participantesDesdeCotizacion(c), puestos) : 0;
 
   async function reintentarPersonas(): Promise<{ ok: true } | { ok: false; error: string }> {
     "use server";
@@ -97,11 +100,10 @@ export default async function CotizacionDetallePage({
     if (!user) return { ok: false, error: "No autorizado." };
     const { data: cot } = await sesion.from("cotizaciones").select("tenant, estado").eq("id", cotizacionId).maybeSingle();
     if (!cot || !autorizaTenant(await contextoCotizacion(), cot.tenant)) return { ok: false, error: "No tienes acceso a esta cotización." };
-    if (cot.estado !== "abierta") return { ok: false, error: "La cotización ya no está abierta; recarga la página." };
+    if (cot.estado !== "abierta" && cot.estado !== "pendiente_tarifa") return { ok: false, error: "La cotización ya no está abierta; recarga la página." };
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return { ok: false, error: "No se pudo reintentar por un problema de configuración del servidor." };
     const admin = createAdminClient();
-    const { data: fila } = await admin.from("cotizaciones")
-      .select("id, tenant, tipo, payload, creado_por_id, propietario_id, aliado_id").eq("id", cotizacionId).maybeSingle();
+    const fila = await leerFilaCotizacionPersonas(admin, cotizacionId);
     if (!fila) return { ok: false, error: "Cotización no encontrada." };
     const alta = await altaPersonasCotizacion(admin, { fila, usuarioId: user.id, sellar: false });
     if (!alta.ok) {
@@ -138,6 +140,7 @@ export default async function CotizacionDetallePage({
     return (
       <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-8">
         <SolicitudPendiente codigo={c.codigo} datos={(c.detalle as { solicitudHotel?: DatosSolicitudHotel } | null)?.solicitudHotel ?? null} />
+        {avisoPersonas}
         <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800" data-testid="desglose-pendiente">Pendiente de valoración</p>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
           {puedeCargar

@@ -166,7 +166,8 @@ describe("ContratoDocumento.tsx — sección sobria, solo cuando hay condiciones
   });
 
   test("el render de la sección está condicionado a longitud > 0 (nunca se muestra un encabezado vacío)", () => {
-    assert.match(contratoDoc, /\{h\.condiciones_tarifa && h\.condiciones_tarifa\.length > 0 && \(/);
+    // 2026-11-18: el contrato filtra primero la explicación del niño gratis (la tarifa ya lo refleja); el requisito se mantiene: sin condiciones restantes no hay encabezado.
+    assert.match(contratoDoc, /cond\.length > 0 \? <CondicionesTarifaSection condiciones=\{cond\} \/> : null/);
   });
 
   test("CondicionesTarifaSection solo renderiza { texto, temporadas } — ningún campo financiero", () => {

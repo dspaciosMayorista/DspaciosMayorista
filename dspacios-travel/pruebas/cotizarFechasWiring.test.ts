@@ -365,7 +365,8 @@ describe("8. Ronda 3 — buscarHoteles/buscarReceptivos usan validarRangoFechasC
     // ninguno de los 3 repite la regla dentro de cotizar.ts.
     assert.doesNotMatch(cotizar, /MAX_NOCHES_CONSULTA/);
     const usos = cotizar.match(/validarRangoFechasConsulta\(/g) ?? [];
-    assert.equal(usos.length, 2, `buscarHoteles y buscarReceptivos deben llamar validarRangoFechasConsulta directo — hubo ${usos.length} usos en cotizar.ts`);
+    // #102: el tercer uso es la noche adicional de la Vista tabla (calcularNocheAdicional): valida que la estadía alargada una noche siga dentro del mismo tope.
+    assert.equal(usos.length, 3, `buscarHoteles, buscarReceptivos y la noche adicional deben llamar validarRangoFechasConsulta directo — hubo ${usos.length} usos en cotizar.ts`);
   });
 });
 

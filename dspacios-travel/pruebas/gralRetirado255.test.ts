@@ -90,7 +90,7 @@ function tablas(o: { servicios: Srv[]; vigencias?: Fila[]; rangos?: Fila[]; vent
     servicios_adicionales: o.servicios.map((s) => ({ id: s.id, categoria: "tour_traslado", precio_persona: s.precio, precio_infante: s.infante ?? null, recargo_individual: null })),
     servicio_temporadas: o.vigencias ?? [],
     servicio_tarifa_pax: o.rangos ?? [],
-    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel", moneda: "COP", modelo_tarifario: "persona", adults_only: false } }],
+    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel", moneda: "COP", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 } }],
     hotel_temporadas: [{ hotel_id: HOTEL, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, regimen_restringido: null }],
     tarifa_hotel: [{ hotel_id: HOTEL, tipo_habitacion: "Estándar", alimentacion: "PC", temporada: "Base", neto_sencilla: null, neto_doble: 400000, neto_triple: null, neto_multiple: null, neto_nino: null, neto_nino2: null, neto_infante: null, precio_final_autoritativo: false }],
     salidas_dinamicas: [{ id: 9, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: IDA, fecha_regreso: REG, ruta: "BOG - CTG - BOG", valor_tiquete: 904000, aplica_mk: true, ta: 0, fee_infante: 80000 }],

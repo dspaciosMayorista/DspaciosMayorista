@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
+import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { altaPersonasDeCotizacionGuardada } from "@/lib/personas/altaGuardada";
 import { paqueteVendibleHoy } from "@/lib/tarifario/datosSolicitud";
 import { acreditarSeleccionCatalogo, claveSolicitudHotel, validarEntradaSolicitudHotel, type SolicitudHotelEntrada } from "@/lib/reservar/solicitudHotelEntrada";
 import { ESTADO_PENDIENTE_TARIFA, TEXTO_BAJO_SOLICITUD, contieneImportes } from "@/lib/reservar/solicitudHotel";
@@ -168,13 +170,18 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
   const urlDe = (token: string | null | undefined) => (host && token ? `${proto}://${host}/cot/${token}` : "");
 
   // Reintento / doble clic: la misma solicitud abierta no crea otra cotización.
-  const { data: previa } = await admin.from("cotizaciones").select("codigo, share_token").eq("estado", ESTADO_PENDIENTE_TARIFA).eq("paquete_armado_id", input.paqueteId)
+  const { data: previa } = await admin.from("cotizaciones").select("id, codigo, share_token").eq("estado", ESTADO_PENDIENTE_TARIFA).eq("paquete_armado_id", input.paqueteId)
     .contains("detalle", { solicitudHotel: { clave: detalle.solicitudHotel.clave } } as Record<string, unknown>).limit(1).maybeSingle();
 
   let codigo: string; let token: string | null;
   let repetida = false;
+  let cotizacionId: number;
   if (previa) {
-    codigo = previa.codigo; token = previa.share_token; repetida = true;
+    codigo = previa.codigo; token = previa.share_token; repetida = true; cotizacionId = previa.id;
+    // CRM (#1): una solicitud repetida repara el registro de personas si la primera vez falló (idempotente: un puesto ya registrado no se duplica) y, si el sello
+    // del autor no quedó, lo recupera para el usuario con sesión; la base solo lo concede al mismo autor (creado_por = su correo, < 15 min, sin sello previo).
+    const reparada = await altaPersonasDeCotizacionGuardada(admin, cotizacionId, user?.id ?? null, !!user);
+    if (!reparada.ok) console.error(logPersonasCotizacion("solicitud_hotel", cotizacionId, reparada));
   } else {
     const { data: row, error } = await admin.from("cotizaciones").insert({
       tenant: "mayorista", estado: ESTADO_PENDIENTE_TARIFA, payload: payload as unknown as Json, detalle: detalle as unknown as Json,
@@ -185,9 +192,17 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
       paquete_armado_id: input.paqueteId, asesor: null, creado_por: user?.email ?? null,
     }).select("id, codigo, share_token").single();
     if (error || !row) { console.error(`[crearSolicitudHotel] etapa=insertar codigo=${error?.code ?? "sin_fila"}`); return { ok: false, error: ERROR_GENERICO }; }
-    codigo = row.codigo; token = row.share_token;
-    // El cliente entra al CRM ya (como en el checkout: efecto auxiliar, nunca bloquea la solicitud). El REGISTRO DE PERSONAS de la cotización (#42, migración 219) solo admite
-    // cotizaciones abiertas: la alta del titular se hace en asignarNetaSolicitud, cuando la solicitud pasa de pendiente_tarifa a abierta.
+    codigo = row.codigo; token = row.share_token; cotizacionId = row.id;
+    // CRM (#1): el cliente queda registrado como titular de la solicitud desde que la pide, sin esperar a la neta (migración 308 admite `pendiente_tarifa`).
+    // Con sesión (aliado B2B o personal) se sella además el autor, para que la solicitud sea suya. Un fallo no deshace la solicitud: queda el aviso de la ficha y un log
+    // sin datos personales.
+    // La fila recién insertada se conoce completa: no hace falta releerla (solo el reintento de arriba la lee).
+    const alta = await altaPersonasCotizacion(admin, {
+      fila: { id: row.id, tenant: "mayorista", tipo: "tarifario", payload: payload as unknown as Json, creado_por: user?.email ?? null, paquete_armado_id: input.paqueteId },
+      usuarioId: user?.id ?? null, sellar: !!user,
+    });
+    if (!alta.ok) console.error(logPersonasCotizacion("solicitud_hotel", cotizacionId, alta));
+    // Además, el contacto auxiliar de campañas (efecto aparte, como en el checkout: nunca bloquea la solicitud).
     try {
       const datos = datosContactoTarifario({ nombres: input.cliente.nombres, apellidos: input.cliente.apellidos, numeroDoc: input.cliente.numeroDoc, telefono: input.cliente.telefono, email: input.cliente.email }, input.cliente.tipoDoc);
       if (datos) {

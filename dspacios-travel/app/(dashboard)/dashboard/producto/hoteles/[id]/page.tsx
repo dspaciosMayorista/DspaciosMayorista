@@ -120,7 +120,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
   const moneda = ((h as { moneda?: string | null }).moneda ?? "COP").toUpperCase() === "USD" ? "USD" : "COP";
   // Promociones dinámicas por grupo explicadas (solo lectura, sin consultas: los mismos datos de arriba). Son NETOS: solo a quien ve costos.
   const promosDinamicas = (ROLES_VEN_NETOS as readonly string[]).includes(String(miRol ?? ""))
-    ? promocionesDinamicasHotel((temporadas ?? []) as unknown as VigenciaPromoFicha[], (tarifas ?? []) as unknown as FilaTarifaFicha[], acomConfigs, moneda)
+    ? promocionesDinamicasHotel((temporadas ?? []) as unknown as VigenciaPromoFicha[], (tarifas ?? []) as unknown as FilaTarifaFicha[], acomConfigs, moneda, { adultsOnly: h.adults_only ?? false })
     : null;
   const calcTipo = (calc?.tipo ?? null) as CalcTipo | null;
   const dubaiInicial = calc?.tipo === "dubai" ? (calc.params as unknown as DubaiParams) : null;

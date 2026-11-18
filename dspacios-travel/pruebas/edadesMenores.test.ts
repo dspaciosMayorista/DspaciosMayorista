@@ -275,11 +275,17 @@ describe("15. La edad llega intacta a cálculo, snapshot y creación de la reser
     assert.match(computo, /distribuirPorHabitaciones/);
   });
   test("cotizar.ts (buscarHoteles) recibe unknown, valida forma completa y distribuye por habitación con el helper real", () => {
+    // #102: la clasificación y el reparto por habitación viven en el motor puro compartido (tarjeta, tabla y noche adicional).
+    const composicion = leer("lib/reservar/composicionHotelBusqueda.ts");
+    const asignacion = leer("lib/reservar/asignacionHabitacionesBusqueda.ts");
     assert.match(cotizar, /from "@\/lib\/reservar\/edadesMenores"/);
-    assert.match(cotizar, /clasificarMenoresPorEdad/);
-    assert.match(cotizar, /distribuirPorHabitaciones/);
+    assert.match(cotizar, /evaluarComposicionHotel\(/);
+    assert.match(composicion, /clasificarMenoresDeHotel/);
+    assert.match(composicion, /distribuirPorHabitaciones/);
+    assert.match(asignacion, /distribuirPorHabitaciones/);
     assert.match(cotizar, /validarAdultosDeclarados/);
     assert.match(cotizar, /validarHabitacionesConsultadas/);
+    assert.match(cotizar, /validarNumHabitacionesConsulta/);
     assert.match(cotizar, /export async function buscarHoteles\(inputRaw: unknown\)/);
     assert.doesNotMatch(cotizar, /clasificarYRepartirMenores/);
   });

@@ -194,8 +194,11 @@ export type EstadoDisponibilidadUnidad = "disponible" | "sin_disponibilidad";
  * necesariamente el universo completo de hoteles unidad del destino.
  */
 export type ResultadoBusquedaUnidad =
-  | { ok: true; disponibilidad: DisponibilidadUnidadHotel[]; incompleto: boolean }
+  | { ok: true; disponibilidad: DisponibilidadUnidadHotel[]; incompleto: boolean; enRevision: HotelEnRevisionUnidad[] }
   | { ok: false; error: string };
+
+/** O3/U1: hotel por unidad que no se puede cotizar CON menores porque su configuración obligatoria de edades falta o es inválida (motivo accionable; nunca se omite en silencio). */
+export type HotelEnRevisionUnidad = { hotelId: number; hotelNombre: string | null; paqueteId: number; motivo: string; codigo: "edades_hotel_incompletas" };
 
 export type EntradaBuscarAlojamientosUnidad = {
   fechaIda: string;
@@ -291,7 +294,7 @@ export async function buscarAlojamientosUnidadPorFechas(
   }
 
   const ofertasPorHotel = ofertasPorHotelDe(descubrimiento.hoteles);
-  if (!ofertasPorHotel.size) return { ok: true, disponibilidad: [], incompleto: false };
+  if (!ofertasPorHotel.size) return { ok: true, disponibilidad: [], incompleto: false, enRevision: [] };
 
   // Orden determinista (ascendente). SIN tope: recortar la lista dejaría
   // hoteles por unidad del destino buscado fuera de la búsqueda sin decirlo.
@@ -391,8 +394,13 @@ export async function buscarAlojamientosUnidadPorFechas(
   // todas sus combinaciones se pudieron evaluar con confianza.
   const disponibilidad: DisponibilidadUnidadHotel[] = [];
   let incompleto = false;
+  const enRevision: HotelEnRevisionUnidad[] = [];
   for (const v of veredictos) {
     if (!v) continue; // no debería pasar (todo índice se llena), defensivo
+    if (v.tipo === "bloqueado_edades") {
+      enRevision.push({ hotelId: v.hotelId, hotelNombre: v.hotelNombre, paqueteId: v.paqueteId, motivo: v.motivo, codigo: "edades_hotel_incompletas" });
+      continue;
+    }
     if (v.tipo === "veredicto") {
       disponibilidad.push(v.valor);
       if (v.parcial) {
@@ -405,5 +413,5 @@ export async function buscarAlojamientosUnidadPorFechas(
     console.error(`[buscarAlojamientosUnidadPorFechas] etapa=evaluacion hotelId=${v.hotelId} motivo=${v.motivo}`);
   }
 
-  return { ok: true, disponibilidad, incompleto };
+  return { ok: true, disponibilidad, incompleto, enRevision };
 }

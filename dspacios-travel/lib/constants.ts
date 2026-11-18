@@ -92,6 +92,9 @@ export const LECTURA_MODULO: Record<string, readonly Rol[]> = {
   finanzas: ROLES_INTERNOS.filter((r) => r !== "venta"),
   configuracion: ROLES_INTERNOS.filter((r) => r !== "venta"),
 
+  // #106: gestión integral de contratos (Mayorista + Minorista juntos). SOLO superadmin: la RPC lo exige también en la base.
+  gestion_contratos: ["superadmin"] as Rol[],
+
   usuarios: ["superadmin", "administracion"] as Rol[],
   b2b: ["superadmin", "administracion", "gerencia"] as Rol[],
 };
@@ -100,6 +103,7 @@ export const LECTURA_MODULO: Record<string, readonly Rol[]> = {
 // directa: ocultar el ítem del menú no impide que alguien escriba la dirección.
 // El orden importa: gana el prefijo MÁS LARGO que coincida.
 export const MODULO_POR_RUTA: { prefijo: string; modulo: string }[] = [
+  { prefijo: "/dashboard/gestion-contratos", modulo: "gestion_contratos" },
   { prefijo: "/dashboard/contratos", modulo: "contratos" },
   { prefijo: "/dashboard/cotizaciones", modulo: "cotizaciones" },
   { prefijo: "/dashboard/reservar", modulo: "reservar" },

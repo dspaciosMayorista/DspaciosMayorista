@@ -130,7 +130,7 @@ describe("Resultado (BuscadorBooking.tsx) — tarjeta completa para hotel person
     // Pax del servicio = TODOS los viajeros del hotel (infantes incluidos), la base que exige el checkout.
     // Moneda = la del hotel según el motor (`r.moneda`), nunca COP fijo.
     assert.match(cuerpoResultado, /pax: combo\.pax \+ combo\.menores\.infantes, precio: combo\.total, moneda: r\.moneda,/);
-    assert.match(cuerpoResultado, /firma: JSON\.stringify\(\[combo\.categoria, combo\.regimen, r\.habitaciones, r\.edadesMenores\]\)/);
+    assert.match(cuerpoResultado, /firma: JSON\.stringify\(\[combo\.categoria, combo\.regimen, item\.habitaciones, item\.edadesMenores\]\)/);
   });
 
   test("los add-on abren ReceptivoModal — mismo componente compartido, sin fuente de precio alterna", () => {

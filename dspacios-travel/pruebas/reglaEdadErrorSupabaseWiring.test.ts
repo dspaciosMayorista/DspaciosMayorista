@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 const raiz = join(dirname(fileURLToPath(import.meta.url)), "..");
 const computo = readFileSync(join(raiz, "lib/reservar/computo.ts"), "utf8");
 const cotizar = readFileSync(join(raiz, "lib/reservar/cotizar.ts"), "utf8");
+const composicion = readFileSync(join(raiz, "lib/reservar/composicionHotelBusqueda.ts"), "utf8");
 const liquidacionHotel = readFileSync(join(raiz, "lib/reservar/liquidacionHotel.ts"), "utf8");
 const reglaEdadTarifa = readFileSync(join(raiz, "lib/calc/reglaEdadTarifa.ts"), "utf8");
 
@@ -78,38 +79,42 @@ describe("computo.ts — cada consulta usada para resolver la regla de edad capt
 });
 
 describe("cotizar.ts (buscarHoteles) — la consulta de hoteles/edad captura error y la regla de edad se resuelve POR COMBO", () => {
-  test("la consulta a 'hoteles' dentro del bucle principal captura su error y aborta ese par (fail-closed, no engaña con umbral inventado)", () => {
-    const pos = cotizar.indexOf('admin.from("hoteles").select("edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, adults_only").eq("id", hotel)');
-    assert.notEqual(pos, -1, "no se encontró la consulta de hoteles del bucle principal de buscarHoteles");
-    const bloque = cotizar.slice(pos - 300, pos + 400);
-    assert.match(bloque, /error:\s*hotelRowErr/);
-    assert.match(bloque, /if \(acomCfgErr \|\| hotelRowErr\)/);
-    assert.match(bloque, /falloTecnico = true/);
+  test("la consulta por LOTES a 'hoteles'/'hotel_acomodaciones' captura su error y aborta esos pares (fail-closed, no engaña con umbral inventado)", () => {
+    // #102: antes eran 2 consultas por hotel dentro del bucle; ahora 2 por lote de ids, con el mismo cierre ante error.
+    const pos = cotizar.indexOf('admin.from("hoteles").select("id, edad_infante_min, edad_infante_max, edad_nino_min, edad_nino_max, adults_only").in("id", ids)');
+    assert.notEqual(pos, -1, "no se encontró la consulta por lotes de hoteles de buscarHoteles");
+    const bloque = cotizar.slice(pos - 300, pos + 500);
+    assert.match(bloque, /error:\s*hsErr/);
+    assert.match(bloque, /if \(acomErr \|\| hsErr\) return \{ ok: false/);
+    const uso = cotizar.indexOf("if (!metaHoteles.ok)");
+    assert.notEqual(uso, -1, "el bucle debe comprobar el resultado del lote");
+    assert.match(cotizar.slice(uso, uso + 400), /falloTecnico = true/);
   });
 
   test("la regla de edad se resuelve DENTRO del bucle de combos (por categoría/régimen), nunca una sola vez por hotel antes del bucle", () => {
-    const posBucleCombos = cotizar.indexOf("for (const combo of res.combos)");
-    const posResolverRegla = cotizar.indexOf("resolverReglaEdadEstadiaSegura(", posBucleCombos);
+    // #102: el bucle de combos vive en el motor puro compartido.
+    const posBucleCombos = composicion.indexOf("for (const combo of e.res.combos)");
+    const posResolverRegla = composicion.indexOf("resolverReglaEdadEstadiaSegura(", posBucleCombos);
     assert.notEqual(posBucleCombos, -1);
     assert.notEqual(posResolverRegla, -1, "resolverReglaEdadEstadiaSegura debe invocarse dentro del bucle de combos");
-    assert.ok(posResolverRegla > posBucleCombos, "la resolución de regla de edad debe vivir DENTRO del `for (const combo of res.combos)`");
+    assert.ok(posResolverRegla > posBucleCombos, "la resolución de regla de edad debe vivir DENTRO del bucle de combos");
   });
 
   test("un combo cuya regla de edad no se pudo resolver se descarta (continue) y NO aborta los demás combos del mismo hotel", () => {
-    const posResolverRegla = cotizar.indexOf("resolverReglaEdadEstadiaSegura(");
-    const bloque = cotizar.slice(posResolverRegla, posResolverRegla + 900);
-    assert.match(bloque, /if \(!rRegla\.ok\)/);
-    assert.match(bloque, /algunCombosFalloEdad = true/);
+    const posResolverRegla = composicion.indexOf("resolverReglaEdadEstadiaSegura(");
+    const bloque = composicion.slice(posResolverRegla, posResolverRegla + 2600);
+    assert.match(bloque, /if \(!r\.ok\)/);
+    assert.match(bloque, /falloReglaEdad = true/);
     assert.match(bloque, /continue;/, "debe usar `continue` (saltar el combo), nunca `return`/abortar toda la búsqueda");
   });
 
   test("clasificarMenoresPorEdad dentro del bucle de combos usa la regla RESUELTA del combo (rRegla.regla), nunca hotelRow.edad_infante_max/edad_nino_max directo", () => {
-    const posBucleCombos = cotizar.indexOf("for (const combo of res.combos)");
-    const posClasif = cotizar.indexOf("clasificarMenoresPorEdad(edades,", posBucleCombos);
+    const posBucleCombos = composicion.indexOf("for (const combo of e.res.combos)");
+    const posClasif = composicion.indexOf("clasificarMenoresDeHotel(e.edades,", posBucleCombos);
     assert.notEqual(posClasif, -1);
-    const linea = cotizar.slice(posClasif, posClasif + 120);
-    assert.match(linea, /rRegla\.regla\.infanteMax/);
-    assert.match(linea, /rRegla\.regla\.ninoMax/);
+    const linea = composicion.slice(posClasif, posClasif + 120);
+    assert.match(linea, /cand\.regla\.infanteMax/);
+    assert.match(linea, /cand\.regla\.ninoMax/);
     assert.doesNotMatch(linea, /hotelRow\?\.edad_infante_max \?\? 2/, "no debe quedar el umbral fijo hardcodeado dentro del bucle de combos");
   });
 });

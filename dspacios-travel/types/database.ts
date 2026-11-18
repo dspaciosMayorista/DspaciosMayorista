@@ -1653,10 +1653,10 @@ export type Database = {
           notas: string | null;
           activo: boolean;
           proveedor_id: number | null;
-          edad_infante_min: number;
-          edad_infante_max: number;
-          edad_nino_min: number;
-          edad_nino_max: number;
+          edad_infante_min: number | null;
+          edad_infante_max: number | null;
+          edad_nino_min: number | null;
+          edad_nino_max: number | null;
           rangos_edad: number[] | null;
           pax_min: number | null;
           pax_max: number | null;
@@ -1689,10 +1689,10 @@ export type Database = {
           notas?: string | null;
           activo?: boolean;
           proveedor_id?: number | null;
-          edad_infante_min?: number;
-          edad_infante_max?: number;
-          edad_nino_min?: number;
-          edad_nino_max?: number;
+          edad_infante_min?: number | null;
+          edad_infante_max?: number | null;
+          edad_nino_min?: number | null;
+          edad_nino_max?: number | null;
           rangos_edad?: number[] | null;
           pax_min?: number | null;
           pax_max?: number | null;
@@ -2250,9 +2250,12 @@ export type Database = {
         // restricción comercial: se deriva 100% implícita (ver lib/cotizacion/condicionPagoCatalogo.ts).
         Row: { id: number; hotel_id: number; nombre: string; fecha_inicio: string | null; fecha_fin: string | null; orden: number; prioridad: number; compra_inicio: string | null; compra_fin: string | null; tipo: string; descuento_valor: number | null; rangos: Json; blackouts: Json; min_noches: number; regimen_restringido: string | null; condicion_pago_tipo: string; condicion_pago_pct_inicial: number | null; condicion_pago_dias_saldo: number | null;
           // Migración 300 (#43/#60 entrega 4, PROPUESTA — no aplicada). NULL = promoción existente sin cambios.
-          promo_base_id: number | null; descuento_unidad: string | null; noche_gratis_regla: string | null; dias_promo: number[] | null };
+          promo_base_id: number | null; descuento_unidad: string | null; noche_gratis_regla: string | null; dias_promo: number[] | null;
+          // Migración 310 (#125, PROPUESTA — no aplicada): seguir la base ganadora cada noche + un niño gratis por habitación.
+          promo_sigue_base: boolean; nino_gratis: boolean; nino_gratis_edad_min: number | null; nino_gratis_edad_max: number | null };
         Insert: { id?: number; hotel_id: number; nombre: string; fecha_inicio?: string | null; fecha_fin?: string | null; orden?: number; prioridad?: number; compra_inicio?: string | null; compra_fin?: string | null; tipo?: string; descuento_valor?: number | null; rangos?: Json; blackouts?: Json; min_noches?: number; regimen_restringido?: string | null; condicion_pago_tipo?: string; condicion_pago_pct_inicial?: number | null; condicion_pago_dias_saldo?: number | null;
-          promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null; dias_promo?: number[] | null };
+          promo_base_id?: number | null; descuento_unidad?: string | null; noche_gratis_regla?: string | null; dias_promo?: number[] | null;
+          promo_sigue_base?: boolean; nino_gratis?: boolean; nino_gratis_edad_min?: number | null; nino_gratis_edad_max?: number | null };
         Update: Partial<Database["public"]["Tables"]["hotel_temporadas"]["Insert"]>;
         Relationships: [];
       };
@@ -4369,6 +4372,16 @@ export type Database = {
       };
     };
     Functions: {
+      // Migración 309 (#106): lista paginada de Gestión de contratos (solo superadmin; devuelve jsonb validado en lib/gestionContratos/tipos.ts).
+      fn_gestion_contratos: {
+        Args: { p_filtros?: Record<string, string>; p_orden?: string; p_limite?: number; p_desplazamiento?: number };
+        Returns: unknown;
+      };
+      // Migración 309 (#106): acuse operativo MANUAL (voucher entregado / factura enviada), solo superadmin.
+      registrar_seguimiento_contrato: {
+        Args: { p_numero: string; p_contrato_uid: string; p_tipo: string; p_accion: string; p_canal?: string | null; p_nota?: string | null };
+        Returns: unknown;
+      };
       // Migración 284 (#75): uid de los contratos que la pantalla ve (respeta puede_ver_contrato). Solo para sesión de usuario.
       contratos_identidades: {
         Args: { p_numeros: string[] };
@@ -4407,6 +4420,19 @@ export type Database = {
       reintentar_confirmacion_pago: {
         Args: { p_numero: string };
         Returns: Json;
+      };
+      // Migración 307 (#53): mínimo de confirmación configurable (solo superadmin) y criterio único de «pagado completo» (service_role).
+      fijar_minimo_confirmacion: {
+        Args: { p_numero: string; p_tipo: string; p_valor?: number | null; p_moneda?: string | null; p_motivo?: string | null };
+        Returns: Json;
+      };
+      contratos_pagados_completos: {
+        Args: { p_numeros: string[] };
+        Returns: string[];
+      };
+      contrato_pagado_completo: {
+        Args: { p_numero: string };
+        Returns: boolean;
       };
       prevista_cxp_aplicar: {
         Args: { p_numero: string; p_eliminar: number[]; p_actualizar: Json; p_insertar: Json };
@@ -4567,7 +4593,7 @@ export type Database = {
       grupos_dias_alcance: { Args: { p_temporada_id: number }; Returns: Json };
       grupos_dias_activar: { Args: { p_temporada_id: number; p_huella: string; p_habilitaciones: Json }; Returns: Json };
       // Migración 300 (PROPUESTA). p_base_id NULL + p_reglas [] = desvincular.
-      promocion_guardar_reglas: { Args: { p_promocion_id: number; p_base_id: number; p_reglas: Json; p_previas: Json }; Returns: Json };
+      promocion_guardar_reglas: { Args: { p_promocion_id: number; p_base_id: number; p_reglas: Json; p_previas: Json; p_sigue_base?: boolean; p_nino_gratis?: boolean; p_nino_edad_min?: number | null; p_nino_edad_max?: number | null }; Returns: Json };
       // Migración 301 (PROVISIONAL): combinación con EBB / Long Stay y reglas con retención.
       promocion_guardar_combinacion: { Args: { p_promocion_id: number; p_combinacion: Json; p_cambios?: Json | null }; Returns: Json };
       regla_descuento_guardar: { Args: { p_hotel: number; p_id: number | null; p_tipo: string; p_umbral: number; p_pct: number; p_activa: boolean }; Returns: Json };

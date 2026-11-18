@@ -8,6 +8,7 @@ import { crearHotel } from "./actions";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
+import { mensajeEdadesAlGuardar, validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 
 type Opt = { id: number; nombre: string };
 type Regimen = { id: number; codigo: string; nombre: string };
@@ -40,10 +41,10 @@ export function NuevoHotelForm({
     }
   }
   const [zona, setZona] = useState("");
-  const [infMin, setInfMin] = useState(0);
-  const [infMax, setInfMax] = useState(2);
-  const [ninoMin, setNinoMin] = useState(2);
-  const [ninoMax, setNinoMax] = useState(10);
+  // O3: sin valores por defecto — «Infante hasta» y «Niño hasta» se escriben a mano (el mínimo de infante es 0 y el de niño, infante+1), salvo un hotel Adults Only.
+  const [infMax, setInfMax] = useState("");
+  const [ninoMax, setNinoMax] = useState("");
+  const [adultsOnly, setAdultsOnly] = useState(false);
   const [catSel, setCatSel] = useState<number[]>([]);
   const [regSel, setRegSel] = useState<number[]>([]);
   const [rangosSel, setRangosSel] = useState<number[]>([]);
@@ -56,11 +57,13 @@ export function NuevoHotelForm({
   function guardar(e: React.FormEvent) {
     e.preventDefault();
     if (!nombre.trim() || !destinoId) { setErr("Nombre y destino son obligatorios."); return; }
+    const g = validarEdadesGeneralesHotel({ infanteMax: infMax.trim() === "" ? null : Number(infMax), ninoMax: ninoMax.trim() === "" ? null : Number(ninoMax) });
+    if (!adultsOnly && !g.ok) { setErr(mensajeEdadesAlGuardar(g.faltantes, g.invalidos)); return; }
     setErr("");
     start(async () => {
       const r = await crearHotel({
         nombre, destinoId: Number(destinoId), proveedorId: proveedorId === "" ? null : Number(proveedorId),
-        zona, edadInfanteMin: infMin, edadInfanteMax: infMax, edadNinoMin: ninoMin, edadNinoMax: ninoMax,
+        zona, edadInfanteMax: infMax.trim() === "" ? null : Number(infMax), edadNinoMax: ninoMax.trim() === "" ? null : Number(ninoMax), adultsOnly,
         categoriaIds: catSel, regimenIds: regSel, rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom, moneda,
       });
@@ -100,13 +103,22 @@ export function NuevoHotelForm({
 
       <section className={card}>
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Edades (este hotel)</p>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div><label className={lbl}>Infante desde</label><Input type="number" min={0} value={infMin} onChange={(e) => setInfMin(Number(e.target.value))} /></div>
-          <div><label className={lbl}>Infante hasta</label><Input type="number" min={0} value={infMax} onChange={(e) => setInfMax(Number(e.target.value))} /></div>
-          <div><label className={lbl}>Niño desde</label><Input type="number" min={0} value={ninoMin} onChange={(e) => setNinoMin(Number(e.target.value))} /></div>
-          <div><label className={lbl}>Niño hasta</label><Input type="number" min={0} value={ninoMax} onChange={(e) => setNinoMax(Number(e.target.value))} /></div>
-        </div>
-        <p className="text-xs text-gray-400">La tarifa de infante siempre es $0.</p>
+        <label className="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" checked={adultsOnly} onChange={(e) => setAdultsOnly(e.target.checked)} data-testid="hotel-adults-only" />
+          Hotel solo adultos (Adults Only): no admite menores y no necesita edades.
+        </label>
+        {!adultsOnly && (
+          <>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div><label className={lbl}>Infante hasta (edad) *</label><Input type="number" min={0} max={17} value={infMax} onChange={(e) => setInfMax(e.target.value)} placeholder="Obligatorio" data-testid="hotel-inf-max" /></div>
+              <div><label className={lbl}>Niño hasta (edad) *</label><Input type="number" min={0} max={17} value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} placeholder="Obligatorio" data-testid="hotel-nino-max" /></div>
+              <div className="text-xs text-gray-500 md:col-span-2">
+                Infante: desde 0 hasta {infMax.trim() === "" ? "…" : infMax} años · Niño: desde {infMax.trim() === "" || !Number.isInteger(Number(infMax)) ? "…" : Number(infMax) + 1} hasta {ninoMax.trim() === "" ? "…" : ninoMax} años · mayores se cuentan como adultos. El hotel no se puede guardar sin estas dos edades: sin ellas no se cotizan menores.
+              </div>
+            </div>
+            <p className="text-xs text-gray-400">La tarifa de infante siempre es $0.</p>
+          </>
+        )}
       </section>
 
       <section className={card}>

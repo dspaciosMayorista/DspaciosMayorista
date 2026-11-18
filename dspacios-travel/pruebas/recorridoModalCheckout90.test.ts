@@ -105,7 +105,7 @@ function tablasGenerar(): Tablas {
   return {
     armado_paquetes: [{ id: PAQUETE_ID, nombre: "Dinámico 273", activo: true, destino_id: 1, pct_mk: 0.2, tipo: "dinamico", impuesto_tipo: "fijo", impuesto_fijo: 0, noches: 1, destinos: { nombre: "CARTAGENA" }, moneda_publicacion: "COP", destinos_aereos_alternativos: false, pvp_infante_fijo: FIJO_INFANTE }],
     armado_vuelos: [], armado_empaquetados: [], armado_servicios: [], servicio_temporadas: [], servicio_tarifa_pax: [], servicios_adicionales: [],
-    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 273", moneda: "COP", modelo_tarifario: "persona", adults_only: false } }],
+    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 273", moneda: "COP", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 } }],
     hotel_temporadas: [{ hotel_id: HOTEL, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, regimen_restringido: null }],
     tarifa_hotel: [{ hotel_id: HOTEL, tipo_habitacion: CATEGORIA, alimentacion: REGIMEN, temporada: "Base", neto_sencilla: NETO_SENCILLA, neto_doble: NETO_DOBLE, neto_triple: null, neto_multiple: null, neto_nino: null, neto_nino2: null, neto_infante: NETO_INFANTE, precio_final_autoritativo: false }],
     salidas_dinamicas: [{ id: SALIDA, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: IDA, fecha_regreso: REG, ruta: "BOG - CTG - BOG", valor_tiquete: TICKET, aplica_mk: true, ta: 0, fee_infante: 0, empaquetado_id: null }],
@@ -134,7 +134,7 @@ function tablasReserva(p: Publicado, reglas: readonly Fila[]): Tablas {
     tarifario_resultado_composicion: p.composiciones,
     tarifario_composicion_publicada: [{ paquete_id: PAQUETE_ID, fecha_ida: IDA, generacion: GENERACION, regla: REGLA_COMPOSICION_PUBLICADA, servicios_incluidos: [] }],
     salidas_dinamicas: [{ id: SALIDA, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: IDA, fecha_regreso: REG, ruta: "BOG - CTG - BOG", valor_tiquete: TICKET, aplica_mk: true, ta: 0, fee_infante: 0, empaquetado_id: null }],
-    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 273", moneda: "COP", modelo_tarifario: "persona", adults_only: false } }],
+    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 273", moneda: "COP", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 } }],
     armado_vuelos: [], armado_empaquetados: [], armado_servicios: [], servicios_adicionales: [], servicio_temporadas: [], servicio_tarifa_pax: [],
     hotel_reglas_descuento: [...reglas], bloqueos_vuelo: [], empaquetados_basica: [], empaquetados: [],
     hotel_acomodaciones: [

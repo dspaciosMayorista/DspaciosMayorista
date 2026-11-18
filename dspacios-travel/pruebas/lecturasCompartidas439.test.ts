@@ -116,7 +116,7 @@ function tablasGenerar(o: Opc): Tablas {
     servicio_temporadas: sv.map((s) => ({ servicio_id: s.id, nombre: "VIG", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", compra_inicio: null, compra_fin: null, prioridad: 1, precio_persona: s.neto, precio_infante: s.netoInfante, recargo_individual: null })),
     servicio_tarifa_pax: [],
     servicios_adicionales: sv.map((s) => ({ id: s.id, tipo_receptivo: null, combo_incluye_traslado: null, combo_traslado_alcance: null })),
-    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 94", moneda: "COP", modelo_tarifario: "persona", adults_only: false } }],
+    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 94", moneda: "COP", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 } }],
     hotel_temporadas: [{ hotel_id: HOTEL, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, regimen_restringido: null }],
     tarifa_hotel: tarifaRows(o),
     salidas_dinamicas: o.origen === "salida" ? [{ id: 9, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: EN_30, fecha_regreso: EN_31, ruta: "BOG - CTG - BOG", valor_tiquete: 904_000, aplica_mk: true, ta: 0, fee_infante: 80_000, empaquetado_id: null }] : [],
@@ -148,7 +148,7 @@ function tablasReserva(o: Opc, r: Resultado, reglas: Fila[] = REGLAS_EBB): Tabla
     tarifario_resultado_composicion: r.composiciones,
     tarifario_composicion_publicada: [{ paquete_id: PAQUETE_ID, fecha_ida: EN_30, generacion: GENERACION, regla: REGLA_COMPOSICION_PUBLICADA, servicios_incluidos: sv.map((s) => s.id).sort((a, b) => a - b) }],
     salidas_dinamicas: o.origen === "salida" ? [{ id: 9, paquete_id: PAQUETE_ID, activo: true, compra_inicio: null, compra_fin: null, fecha_ida: EN_30, fecha_regreso: EN_31, ruta: "BOG - CTG - BOG", valor_tiquete: 904_000, aplica_mk: true, ta: 0, fee_infante: 80_000, empaquetado_id: null }] : [],
-    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 94", moneda: "COP", modelo_tarifario: "persona", adults_only: false } }],
+    armado_hoteles: [{ paquete_id: PAQUETE_ID, hotel_id: HOTEL, categorias: null, regimenes: null, hoteles: { nombre: "Hotel 94", moneda: "COP", modelo_tarifario: "persona", adults_only: false, edad_infante_max: 2, edad_nino_max: 10 } }],
     armado_vuelos: [], armado_empaquetados: [], hotel_reglas_descuento: reglas.map((x) => ({ ...x })), // copia: ninguna prueba puede alterar el arreglo compartido
     bloqueos_vuelo: o.origen === "bloqueo" ? [fuenteVuelo()] : [],
     empaquetados_basica: o.origen === "empaquetado" ? [{ id: ID_FUENTE, activo: true, compra_inicio: null, compra_fin: null }] : [],

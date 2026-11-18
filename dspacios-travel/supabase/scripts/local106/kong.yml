@@ -1,0 +1,11 @@
+# Gateway LOCAL de la revisión del #106: REST y Auth (sin Storage). Solo local; sin key-auth; CORS abierto para el navegador en localhost.
+_format_version: "2.1"
+services:
+  - name: auth
+    url: http://local106-auth:9999/
+    routes: [{ name: auth, strip_path: true, paths: [/auth/v1/] }]
+  - name: rest
+    url: http://local106-rest:3000/
+    routes: [{ name: rest, strip_path: true, paths: [/rest/v1/] }]
+plugins:
+  - name: cors

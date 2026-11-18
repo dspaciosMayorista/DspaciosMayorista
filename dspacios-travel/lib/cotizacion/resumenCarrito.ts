@@ -10,7 +10,14 @@
 import { resumenCotizacion, resumenUnidad, type ResumenPrecios, type ServicioCobertura, type TipoCupo, type UnidadResumen } from "./resumenPrecios.ts";
 
 /** Clase de pasajero con su tarifa, tal como la liquidó el motor. `clave` identifica el grupo de tarifa dentro del hotel (`adulto:doble`, `nino:25000000`…). */
-export type PersonaBase = { clave: string; etiqueta: string; tipo: TipoCupo; cantidad: number; tarifa: number };
+export type PersonaBase = {
+  clave: string; etiqueta: string; tipo: TipoCupo; cantidad: number; tarifa: number;
+  /**
+   * #125 (F3): lo que se condona del alojamiento de CADA pasajero de la clase (unidades de moneda; posición = orden dentro de la clase; ausente/0 = nada). Es el niño gratis por habitación:
+   * su tarifa baja por su alojamiento condonado y conserva el resto (vuelo, servicios, impuesto). Misma identidad de clase: no se crea otra clave ni un adulto ficticio.
+   */
+  condonado?: readonly number[];
+};
 
 export type UnidadBase = {
   ref: string;
@@ -45,15 +52,18 @@ export type CupoPublico = { clave: string; tipo: TipoCupo; etiqueta: string; can
 const cent = (n: number) => Math.round(n * 100);
 
 /** Une las líneas de una misma clave (misma tarifa) y rechaza una clave con dos tarifas: no habría un cupo único. */
-export function cuposDeUnidad(personas: readonly PersonaBase[]): { ok: true; cupos: (CupoPublico & { tarifa: number })[] } | { ok: false; error: string } {
-  const por = new Map<string, CupoPublico & { tarifa: number }>();
+export function cuposDeUnidad(personas: readonly PersonaBase[]): { ok: true; cupos: (CupoPublico & { tarifa: number; condonado: number[] })[] } | { ok: false; error: string } {
+  const por = new Map<string, CupoPublico & { tarifa: number; condonado: number[] }>();
   for (const p of personas) {
     if (!(p.cantidad > 0)) continue;
+    const cond = Array.from({ length: p.cantidad }, (_, i) => p.condonado?.[i] ?? 0);
+    if (cond.some((x) => !Number.isFinite(x) || x < 0 || cent(x) > cent(p.tarifa))) return { ok: false, error: `«${p.etiqueta}» tiene un alojamiento condonado mayor que su tarifa; no se genera el detalle por pasajero.` };
     const previo = por.get(p.clave);
     if (previo) {
       if (cent(previo.tarifa) !== cent(p.tarifa)) return { ok: false, error: `«${p.etiqueta}» tiene dos tarifas distintas en el mismo hotel; no se puede identificar a cada pasajero.` };
       previo.cantidad += p.cantidad;
-    } else por.set(p.clave, { clave: p.clave, tipo: p.tipo, etiqueta: p.etiqueta, cantidad: p.cantidad, tarifa: p.tarifa });
+      previo.condonado.push(...cond);
+    } else por.set(p.clave, { clave: p.clave, tipo: p.tipo, etiqueta: p.etiqueta, cantidad: p.cantidad, tarifa: p.tarifa, condonado: cond });
   }
   return { ok: true, cupos: [...por.values()] };
 }
@@ -125,14 +135,15 @@ export function construirResumenCarrito(e: {
       }
       let posicion = 0;
       for (const n of ordinales ?? Array.from({ length: c.cantidad }, (_, i) => i + 1)) {
-        let base = cent(c.tarifa);
+        let base = cent(c.tarifa) - cent(c.condonado[posicion] ?? 0); // F3: el niño gratis baja SOLO por su alojamiento condonado
         if (e.netoPorCupo) {
           const neto = e.netoPorCupo[`${u.ref}|${c.clave}|${posicion}`];
           if (neto === undefined || !Number.isSafeInteger(neto) || neto < 0) return { ok: false, motivo: `No hay tarifa NETO para un pasajero de ${u.hotel ?? "el hotel"} (${c.etiqueta}); no se genera el detalle por pasajero.` };
           base = neto;
         }
         posicion++;
-        const exacta = e.netoPorCupo ? e.netoExactoPorClase?.[`${u.ref}|${c.clave}`] : undefined;
+        // Una clase con un niño gratis tiene tarifas reales distintas (no es redondeo): su exacta por posición, si el resumen NETO la dio; si no, la de la clase.
+        const exacta = e.netoPorCupo ? (e.netoExactoPorClase?.[`${u.ref}|${c.clave}|${posicion - 1}`] ?? e.netoExactoPorClase?.[`${u.ref}|${c.clave}`]) : undefined;
         cupos.push({ id: `${c.clave}#${n}`, tipo: c.tipo, baseCentavos: base, ...(exacta !== undefined ? { baseExactaCentavos: exacta } : {}) });
       }
     }

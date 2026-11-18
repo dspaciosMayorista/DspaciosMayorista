@@ -63,8 +63,8 @@ export type Meta = {
   fechaRegreso: string | null;
   noches: number | null;
   bloqueoLabel: string | null;
-  edadInfanteMax: number;
-  edadNinoMax: number;
+  edadInfanteMax: number | null;
+  edadNinoMax: number | null;
   paxMinHotel: number | null;
   paxMaxHotel: number | null;
   petFriendly: boolean;
@@ -156,8 +156,8 @@ export function ReservaForm({
   // Nota informativa de edades del hotel (junto a los inputs de niño/infante).
   // El meta solo trae los máximos, así que se muestra "hasta N años".
   const edadesNota = [
-    meta.edadNinoMax > 0 ? `Niño: hasta ${meta.edadNinoMax} años` : null,
-    meta.edadInfanteMax > 0
+    meta.edadNinoMax != null && meta.edadNinoMax > 0 ? `Niño: hasta ${meta.edadNinoMax} años` : null,
+    meta.edadInfanteMax != null && meta.edadInfanteMax > 0
       ? `Infante: hasta ${meta.edadInfanteMax} año${meta.edadInfanteMax === 1 ? "" : "s"}`
       : null,
   ]
@@ -233,7 +233,7 @@ export function ReservaForm({
   const serviciosNoDisponibles = serviciosDisp.filter((s) => servSel.has(s.servicioId) && noDisponibleEnFecha(s));
   const real = esServicios ? undefined : clasificarPorEdad(
     paxRows.map((p) => calcularEdad(p.fechaNacimiento, refFecha)),
-    meta.edadInfanteMax, meta.edadNinoMax
+    meta.edadInfanteMax ?? 0, meta.edadNinoMax ?? 0 // sin configuración los menores no se clasifican aquí: el servidor los rechaza con el motivo
   );
   const validacion = esServicios
     ? { errores: [] as string[], avisos: [] as string[] }
@@ -423,6 +423,11 @@ export function ReservaForm({
         </div>
         <p className="mt-4 mb-1 text-xs font-medium text-gray-500">Niños e infantes (por cantidad, dentro de las habitaciones)</p>
         {edadesNota && <p className="mb-1 text-[11px] font-medium text-gray-500">{edadesNota}</p>}
+        {!esServicios && (meta.edadInfanteMax == null || meta.edadNinoMax == null) && (
+          <p className="mb-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800" data-testid="aviso-edades-hotel">
+            Las edades de infantes y niños de este hotel no están configuradas: no se pueden reservar menores hasta que Producto las complete. Solo adultos sí.
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {precios["nino"] != null && (
             <div>

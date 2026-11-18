@@ -1,6 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
+import { validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
@@ -1945,6 +1946,19 @@ export function VistaBooking({
         </div>
       )}
 
+      {/* #102 — hoteles que NO se pudieron evaluar porque su política de edades de niño/infante es ambigua o está incompleta:
+          se declaran «en revisión» en vez de omitirlos en silencio o inventar una tarifa de menor. */}
+      {enBusquedaPorcion && !!busquedaPorcion?.enRevision?.length && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800" data-testid="hoteles-en-revision">
+          <p className="font-medium">{busquedaPorcion.enRevision.length === 1 ? "1 hotel no se pudo cotizar" : `${busquedaPorcion.enRevision.length} hoteles no se pudieron cotizar`} con estas edades de menores:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5">
+            {busquedaPorcion.enRevision.map((h) => (
+              <li key={`${h.paqueteId}-${h.hotelId}`}>{h.motivo ?? `${h.hotelNombre ?? "Un hotel"}: su configuración de edades de niño/infante es ambigua o está incompleta y requiere revisión.`}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {sub === "porcion_terrestre" && buscandoPorcion ? (
         // Búsqueda de Porción terrestre EN VUELO: `onBusqueda(null)` ya limpió
         // `busquedaPorcion` de forma síncrona al arrancar (ver `buscar()` en
@@ -3434,10 +3448,10 @@ function EditorPax({
   }
   const hayHab = adultos > 0;
 
-  // Umbrales reales del hotel (mismo default que el motor de reservas —
-  // computo.ts — cuando el hotel no los configuró: 2 años infante, 10 niño).
-  const infanteMax = edadInfanteMax ?? 2;
-  const ninoMax = edadNinoMax ?? 10;
+  // Umbrales reales del hotel. O3: ya NO hay default (2/10): si el hotel no los configuró, con menores no se cotiza y se muestra el motivo accionable.
+  const gEdadesHotel = validarEdadesGeneralesHotel({ infanteMax: edadInfanteMax ?? null, ninoMax: edadNinoMax ?? null });
+  const infanteMax = gEdadesHotel.ok ? gEdadesHotel.regla.infanteMax : 0;
+  const ninoMax = gEdadesHotel.ok ? gEdadesHotel.regla.ninoMax : 0;
 
   const edadesParsed = edadesTxt.map(parseEdadMenor);
   const edadesValidas = edadesParsed.every((p) => p.error == null);
@@ -3452,7 +3466,7 @@ function EditorPax({
   let clasifError: string | null = null;
   let ninos = 0, ninos2 = 0, infantes = 0;
   if (cantidadMenores > 0 && edadesValidas) {
-    const rClas = clasificarMenoresPorEdad(edades, infanteMax, ninoMax);
+    const rClas = gEdadesHotel.ok ? clasificarMenoresPorEdad(edades, infanteMax, ninoMax) : { ok: false as const, error: gEdadesHotel.error };
     if (!rClas.ok) {
       clasifError = rClas.error;
     } else {

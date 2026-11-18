@@ -8,6 +8,7 @@ import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker"
 import { ComboDestino } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { actualizarHotelConfig } from "../actions";
+import { validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import { HotelBajoSolicitudControl } from "./HotelBajoSolicitudControl";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
@@ -24,8 +25,8 @@ export function HotelConfigEditor({
     destinoId: number | null;
     proveedorId: number | null;
     zona: string;
-    edadInfanteMin: number; edadInfanteMax: number;
-    edadNinoMin: number; edadNinoMax: number;
+    edadInfanteMin?: number | null; edadInfanteMax: number | null;
+    edadNinoMin?: number | null; edadNinoMax: number | null;
     rangosEdad: number[];
     contactoTelefono: string;
     emailComercial: string;
@@ -59,10 +60,12 @@ export function HotelConfigEditor({
   const [descripcion, setDescripcion] = useState(inicial.descripcion);
   const [ubicacion, setUbicacion] = useState(inicial.ubicacion);
   const [videoUrl, setVideoUrl] = useState(inicial.videoUrl);
-  const [infMin, setInfMin] = useState(String(inicial.edadInfanteMin));
-  const [infMax, setInfMax] = useState(String(inicial.edadInfanteMax));
-  const [ninoMin, setNinoMin] = useState(String(inicial.edadNinoMin));
-  const [ninoMax, setNinoMax] = useState(String(inicial.edadNinoMax));
+  // O3: sin valores por defecto — un campo vacío es «sin configurar» (nunca 0); el servidor exige «Infante hasta» y «Niño hasta» salvo Adults Only.
+  const [infMax, setInfMax] = useState(inicial.edadInfanteMax == null ? "" : String(inicial.edadInfanteMax));
+  const [ninoMax, setNinoMax] = useState(inicial.edadNinoMax == null ? "" : String(inicial.edadNinoMax));
+  // Estado GUARDADO del hotel (lo que hoy usan cotizar y publicar) y estado de lo que se está escribiendo.
+  const guardado = validarEdadesGeneralesHotel({ infanteMax: inicial.edadInfanteMax, ninoMax: inicial.edadNinoMax });
+  const escrito = validarEdadesGeneralesHotel({ infanteMax: infMax.trim() === "" ? null : Number(infMax), ninoMax: ninoMax.trim() === "" ? null : Number(ninoMax) });
   const [ninoNota, setNinoNota] = useState(inicial.ninoNota);
   const [adultsOnly, setAdultsOnly] = useState(inicial.adultsOnly);
   const [petFriendly, setPetFriendly] = useState(inicial.petFriendly);
@@ -81,8 +84,7 @@ export function HotelConfigEditor({
         destinoId: destinoId === "" ? null : Number(destinoId),
         proveedorId: proveedorId === "" ? null : Number(proveedorId),
         zona,
-        edadInfanteMin: Number(infMin) || 0, edadInfanteMax: Number(infMax) || 0,
-        edadNinoMin: Number(ninoMin) || 0, edadNinoMax: Number(ninoMax) || 0,
+        edadInfanteMax: infMax.trim() === "" ? null : Number(infMax), edadNinoMax: ninoMax.trim() === "" ? null : Number(ninoMax),
         rangosEdad: rangosSel,
         contactoTelefono: contactoTel, emailComercial: emailCom,
         estrellas: Number(estrellas) || null, clasificacion, descripcion, ubicacion, videoUrl, moneda,
@@ -98,6 +100,17 @@ export function HotelConfigEditor({
 
   return (
     <section className="mb-6 rounded-xl border border-gray-200 bg-white">
+      {/* O3: advertencia siempre visible (aunque el panel esté cerrado) cuando el hotel acepta menores y su configuración guardada falta o es inválida. */}
+      {!inicial.adultsOnly && !guardado.ok && (
+        <div className="m-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="alert" data-testid="aviso-config-edades">
+          <p className="font-semibold">Configuración de edades incompleta: este hotel no se puede cotizar con menores ni publicar.</p>
+          <p className="mt-0.5">
+            {guardado.faltantes.length > 0 && <>Falta: {guardado.faltantes.map((x) => `«${x}»`).join(", ")}. </>}
+            {guardado.invalidos.length > 0 && <>Valor no válido: {guardado.invalidos.join("; ")}. </>}
+            Ábrela aquí abajo y complétala; si el hotel no admite menores, márcalo como Adults Only. Las cotizaciones solo con adultos siguen funcionando y los contratos existentes no cambian.
+          </p>
+        </div>
+      )}
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-4 py-3 text-left">
         <span className="text-sm font-semibold text-gray-700">Configuración del hotel (edades y rangos)</span>
         <span className="text-gray-400">{open ? "▾" : "▸"}</span>
@@ -125,10 +138,13 @@ export function HotelConfigEditor({
           </label>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div><label className={lbl}>Infante mín.</label><Input type="number" value={infMin} onChange={(e) => setInfMin(e.target.value)} disabled={adultsOnly} /></div>
-            <div><label className={lbl}>Infante máx.</label><Input type="number" value={infMax} onChange={(e) => setInfMax(e.target.value)} disabled={adultsOnly} /></div>
-            <div><label className={lbl}>Niño mín.</label><Input type="number" value={ninoMin} onChange={(e) => setNinoMin(e.target.value)} disabled={adultsOnly} /></div>
-            <div><label className={lbl}>Niño máx.</label><Input type="number" value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} disabled={adultsOnly} /></div>
+            <div><label className={lbl}>Infante hasta (edad) {!adultsOnly && "*"}</label><Input type="number" min={0} max={17} value={infMax} onChange={(e) => setInfMax(e.target.value)} disabled={adultsOnly} placeholder="Obligatorio" data-testid="cfg-inf-max" /></div>
+            <div><label className={lbl}>Niño hasta (edad) {!adultsOnly && "*"}</label><Input type="number" min={0} max={17} value={ninoMax} onChange={(e) => setNinoMax(e.target.value)} disabled={adultsOnly} placeholder="Obligatorio" data-testid="cfg-nino-max" /></div>
+            <p className="text-xs text-gray-500 sm:col-span-2 sm:self-end">
+              {adultsOnly ? "Adults Only: no admite menores, no necesita edades."
+                : escrito.ok ? `Infante: 0 a ${escrito.regla.infanteMax} años · Niño: ${escrito.regla.ninoMin} a ${escrito.regla.ninoMax} años · desde los ${escrito.regla.ninoMax + 1} se cuenta como adulto.`
+                : `Pendiente: ${[...escrito.faltantes.map((x) => `falta «${x}»`), ...escrito.invalidos].join("; ")}.`}
+            </p>
           </div>
 
           <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">

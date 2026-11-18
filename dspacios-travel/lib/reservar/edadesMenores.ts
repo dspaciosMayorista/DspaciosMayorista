@@ -271,6 +271,14 @@ export function validarHabitacionesConsultadas(
   return { ok: true, habitaciones };
 }
 
+// #102 — la búsqueda general ya no recibe un tipo por habitación: recibe CUÁNTAS
+// habitaciones y cada hotel decide el reparto válido (asignacionHabitacionesBusqueda.ts).
+export function validarNumHabitacionesConsulta(v: unknown): { ok: true; numHabitaciones: number } | { ok: false; error: string } {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1) return { ok: false, error: "Indica al menos una habitación." };
+  if (v > MAX_HABITACIONES_CONSULTA) return { ok: false, error: `No se pueden consultar más de ${MAX_HABITACIONES_CONSULTA} habitaciones a la vez.` };
+  return { ok: true, numHabitaciones: v };
+}
+
 export function validarAdultosDeclarados(v: unknown): { ok: true; adultos: number } | { ok: false; error: string } {
   if (typeof v !== "number" || !Number.isInteger(v) || !Number.isFinite(v) || v < 1) {
     return { ok: false, error: "La cantidad de adultos debe ser un entero mayor o igual a 1." };

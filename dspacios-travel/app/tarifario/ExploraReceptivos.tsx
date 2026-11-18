@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import { ImagenCatalogo } from "@/components/ImagenCatalogo";
 import { formatMoneda } from "@/lib/utils";
 import type { Receptivo, ReceptivoModalInfo } from "./tarjetaHotelCompartida";
 
@@ -31,11 +31,7 @@ export function ExploraReceptivos({ porDestino, onVer }: { porDestino: [string, 
                   className="group flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white text-left transition-all hover:-translate-y-1 hover:shadow-[0_20px_48px_rgba(0,0,0,0.14)] hover:border-[var(--brand-accent)]"
                 >
                   <div className="relative aspect-[16/10] w-full bg-gray-100">
-                    {r.foto ? (
-                      <Image src={r.foto} alt={r.nombre} fill sizes="(max-width:1024px) 50vw, 33vw" className="object-cover transition-transform group-hover:scale-[1.03]" unoptimized />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-sm text-gray-300">Sin foto</div>
-                    )}
+                    <ImagenCatalogo src={r.foto} alt={r.nombre} className="transition-transform group-hover:scale-[1.03]" />
                   </div>
                   <div className="flex flex-1 flex-col p-4">
                     <div className="font-semibold text-gray-800">{r.nombre}</div>

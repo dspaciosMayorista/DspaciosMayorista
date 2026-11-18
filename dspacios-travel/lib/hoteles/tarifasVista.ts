@@ -90,9 +90,12 @@ export function textoDescuento(tipo: string | null, unidad: string | null | unde
  * HABITACIÓN completa y su equivalente por persona con el reparto exacto («100.000 × 2 − 20.000 = 180.000 por habitación, 90.000
  * por persona»; en triple «… 83.334 + 83.333 + 83.333 por persona»). Porcentaje o monto por persona: «100.000 − 10 % = 90.000». */
 export function textoCuentaPromo(
-  l: { netoBase: number; valor: number; netoResultante: number | null; motivoNoAplica: string | null; habitacion?: { ocupantes: number; resultadoHabitacion: number; porPersona: number[] } },
+  l: { netoBase: number | null; valor: number; netoResultante: number | null; motivoNoAplica: string | null; conservaBase?: boolean; habitacion?: { ocupantes: number; resultadoHabitacion: number; porPersona: number[] } },
   tipo: string | null, unidad: string | null | undefined, fmt: (n: number) => string,
 ): string {
+  // #125 (matriz derivada): sin tarifa en la base se dice tal cual; el infante conserva su tarifa base (no hay descuento que restar).
+  if (l.netoBase == null) return `sin tarifa en la base (${l.motivoNoAplica ?? "no se puede derivar"})`;
+  if (l.conservaBase) return `${fmt(l.netoBase)} (conserva su tarifa base; la promoción no la descuenta)`;
   if (l.habitacion) {
     const h = l.habitacion;
     const iguales = h.porPersona.every((x) => x === h.porPersona[0]);
@@ -106,18 +109,18 @@ export function textoCuentaPromo(
 /** Resumen de una promoción dinámica para «Tarifas generadas», con el patrón del tarifario: por vigencia base y grupo, una tarjeta por
  * CATEGORÍA (alimentaciones, cuántas tarifas y el «desde» por persona) y, en su detalle, las tarifas por alimentación y acomodación.
  * Solo reorganiza las líneas ya calculadas: no calcula ni consulta nada. Orden de llegada conservado (como las filas de la ficha). */
-export type LineaAgrupable = { base: string; grupo: string; dias: string | null; categoria: string; regimen: string; acomodacion: string; netoResultante: number | null; habitacion?: { porPersona: number[] } };
+export type LineaAgrupable = { base: string; grupo: string; dias: string | null; categoria: string; regimen: string; acomodacion: string; netoResultante: number | null; habitacion?: { porPersona: number[] }; /** #125: tramo de noches de una promoción que sigue la base ganadora. */ tramo?: { desde: string; hasta: string } };
 export type CategoriaPromo<L> = { categoria: string; regimenes: { regimen: string; lineas: L[] }[]; tarifas: number; desdePorPersona: number | null };
-export type BloquePromo<L> = { clave: string; base: string; grupo: string; dias: string | null; categorias: CategoriaPromo<L>[] };
+export type BloquePromo<L> = { clave: string; base: string; grupo: string; dias: string | null; tramo: { desde: string; hasta: string } | null; categorias: CategoriaPromo<L>[] };
 
 const ACOM_HABITACION_ETIQUETA = new Set(["Sencilla", "Doble", "Triple", "Múltiple"]);
 
 export function agruparPromoPorCategoria<L extends LineaAgrupable>(lineas: readonly L[]): BloquePromo<L>[] {
   const bloques: BloquePromo<L>[] = [];
   for (const l of lineas) {
-    const clave = `${l.base}|${l.grupo}|${l.dias ?? ""}`;
+    const clave = `${l.base}|${l.grupo}|${l.dias ?? ""}|${l.tramo ? `${l.tramo.desde}>${l.tramo.hasta}` : ""}`;
     let b = bloques.find((x) => x.clave === clave);
-    if (!b) { b = { clave, base: l.base, grupo: l.grupo, dias: l.dias, categorias: [] }; bloques.push(b); }
+    if (!b) { b = { clave, base: l.base, grupo: l.grupo, dias: l.dias, tramo: l.tramo ?? null, categorias: [] }; bloques.push(b); }
     let c = b.categorias.find((x) => x.categoria === l.categoria);
     if (!c) { c = { categoria: l.categoria, regimenes: [], tarifas: 0, desdePorPersona: null }; b.categorias.push(c); }
     let r = c.regimenes.find((x) => x.regimen === l.regimen);

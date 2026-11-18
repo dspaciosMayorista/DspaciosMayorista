@@ -249,8 +249,9 @@ describe("R294-2 (revisión B6) · el incluido por grupo se COBRA una vez, con l
     assert.match(cuerpo, /cargoGrupoIncluido\(gruposIncluidosPendientes, paxServAdulto, pctMk, numNochesInc\)/);
   });
   test("el motor de búsqueda usa la MISMA función con el pax real (nunca una división por persona)", () => {
-    const cuerpo = cuerpoFuncion(cotizar, "export async function buscarHoteles(");
-    assert.match(cuerpo, /cargoGrupoIncluido\(res\.serviciosGrupoIncluidos, paxGrupo,/);
+    // #102: el cargo vive en el motor puro compartido por la tarjeta, la tabla y la noche adicional.
+    const cuerpo = leer("lib/reservar/composicionHotelBusqueda.ts");
+    assert.match(cuerpo, /cargoGrupoIncluido\(e\.res\.serviciosGrupoIncluidos, pax,/);
     assert.match(cuerpo, /if \(!cargo\.ok\) continue;/,
       "una composición sin rango aplicable se descarta del listado, nunca se muestra con un precio inventado");
   });
