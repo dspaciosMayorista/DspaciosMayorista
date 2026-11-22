@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PanelLeft, PanelLeftClose } from "lucide-react";
+import Link from "next/link";
+import { PanelLeft, PanelLeftClose, KeyRound } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "./LogoutButton";
 import { SidebarNav, type NavItem } from "./SidebarNav";
@@ -54,7 +55,17 @@ export function DesktopSidebar({ nav, tenant }: { nav: NavItem[]; tenant?: "mayo
 
       <SidebarNav items={nav} collapsed={collapsed} />
 
-      <div className={`border-t py-3 ${collapsed ? "flex justify-center px-2" : "px-4"}`} style={{ borderColor: "var(--dash-border)" }}>
+      <div className={`flex flex-col gap-2 border-t py-3 ${collapsed ? "items-center px-2" : "px-4"}`} style={{ borderColor: "var(--dash-border)" }}>
+        <Link
+          href="/cuenta/contrasena"
+          title="Cambiar contraseña"
+          aria-label="Cambiar contraseña"
+          className={collapsed ? "grid h-9 w-9 place-items-center rounded-md hover:bg-[var(--dash-muted-surface)]" : "inline-flex items-center gap-2 text-sm hover:underline"}
+          style={{ color: "var(--dash-ink-muted)" }}
+        >
+          <KeyRound size={collapsed ? 17 : 15} aria-hidden />
+          {!collapsed && "Cambiar contraseña"}
+        </Link>
         <LogoutButton collapsed={collapsed} />
       </div>
 

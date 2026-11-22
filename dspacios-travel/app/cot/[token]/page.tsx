@@ -19,6 +19,7 @@ import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
 import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { snapshotDelDocumentoPublico } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
+import { logoParaDocumentoPorToken, type AdminLogo } from "@/lib/aliados/logoServidor";
 import { abiertaConSalidaPasada, hoyBogota, MENSAJE_SALIDA_PASADA } from "@/lib/cotizacion/vigencia";
 import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotizacion/SolicitudPendiente";
 import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
@@ -101,6 +102,8 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
   // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
   if (!agenciaRes.ok) throw new Error(agenciaRes.mensaje);
   const agencia = agenciaRes.agencia;
+  // #32: logo del aliado dueño de la cotización (solo si la cotización es de un aliado que TIENE logo). El emisor legal (`agencia`) no cambia.
+  const logoAliado = await logoParaDocumentoPorToken(sb as unknown as AdminLogo, token);
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
@@ -127,6 +130,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={(d.venta as { fecha_emision?: string } | undefined)?.fecha_emision ?? null}
               agencia={agencia}
+              logoAliado={logoAliado}
             />
           ) : (
           <ContratoDocumento
@@ -143,6 +147,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
             vigenciaHasta={cot.vigencia_hasta}
             netoTotalExigible={netoTotalExigible}
             agencia={agencia}
+            logoAliado={logoAliado}
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
             tituloPaquete={d.tituloPaquete ?? null}

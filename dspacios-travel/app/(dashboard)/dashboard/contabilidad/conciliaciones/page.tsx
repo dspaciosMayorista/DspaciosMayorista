@@ -50,7 +50,7 @@ export default async function ConciliacionesPage() {
     traerTodo<FilaExtracto>(sb, "conciliacion_extracto", tenant),
     sb.from("conciliacion").select("*").eq("tenant", tenant).order("created_at", { ascending: false }),
     sb.from("conciliacion_sistema").select("*"),
-    sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop, ventas(contrato_uid)").eq("tenant", tenant),
+    sb.from("abonos").select("id, numero_contrato, fecha_abono, valor_abono, monto_cop, moneda_pago, ventas(contrato_uid)").eq("tenant", tenant),
     sb.from("cuentas_por_pagar").select("id, proveedor, tipo_proveedor, servicio, numero_contrato, valor_total, moneda, fecha_obligacion, fecha_vencimiento, ventas(contrato_uid)").eq("tenant", tenant),
     sb.from("contabilidad_movimientos").select("id, fecha, tipo, concepto, valor").eq("tenant", tenant),
   ]);
@@ -93,7 +93,9 @@ export default async function ConciliacionesPage() {
     if (usados.has(ref)) continue;
     const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
     if (cop <= 0) continue;
-    sistema.push({ ref, tipo: "Abono cartera", descripcion: `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null, identidad: idDe(a.numero_contrato as string), categoria: "cartera" });
+    // #126: un abono recibido en DÓLARES no entró al banco como esos pesos: su valor aquí es el equivalente contable a la TRM del pago, y así se rotula.
+    const enDolares = a.moneda_pago === "USD";
+    sistema.push({ ref, tipo: enDolares ? "Abono cartera (dólares)" : "Abono cartera", descripcion: enDolares ? `Abono ${a.numero_contrato} · USD ${Number(a.valor_abono) || 0} recibidos (equivalente contable en pesos)` : `Abono ${a.numero_contrato}`, fecha: (a.fecha_abono as string) ?? null, valor: cop, numeroContrato: (a.numero_contrato as string) ?? null, identidad: idDe(a.numero_contrato as string), categoria: "cartera" });
   }
   for (const c of cxp ?? []) {
     for (const p of pagosPorCuenta.get(c.id) ?? []) {

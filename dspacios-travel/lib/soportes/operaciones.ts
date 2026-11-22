@@ -48,6 +48,16 @@ const MENSAJES: Record<string, string> = {
   SOPORTE_INEXISTENTE: "El soporte no existe.",
   SOPORTE_ARCHIVADO: "No tienes acceso a ese soporte.",
   SOPORTE_IDENTIDAD: MENSAJE_IDENTIDAD,
+  // O-3: evidencia previa del aliado sobre su COTIZACIÓN (migración 325).
+  SOPORTE_COT_LIMITE: "Ya tienes 5 comprobantes vigentes en esta cotización. Retira uno para adjuntar otro.",
+  SOPORTE_COT_REPETIDA: "Ya adjuntaste ese archivo a esta cotización.",
+  SOPORTE_COT_NO_ENCONTRADA: "No encontramos esa cotización entre las tuyas.",
+  SOPORTE_COT_CONVERTIDA: "Esa cotización ya es un contrato.",
+  SOPORTE_COT_NO_APLICA: "Esta cotización no admite adjuntar comprobantes.",
+  SOPORTE_COT_VENCIDA: "La cotización venció. Genera una nueva desde el tarifario.",
+  SOPORTE_COT_SALIDA_PASADA: "La fecha de salida ya pasó. Genera una nueva cotización.",
+  SOPORTE_COT_ACTOR: "Tu cuenta no puede adjuntar comprobantes.",
+  SOPORTE_COT_INEXISTENTE: "Ese comprobante ya no está vigente. Actualiza la página.",
 };
 const SIN_CONFIRMAR = "No pudimos confirmar si el soporte quedó registrado. El archivo se conservó; revisa tus soportes en unos minutos antes de volver a subirlo.";
 

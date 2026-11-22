@@ -1,0 +1,26 @@
+pruebas/comisionPortalB2B.react.ts :: PORT-1 NETO: lo descontado del precio, sin saldo ni cobro aunque haya abonos registrados por error
+pruebas/comisionPortalB2B.react.ts :: PORT-1 abonos ilegibles: oculta importe, estado y cobro inciertos de las filas; NETO y vía ventas no dependen de abonos
+pruebas/comisionPortalB2B.react.ts :: PORT-1 aislamiento: ve su contrato asistido de Minorista (con su saldo) y nunca el de otro aliado
+pruebas/comisionPortalB2B.react.ts :: PORT-1 pagada del todo: sin saldo, estado 'Pagada' y sin enlace de cobro
+pruebas/comisionPortalB2B.react.ts :: PORT-1 sin abonos: saldo = total y estado 'Pendiente'
+pruebas/comisionPortalB2B.react.ts :: PORTAL + DOCUMENTO: contrato NETO con una segunda fila no descontada — ni el listado ni la cuenta de cobro la cobran
+pruebas/comisionPortalB2B.react.ts :: PORTAL: NETO descontada se muestra como descontada, sin cuenta de cobro
+pruebas/comisionPortalB2B.react.ts :: PORTAL: con filas que no son suyas no cae a ventas.comision_b2b; ni importe ni enlace, y la cuenta de cobro no abre
+pruebas/comisionPortalB2B.react.ts :: PORTAL: corregida la comisión, el listado y la cuenta de cobro enlazada parten del MISMO importe nuevo
+pruebas/comisionPortalB2B.react.ts :: PORTAL: el importe sale de aliados_b2b (solo la fila suya), no de ventas.comision_b2b — y es el SALDO tras sus abonos
+pruebas/comisionPortalB2B.react.ts :: PORTAL: si no se pueden leer las comisiones, no muestra importe (falla cerrado)
+pruebas/comisionPortalB2B.react.ts :: PORTAL: sin ninguna fila (reserva anterior) vale ventas.comision_b2b, igual que la cuenta de cobro
+pruebas/dinamicoEnPaquetes.react.ts :: COTIZACIÓN B2C con sesión pero SIN permiso de reservar: usa el carrito público igual que el visitante (el permiso solo abre reservar/nuevo)
+pruebas/dinamicoEnPaquetes.react.ts :: COTIZACIÓN B2C sin sesión: el visitante cotiza la salida por el carrito público, sin /login ni rutas con sesión, conservando paquete/hotel/salida/precio/acomodación
+pruebas/dinamicoEnPaquetes.react.ts :: COTIZACIÓN con permiso de reservar: conserva 'Cotizar esta salida' y también puede usar el carrito
+pruebas/dinamicoEnPaquetes.react.ts :: DESDE = DOBLE: la tarjeta y cada salida del modal toman la doble aunque exista una sencilla más barata
+pruebas/dinamicoEnPaquetes.react.ts :: MODAL SIMPLIFICADO — sin matriz de precios; fechas con 'desde' DOBLE y el cotizador se actualiza al cambiar categoría/alimentación y salida, conservando la salidaId
+pruebas/dinamicoEnPaquetes.react.ts :: MODAL: si el detalle de una salida falla, error con Reintentar (nunca un detalle parcial presentado como completo)
+pruebas/dinamicoEnPaquetes.react.ts :: MODAL: visual propia — fechas de salida, cotizador con precios por acomodación y menores, y 'Cotizar' hacia la reserva dinámica
+pruebas/dinamicoEnPaquetes.react.ts :: ORIGEN de solo-Dinámico (MDE): su destino y su tarjeta aparecen con la salida de MDE; el Bloqueo (BOG) no
+pruebas/dinamicoEnPaquetes.react.ts :: ORIGEN → DESTINO → TARJETA 54: con el origen REAL de la salida, el destino sigue en el selector y la tarjeta muestra solo la salida de ese origen (desde DOBLE)
+pruebas/dinamicoEnPaquetes.react.ts :: SALIDA — Origen → Destino → Salida del 54: la salida dinámica real aparece (fecha y origen, sin cupos) junto al Bloqueo; elegirla deja su tarjeta y el modal cotiza ESA salidaId al precio DOBLE
+pruebas/dinamicoEnPaquetes.react.ts :: SALIDA — cambio entre salidas dinámicas y vuelta a «Todas las salidas» (vista conjunta)
+pruebas/dinamicoEnPaquetes.react.ts :: SALIDA — un Bloqueo con el MISMO número (bloqueo_id 540) que la salida dinámica 540: dos opciones distintas, cada una filtra lo suyo
+pruebas/dinamicoEnPaquetes.react.ts :: TARJETA: sin cupos; dice cuántas fechas de salida tiene
+pruebas/participacionEconomica65.react.ts :: MIN-00-0519, lo que Javier alcanza a VER en pantalla: contrato, destino, estado y su comisión; NO cliente, cartera, documentos ni cuenta de cobro

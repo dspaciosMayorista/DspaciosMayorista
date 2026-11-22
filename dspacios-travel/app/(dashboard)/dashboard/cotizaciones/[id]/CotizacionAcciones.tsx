@@ -6,6 +6,9 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { calcularEdad } from "@/lib/utils";
+import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { estadoFilaConversion, resumenFilaConversion } from "@/lib/reservar/resumenPasajeroConversion";
+import { EDAD_ADULTO_RESPONSABLE, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
 import { MENSAJE_TRM_PROVISIONAL_REQUERIDA_63, trmValida90 } from "@/lib/reservar/monedaPublicacion90";
 import { totalCobroConvertido, validarEleccionCobro } from "@/lib/finanzas/cobro";
 import { formatMoneda } from "@/lib/utils";
@@ -15,14 +18,20 @@ import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
 import { documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
+import { documentoPasajeroAdmitido } from "@/lib/personas/tiposDocumento";
+import type { PasajeroAliado } from "@/lib/portal/preparacionContrato";
 
 type ClientePrefill = { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string };
 
 
 export function CotizacionAcciones({
   id, pax, infantes, tienePasajeros, cliente, esSuperadmin, asesores, miNombre, miRolVenta, pideTrmProvisional = false, pideTrmCosto = false,
-  permiteMonedaCobro = false, monedaOferta = "COP", totalOferta = 0,
+  permiteMonedaCobro = false, monedaOferta = "COP", totalOferta = 0, pasajerosAliado = [], fechaReferencia = null,
 }: {
+  /** Fecha de salida: contra ella se decide quién es infante y quién es adulto elegible como responsable (la misma que usa el servidor y la base). */
+  fechaReferencia?: string | null;
+  /** O-3: pasajeros adicionales que el ALIADO escribió en su cotización (después del titular). Solo llegan si la cotización aún no trae pasajeros; precargan las filas 2…n sin retipear y lo que no escribió queda vacío. */
+  pasajerosAliado?: PasajeroAliado[];
   id: number; pax: number; infantes: number; tienePasajeros: boolean; cliente: ClientePrefill; esSuperadmin: boolean;
   asesores: { nombre: string; email: string | null }[];
   miNombre: string; miRolVenta: boolean;
@@ -74,20 +83,34 @@ export function CotizacionAcciones({
   const [asesorSel, setAsesorSel] = useState(miRolVenta ? miNombre : "");
   const asesorBloqueado = miRolVenta && !esSuperadmin; // solo superadmin lo cambia
 
-  const total = Math.max(1, pax || 1);
+  const total = Math.max(1, pax || 1, 1 + pasajerosAliado.length);
   const [paxRows, setPaxRows] = useState<PasajeroReserva[]>(() =>
     Array.from({ length: total }, (_, i) => ({
-      nombres: i === 0 ? cliente.nombres : "",
-      apellidos: i === 0 ? cliente.apellidos : "",
-      ...(i === 0 ? documentoPasajeroDesdeCliente(cliente.tipoDoc || "CC", cliente.numeroDoc) : { tipoDoc: "CC", numeroDoc: "" }),
-      fechaNacimiento: "",
-      nacionalidad: "Colombiana",
+      nombres: i === 0 ? cliente.nombres : pasajerosAliado[i - 1]?.nombres ?? "",
+      apellidos: i === 0 ? cliente.apellidos : pasajerosAliado[i - 1]?.apellidos ?? "",
+      ...(i === 0 ? documentoPasajeroDesdeCliente(cliente.tipoDoc || "CC", cliente.numeroDoc) : { tipoDoc: pasajerosAliado[i - 1]?.tipoDoc || "CC", numeroDoc: pasajerosAliado[i - 1]?.numeroDoc ?? "" }),
+      fechaNacimiento: i === 0 ? "" : pasajerosAliado[i - 1]?.fechaNacimiento ?? "",
+      nacionalidad: (i > 0 && pasajerosAliado[i - 1]?.nacionalidad) || "Colombiana",
       esInfante: i >= total - Math.max(0, infantes),
     }))
   );
 
+  // Filas COMPACTAS (resumen + «Editar»). Aquí el número de filas lo fija la cotización (no hay agregar/quitar: el universo es exactamente `pax`), así que solo se compacta/abre.
+  // Nacen compactas las filas sin nada que bloquee la generación; las incompletas o inválidas, abiertas. Nunca se compacta sola mientras se escribe: solo con «Listo».
+  const contextoFila = (r: PasajeroReserva) => ({ edad: calcularEdad(r.fechaNacimiento, fechaReferencia), esInfante: esInfantePorEdad(r.fechaNacimiento, fechaReferencia) });
+  // Los problemas se miden como los mide el envío: el menor con CC contra la edad de HOY (igual que `generarConPasajeros`).
+  const problemasDe = (r: PasajeroReserva) => estadoFilaConversion(r, { edad: calcularEdad(r.fechaNacimiento, null), esInfante: contextoFila(r).esInfante }).problemas;
+  const [compactas, setCompactas] = useState<boolean[]>(() => paxRows.map((r) => problemasDe(r).length === 0));
+
+  // Un cambio de fecha de nacimiento puede sacar a un pasajero de la categoría infante o dejar de calificar a su responsable: se corrige el vínculo (misma función que Reservar y el carrito).
   const setRow = (i: number, k: keyof PasajeroReserva, v: string) =>
-    setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
+    setPaxRows((rows) => {
+      const next = rows.map((r, n) => (n === i ? { ...r, [k]: v } : r));
+      return k === "fechaNacimiento" ? recalcularVinculosPorEdad(next, fechaReferencia) : next;
+    });
+  // Adulto responsable de un infante: lo ELIGE el personal (nunca se infiere); null = sin vincular, y la base lo rechaza.
+  const setResponsable = (i: number, responsableIndex: number | null) =>
+    setPaxRows((rows) => rows.map((r, n) => (n === i ? { ...r, responsableIndex } : r)));
 
   function convertirDirecto() {
     const t = trmProvisional();
@@ -107,8 +130,13 @@ export function CotizacionAcciones({
   }
 
   function generarConPasajeros() {
+    // Lo que bloquea nunca queda escondido: se abren las filas con problemas antes de cualquier mensaje.
+    setCompactas((c) => c.map((v, i) => (v && paxRows[i] && problemasDe(paxRows[i]).length > 0 ? false : v)));
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
+    // O-3: la MISMA regla de documento que la función atómica de pasajeros (solo dígitos salvo Pasaporte), comprobada antes de enviar.
+    const malDoc = paxRows.findIndex((p) => !documentoPasajeroAdmitido(p.tipoDoc, p.numeroDoc));
+    if (malDoc >= 0) { setErr(`Pasajero ${malDoc + 1}: el documento debe ser solo números (excepto Pasaporte).`); return; }
     // Menores de edad no pueden tener CC (solo RC o TI).
     const menorConCC = paxRows.findIndex((p) => {
       const edad = calcularEdad(p.fechaNacimiento, null);
@@ -121,7 +149,7 @@ export function CotizacionAcciones({
       const p = paxRows[i];
       if (!p.numeroDoc.trim()) continue;
       const k = `${p.tipoDoc}-${p.numeroDoc.trim()}`;
-      if (vistos.has(k)) { setErr(`Pasajero ${i + 1}: documento repetido (${p.tipoDoc} ${p.numeroDoc}).`); return; }
+      if (vistos.has(k)) { setCompactas((c) => c.map((v, j) => (j === i ? false : v))); setErr(`Pasajero ${i + 1}: documento repetido (${p.tipoDoc} ${p.numeroDoc}).`); return; }
       vistos.add(k);
     }
     if (!asesorSel && !esSuperadmin) { setErr("Elige el asesor interno que gestiona esta reserva."); return; }
@@ -236,7 +264,7 @@ export function CotizacionAcciones({
 
       {/* Captura de pasajeros (cuando la cotización no los trae, ej. tarifario B2C) */}
       {!tienePasajeros && capturando && (
-        <div className="space-y-3 rounded-xl border border-gray-200 p-4">
+        <div className="space-y-3 rounded-xl border border-gray-200 p-4" data-testid="captura-pasajeros">
           <p className="text-sm font-medium text-gray-700">Datos de los pasajeros ({total})</p>
           <p className="text-xs text-gray-400">Ya tienes al titular; completa el resto. Sin pasajeros no pasa a contrato.</p>
           <div className="max-w-xs">
@@ -249,8 +277,28 @@ export function CotizacionAcciones({
             </select>
             {asesorBloqueado && <p className="mt-0.5 text-[10px] text-gray-400">Te asigna automáticamente; solo un superadmin puede cambiarlo.</p>}
           </div>
-          {paxRows.map((p, i) => (
-            <div key={i} className="flex flex-wrap items-end gap-2">
+          {paxRows.map((p, i) => {
+            // Edad REAL por fecha de nacimiento contra la fecha de salida: es el criterio con el que el servidor y la base deciden si es infante y exigen su adulto responsable.
+            const edadReal = calcularEdad(p.fechaNacimiento, fechaReferencia);
+            const esInfanteReal = esInfantePorEdad(p.fechaNacimiento, fechaReferencia);
+            const est = estadoFilaConversion(p, { edad: calcularEdad(p.fechaNacimiento, null), esInfante: esInfanteReal });
+            if (compactas[i] && est.problemas.length === 0) {
+              const resp = p.responsableIndex != null ? paxRows[p.responsableIndex] : null;
+              const res = resumenFilaConversion(p, { edad: edadReal, esInfante: esInfanteReal }, resp ? `${resp.nombres} ${resp.apellidos}`.trim() || `Pasajero ${p.responsableIndex! + 1}` : null);
+              return (
+                <div key={i} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg bg-gray-50 px-2 py-1.5" data-testid="pasajero-resumen">
+                  <p className="min-w-0 text-xs">
+                    <span className="font-semibold text-gray-600">Pasajero {i + 1}</span> <span className="text-gray-800">{res.titulo}</span>
+                    {res.detalle && <span className="text-gray-500"> · {res.detalle}</span>}
+                    {est.faltan.length > 0 && <span className="ml-1 text-amber-700" data-testid="pasajero-faltan">Faltan: {est.faltan.join(", ")}</span>}
+                  </p>
+                  <button type="button" onClick={() => setCompactas((c) => c.map((v, j) => (j === i ? false : v)))} aria-label={`Editar pasajero ${i + 1}`} data-testid="editar-pasajero" className="shrink-0 text-[11px] font-medium text-[#1D7C9A] hover:underline">Editar</button>
+                </div>
+              );
+            }
+            return (
+            <div key={i} className="space-y-2" data-testid="pasajero-fila">
+            <div className="flex flex-wrap items-end gap-2">
               <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
               <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
               <div className="w-24">
@@ -280,8 +328,29 @@ export function CotizacionAcciones({
               </div>
               <div className="w-44"><label className="text-[11px] text-gray-500">Nacimiento</label><DateInput aria-label="Nacimiento" type="date" className="w-full" value={p.fechaNacimiento} onValueChange={(dateValue) => setRow(i, "fechaNacimiento", dateValue)} /></div>
               <div className="w-32"><label className="text-[11px] text-gray-500">Nacionalidad</label><Input value={p.nacionalidad} onChange={(e) => setRow(i, "nacionalidad", e.target.value)} /></div>
+              {est.problemas.length === 0 && (
+                <button type="button" onClick={() => setCompactas((c) => c.map((v, j) => (j === i ? true : v)))} data-testid="compactar-pasajero" className="pb-2 text-[11px] font-medium text-[#1D7C9A] hover:underline">Listo</button>
+              )}
+              <span className="pb-2 text-[11px] text-gray-400" data-testid="edad-pasajero">{edadReal == null ? "—" : `${esInfanteReal ? "Infante" : edadReal < 12 ? "Niño" : "Adulto"} · ${edadReal}a`}</span>
             </div>
-          ))}
+            {esInfanteReal && (
+              <div className="max-w-sm" data-testid="responsable-infante">
+                <label className="text-[11px] text-gray-500" htmlFor={`responsable-${i}`}>Adulto responsable *</label>
+                <select id={`responsable-${i}`} value={p.responsableIndex ?? ""} onChange={(e) => setResponsable(i, e.target.value === "" ? null : Number(e.target.value))}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
+                  <option value="">Sin vincular (se rechazará al generar)</option>
+                  {paxRows.map((otro, j) => {
+                    const edadOtro = calcularEdad(otro.fechaNacimiento, fechaReferencia);
+                    if (j === i || edadOtro == null || edadOtro < EDAD_ADULTO_RESPONSABLE) return null;
+                    return <option key={j} value={j}>{`${otro.nombres} ${otro.apellidos}`.trim() || `Pasajero ${j + 1}`}</option>;
+                  })}
+                </select>
+                <p className="mt-1 text-xs text-gray-400">Todo infante debe quedar vinculado a un adulto (18+ años) que viaje en el mismo contrato; para que un pasajero aparezca aquí debe tener su fecha de nacimiento.</p>
+              </div>
+            )}
+            </div>
+            );
+          })}
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={generarConPasajeros} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
               {pending ? "Generando…" : "Generar contrato"}

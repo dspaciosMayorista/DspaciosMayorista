@@ -47,6 +47,8 @@ import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { estaPendienteTarifa, ITEM_REF_HOTEL, MENSAJE_PENDIENTE_TARIFA, mismaEleccion, toleranciaCentavos, validarReparto, type NetaSolicitud } from "@/lib/reservar/solicitudHotel";
 import { evaluarOcupacionHotel, netaCargada } from "@/lib/reservar/solicitudHotelServidor";
 import { puedeEscribir } from "@/lib/roles";
+import { sanearBusquedaHoteles, traeDetalleInterno } from "@/lib/tarifario/detalleInterno";
+import { peticionConDetalleInterno } from "@/lib/tarifario/detalleInterno.server";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
 import {
@@ -240,7 +242,11 @@ export async function cotizarPorFechas(input: unknown): Promise<CotizarResult> {
 export async function buscarHoteles(input: unknown): Promise<
   { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[]; enRevision?: HotelEnRevision[] } | { ok: false; error: string }
 > {
-  return buscarHotelesImpl(input);
+  const r = await buscarHotelesImpl(input);
+  // O-1: el detalle de configuración (campos de edades, ruta de Producto) es solo interno. La sesión se lee UNA vez por búsqueda y únicamente
+  // si la respuesta trae algo que ocultar; para un externo (anónimo, aliado B2B, cliente) el payload sale sin ese detalle.
+  const interno = traeDetalleInterno(r) ? await peticionConDetalleInterno() : false;
+  return sanearBusquedaHoteles(r, interno);
 }
 
 // `input` es `unknown` a propósito (ronda 5) — misma razón que `buscarHoteles`
@@ -411,6 +417,15 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     const rTrm = await trmCostoContratoUsd({ input, data: comp.data, datosVuelo, costoAereo, solicitud: solicitud && { neta: solicitud.neta }, costo });
     if (!rTrm.ok) return { ok: false, error: rTrm.error };
     trmCostoUsd = rTrm.trm;
+  }
+
+  // 2-ter) R325-3: el vínculo infante ↔ adulto responsable se PREVALIDA antes de gastar un consecutivo, con la MISMA función que usa la conversión del carrito
+  // (infante sin responsable, autorreferencia, índice inexistente, responsable menor de edad o infante). Antes, un infante sin responsable solo lo rechazaba la
+  // base DESPUÉS de numerar y crear el contrato: la reversión dejaba un hueco en la numeración. Es SOLO una prevalidación: nada se infiere (el responsable lo elige
+  // el personal) y la base (trigger de la tabla / función atómica de pasajeros) sigue siendo la autoridad. Misma referencia que la clasificación posterior: `meta.fecha_ida`.
+  if (input.pasajeros.length && meta.fecha_ida) {
+    const respPrev = prevalidarResponsablesDeGrupo(input.pasajeros, input.pasajeros.map((_, i) => i + 1), meta.fecha_ida);
+    if (!respPrev.ok) return { ok: false, error: mensajePrevalidacionGrupo(respPrev) };
   }
 
   // 3) Número de contrato — ya completo (DTM-#### / MIN-00-####), tenant

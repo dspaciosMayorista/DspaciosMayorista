@@ -59,6 +59,8 @@ export type CotizacionTarjeta = {
   precio: { total: number; moneda: string; rotulo: string } | null;
   /** Regla que ganó en ESE mismo cálculo (null = sin descuento o sin fechas). */
   etiqueta: { etiqueta: string } | null;
+  /** #126-D: promoción que ganó en ESE mismo cálculo (null = ninguna o sin fechas). */
+  etiquetaPromocion: { etiqueta: string } | null;
   calculando: boolean;
   /** Selección actual (null = sin fechas ni salida elegidas). */
   seleccion: SeleccionTarjeta | null;
@@ -177,6 +179,7 @@ export function useCotizacionTarjeta({ filas, paqueteId, hotelId, ventana, cotiz
     controles, seleccion,
     precio: r ? { total: r.precio, moneda: r.moneda, rotulo: `${fmt(r.fechaIda)} → ${fmt(r.fechaRegreso)}${r.noches ? ` · ${r.noches}N` : ""}` } : null,
     etiqueta: r?.descuentoHotel ? { etiqueta: r.descuentoHotel.etiqueta } : null,
+    etiquetaPromocion: r?.promocionHotel?.etiqueta ? { etiqueta: r.promocionHotel.etiqueta } : null,
     calculando: pendiente || (cot != null && sel != null && cot.sel === sel.sel && !vigente),
   };
 }

@@ -82,7 +82,7 @@ export default async function PortalVentas({ searchParams }: { searchParams: Pro
               const com = vis?.importe ?? null;
               // La fila principal conserva su `key` (número de contrato); la de vuelos es hermana, no envoltorio.
               return [(
-                <tr key={num} className="border-t border-gray-50">
+                <tr key={num} id={`contrato-${num}`} className="scroll-mt-24 border-t border-gray-50 target:bg-[rgba(38,187,217,0.08)]">
                   <th scope="row" className="px-3 py-2 text-left font-mono font-semibold text-[#1D7C9A]">{numeroVisible(num)}</th>
                   <td data-label="Agencia" className="px-3 py-2 text-xs text-gray-600">{AGENCIA[v.tenant ?? "mayorista"] ?? v.tenant}</td>
                   <td data-label="Cliente" className="px-3 py-2 text-gray-700">

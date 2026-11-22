@@ -23,6 +23,7 @@ export type FactRow = {
   moneda: string;           // siempre "COP" para facturar
   monedaOrig: string;       // moneda original del contrato (USD/COP)
   trm: number | null;       // TRM usada si el contrato era USD
+  copProvisional?: boolean; // #126-A: USD con saldo por cobrar; el COP mezcla lo cobrado con una estimación
   estado: string;
   irtProveedores: number;
   dianEmitida: boolean;
@@ -193,7 +194,7 @@ function Fila({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
           </Link>
         </td>
         <td className="px-4 py-2.5 text-gray-700" data-label="Cliente">{row.cliente ?? "—"}</td>
-        <td className="px-4 py-2.5 text-right tabular-nums" data-label="PVP">{fmt(row.precio_venta)}</td>
+        <td className="px-4 py-2.5 text-right tabular-nums" data-label="PVP">{fmt(row.precio_venta)}{row.copProvisional && <span data-testid="pvp-provisional" className="block text-[10px] font-medium text-amber-700">provisional (saldo USD abierto)</span>}</td>
         <td className="px-4 py-2.5 text-right tabular-nums text-gray-500" data-label="IRT">{liq ? fmt(liq.irt) : "—"}</td>
         <td className="px-4 py-2.5 text-right tabular-nums text-gray-500" data-label="Ingreso propio">{liq ? fmt(liq.ingresoPropio) : "—"}</td>
         <td className="px-4 py-2.5 text-center" data-label="Estado">
@@ -285,7 +286,7 @@ function Editor({ row, ivaPct }: { row: FactRow; ivaPct: number }) {
       <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
         <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Configuración</p>
         <div className="flex items-center justify-between rounded-md bg-gray-50 px-3 py-2 text-sm">
-          <span className="text-gray-500">PVP del contrato{row.monedaOrig === "USD" && row.trm ? <span className="ml-1 text-[11px] text-gray-400">(USD → COP a TRM {formatMoneda(row.trm, "COP")})</span> : null}</span>
+          <span className="text-gray-500">PVP del contrato{row.monedaOrig === "USD" && row.trm ? <span className="ml-1 text-[11px] text-gray-400">(USD → COP a TRM {formatMoneda(row.trm, "COP")}{row.copProvisional ? ", provisional: saldo en USD por cobrar" : ""})</span> : null}</span>
           <b className="tabular-nums text-gray-800">{fmt(row.precio_venta)}</b>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

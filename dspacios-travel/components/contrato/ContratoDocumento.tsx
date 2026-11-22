@@ -1,5 +1,7 @@
 import { COLOR_DOCUMENTO } from "@/lib/contrato/colorDocumento";
 import { identidadAgencia } from "@/lib/agencia/identidadAgencia";
+import type { LogoAliadoDoc } from "@/lib/aliados/logo";
+import { EmisorLinea, LogoAliado } from "@/components/cotizacion/MarcaAliado";
 import { ETIQUETA_AJUSTE_CLIENTE, esLineaAjusteRedondeo } from "@/lib/reservar/solicitudHotel";
 import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
 import { ETIQUETA_NINO_GRATIS_CLIENTE, descripcionClienteNinoGratis, esExplicacionNinoGratis, plegarNinoGratisItems } from "@/lib/contrato/plegarNinoGratis";
@@ -102,6 +104,8 @@ type Props = {
   // Modo COTIZACIÓN: rotula el documento como presupuesto (sin número de
   // contrato) y muestra la vigencia. No constituye reserva en firme.
   esCotizacion?: boolean;
+  /** #32: logo del aliado, SOLO para cotizaciones (`esCotizacion`). Un contrato nunca lo muestra: su emisor y su marca no cambian. */
+  logoAliado?: LogoAliadoDoc | null;
   codigo?: string;
   vigenciaHasta?: string | null;
   // Identidad fiscal de la agencia dueña del contrato (tabla `agencias`,
@@ -198,6 +202,7 @@ export function ContratoDocumento({
   totalPagado,
   cobro = null,
   esCotizacion = false,
+  logoAliado = null,
   codigo,
   vigenciaHasta,
   agencia,
@@ -361,7 +366,9 @@ export function ContratoDocumento({
               (mayorista/minorista). Si el logo no viene preparado para fondo
               oscuro (`logoEnTarjeta`), se muestra dentro de una tarjeta
               blanca en vez de directo sobre el color. */}
-          {MARCA.logoEnTarjeta ? (
+          {esCotizacion && logoAliado ? (
+            <LogoAliado logo={logoAliado} />
+          ) : MARCA.logoEnTarjeta ? (
             <div className="rounded-md bg-white px-2 py-1">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={MARCA.logo} alt={empresa.razonSocial} className="h-10 w-auto" />
@@ -394,6 +401,7 @@ export function ContratoDocumento({
           <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
+      {esCotizacion && logoAliado && <EmisorLinea razonSocial={empresa.razonSocial} nit={empresa.nit} rnt={empresa.rnt} aliado={logoAliado.nombre} />}
 
       {/* ── Estado del contrato (pendiente / confirmado) ─────────── */}
       {(() => {

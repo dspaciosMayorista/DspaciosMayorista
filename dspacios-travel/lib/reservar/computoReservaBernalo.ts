@@ -37,7 +37,9 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { noches as calcularNoches, hoyISO } from "@/lib/calc/paquetes";
+import { noches as calcularNoches, hoyISO, marcar } from "@/lib/calc/paquetes";
+import { cargosMenoresUnidad, type CargoMenorUnidad } from "@/lib/reservar/cargosMenoresUnidad";
+import { cargarCierresHoteles, resolverCierresEstadia, MENSAJE_HOTEL_CERRADO } from "@/lib/tarifario/cierresHotel";
 import {
   orquestarCotizacionAlojamientoBernalo,
   type DatosOrquestacionBernalo,
@@ -132,6 +134,8 @@ export type ComputoReservaBernaloOk = {
   habitaciones: HabitacionComputoBernalo[];
   /** Servicios incluidos (persona + grupo) YA resueltos con identidad, proveedor y costo neto reales. */
   serviciosIncluidos: ServicioIncluidoComputoBernalo[];
+  /** #126-B: cargo explícito de cada menor (edad/clase y si está incluido, se cobra por noche/estadía o paga como adulto). Sin netos ni brutos. */
+  menores: CargoMenorUnidad[];
 };
 
 export type ResultadoComputoReservaBernalo = ComputoReservaBernaloOk | ComputoReservaBernaloBloqueado;
@@ -443,6 +447,13 @@ export async function computarReservaBernalo(
   // enviado por el llamador ni del `armado_paquetes.noches` legado.
   const numNoches = calcularNoches(fechaIda, fechaRegreso);
 
+  // #127: cierre GENERAL del hotel (`hotel_blackouts`), distinto de la exclusión de una temporada (`blackouts` de `hotel_temporadas`, ya dentro del calendario). El modelo por unidad
+  // no tiene acomodaciones de persona: se rechaza si el hotel está cerrado por completo, o si la categoría pedida lo está en todas sus acomodaciones. Un fallo de lectura falla cerrado.
+  const rcCierres = await cargarCierresHoteles(admin, [input.hotelId], hoyISO());
+  if (rcCierres.error) return { ok: false, codigo: "error_interno", mensaje: "No se pudo validar la disponibilidad del hotel." };
+  const cierreEstadia = resolverCierresEstadia(rcCierres.porHotel.get(input.hotelId), fechaIda, numNoches);
+  if (cierreEstadia.totalCerrado || cierreEstadia.cerrada(input.categoria, null)) return { ok: false, codigo: "no_cotizable", mensaje: MENSAJE_HOTEL_CERRADO };
+
   const datosOrquestacion: DatosOrquestacionBernalo = {
     hotelId: input.hotelId,
     modeloTarifario,
@@ -517,6 +528,7 @@ export async function computarReservaBernalo(
     salida: salidaResuelta,
     habitaciones,
     serviciosIncluidos,
+    menores: cargosMenoresUnidad(habitaciones, Number(pq.pct_mk) || 0, marcar),
   };
 }
 

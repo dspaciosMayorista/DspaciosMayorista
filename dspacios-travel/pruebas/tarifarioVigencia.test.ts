@@ -40,9 +40,10 @@ function clienteFalso(opts: {
   const filasPorTabla: Record<string, Record<string, unknown>[]> = {
     hotel_temporadas: (opts.temporadas ?? []) as Record<string, unknown>[],
     tarifa_hotel: (opts.tarifas ?? []) as Record<string, unknown>[],
+    hotel_blackouts: [], // #127: cierres generales (sin cierres en estas pruebas de vigencia de compra)
   };
   const maxRows = opts.maxRowsSinRango ?? Number.POSITIVE_INFINITY;
-  const paginasPedidas: Record<string, number> = { hotel_temporadas: 0, tarifa_hotel: 0 };
+  const paginasPedidas: Record<string, number> = { hotel_temporadas: 0, tarifa_hotel: 0, hotel_blackouts: 0 };
   const sb = {
     from(tabla: string) {
       if (!(tabla in filasPorTabla)) throw new Error(`tabla inesperada: ${tabla}`);
@@ -51,6 +52,7 @@ function clienteFalso(opts: {
       const construir = () => {
         paginasPedidas[tabla]++;
         const fallaAqui = opts.errorTarifasEnPagina != null && tabla === "tarifa_hotel" && paginasPedidas[tabla] >= opts.errorTarifasEnPagina;
+        if (tabla === "hotel_blackouts") return { data: [], error: null };
         const error = tabla === "hotel_temporadas" ? (opts.errorTemporadas ?? null) : (fallaAqui ? (opts.errorTarifas ?? ERROR_FAKE) : (opts.errorTarifas ?? null));
         if (error) return { data: null, error };
         const filtradas = filasPorTabla[tabla].filter((f) => filtros.every(({ col, vals }) => vals.includes(f[col])));
@@ -60,6 +62,7 @@ function clienteFalso(opts: {
       const q = {
         select: () => q,
         in: (col: string, vals: unknown[]) => { filtros.push({ col, vals }); return q; },
+        gte: () => q,
         order: () => q,
         range: (from: number, hasta: number) => { rango = [from, hasta]; return q; },
         then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(construir()).then(res, rej),

@@ -1,6 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { validarTrmPago } from "@/lib/finanzas/pagoUsd";
 import { validarFechasViaje } from "@/lib/reglas/duracionViaje";
 import { tipoDocumentoCliente } from "@/lib/personas/tiposDocumento";
 import { identidadDe, parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
@@ -1310,7 +1311,10 @@ export async function registrarAbono(
   fecha: string | undefined,           // fecha del abono (por defecto hoy; editable para registrar abonos atrasados)
   confirmarExcedente: boolean | undefined, // pago adicional intencional sobre un contrato ya cubierto
   operacionId: string | undefined,     // idempotencia: misma operación = mismo abono (doble pulsación / reintento)
-  identidad: IdentidadContrato,        // #75: el contrato que la pantalla abrió (último argumento, obligatorio)
+  identidad: IdentidadContrato,        // #75: el contrato que la pantalla abrió (último argumento OBLIGATORIO)
+  // #126: moneda en que LLEGÓ el dinero (solo contratos cobrados en USD): USD = dólares recibidos y `valor` es su equivalente contable en pesos a `trmInput`. Opcional y DESPUÉS de la
+  // identidad para no cambiar a ningún llamador existente.
+  monedaPago?: "COP" | "USD",
 ): Promise<ResultadoAbono> {
   const id = parseIdentidad(identidad);
   const sb = await createClient(id);
@@ -1326,13 +1330,18 @@ export async function registrarAbono(
     return { ok: false, error: "Este contrato todavía tiene pendiente su registro financiero. No se pueden registrar abonos hasta completar la reconciliación." };
   }
   const montoCop = Math.max(0, Number(valor) || 0);
-  const trm = esUSD ? (Number(trmInput) || 0) : 1;
-  if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día para el abono (contrato en USD)." };
+  // #126-A: cada pago de un contrato en USD lleva SU TRM explícita (sin valor por defecto ni la del contrato).
+  const trmPago = esUSD ? validarTrmPago(trmInput) : null;
+  if (trmPago && !trmPago.ok) return { ok: false, error: trmPago.error };
+  const trm = trmPago?.ok ? trmPago.trm : 1;
+  if (monedaPago != null && monedaPago !== "COP" && monedaPago !== "USD") return { ok: false, error: "La moneda del pago debe ser COP o USD." };
+  if (monedaPago != null && !esUSD) return { ok: false, error: "La moneda del pago solo se registra en contratos cobrados en USD." };
   if (operacionId != null && !UUID_OPERACION.test(operacionId)) return { ok: false, error: "Operación no válida; recarga la página e inténtalo de nuevo." };
   const { data: { user } } = await sb.auth.getUser();
   if (!user) return { ok: false, error: "Sesión no válida." };
 
-  const r = await rpcFinanciero<RegistroAbonoSql>("registrar_abono", {
+  // 313 (#126, F3): UNA sola operación atómica registra el abono Y la moneda en que llegó el dinero (nace con la fila; repetir con otra moneda se rechaza). Sin segunda escritura.
+  const r = await rpcFinanciero<RegistroAbonoSql>("registrar_abono_moneda", {
     p_numero: numeroContrato,
     p_tenant: (venta as { tenant?: string }).tenant ?? "mayorista",
     p_actor: user.id,
@@ -1343,6 +1352,7 @@ export async function registrarAbono(
     p_fecha: fechaElegidaONegocio(fecha),
     p_confirmar: confirmarExcedente === true,
     p_operacion: operacionId ?? null,
+    p_moneda_pago: monedaPago ?? null,
   }, id);
   if (!r.ok) return { ok: false, error: mensajeSiIdentidad({ message: r.error, code: r.code }) ?? r.error };
 
@@ -1392,10 +1402,16 @@ export async function actualizarAbono(
   const { data: venta } = await sb.from("ventas").select("moneda, tenant, precio_venta, moneda_cobro, trm_cobro, total_cobro").eq("numero_contrato", numeroContrato).maybeSingle();
   const esUSD = cobroDeVenta(venta).moneda === "USD";
   const montoCop = Math.max(0, Number(input.valor) || 0);
-  const trm = esUSD ? (Number(input.trmInput) || 0) : 1;
-  if (esUSD && trm <= 0) return { ok: false, error: "Indica la TRM del día (contrato en USD)." };
+  const trmPago = esUSD ? validarTrmPago(input.trmInput) : null;
+  if (trmPago && !trmPago.ok) return { ok: false, error: trmPago.error };
+  const trm = trmPago?.ok ? trmPago.trm : 1;
   const valorAbono = esUSD ? montoCop / trm : montoCop;
   const fechaAbono = fechaElegidaONegocio(input.fecha);
+  // #126: un pago recibido en dólares no se «corrige en pesos» (se reescribiría su equivalente y los dólares recibidos): solo fecha, forma y referencia.
+  const { data: previo } = await sb.from("abonos").select("moneda_pago, monto_cop, trm").eq("id", abonoId).maybeSingle();
+  if (previo?.moneda_pago === "USD" && (Math.abs(Number(previo.monto_cop) - montoCop) > 0.005 || Math.abs(Number(previo.trm) - trm) > 0.00005)) {
+    return { ok: false, error: "Este pago se recibió en dólares: su valor y su TRM no se corrigen en pesos. Anúlalo y vuelve a registrarlo." };
+  }
 
   const { error } = await sb.from("abonos").update({
     valor_abono: valorAbono,

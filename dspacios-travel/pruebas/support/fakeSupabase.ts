@@ -18,10 +18,11 @@ export type TablasFalsas = Record<string, FilaFalsa[]>;
 // referencia el `id` de `tablaEmbebida`. Ej.: joins.armado_hoteles.hoteles = "hotel_id".
 export type JoinsFalsos = Record<string, Record<string, string>>;
 
-type Filtro = { col: string; op: "eq" | "in"; val: unknown };
+type Filtro = { col: string; op: "eq" | "in" | "gte"; val: unknown };
 
 function coincideFiltro(row: FilaFalsa, f: Filtro): boolean {
   if (f.op === "eq") return row[f.col] === f.val;
+  if (f.op === "gte") return row[f.col] != null && (row[f.col] as string) >= (f.val as string); // #127: el cargador de cierres generales lee `fecha_fin >= hoy`
   return Array.isArray(f.val) && (f.val as unknown[]).includes(row[f.col]);
 }
 
@@ -46,6 +47,7 @@ export type QueryBuilderFalso = {
   select(cols: string): QueryBuilderFalso;
   eq(col: string, val: unknown): QueryBuilderFalso;
   in(col: string, vals: unknown[]): QueryBuilderFalso;
+  gte(col: string, val: unknown): QueryBuilderFalso;
   order(): QueryBuilderFalso;
   range(desde: number, hasta: number): QueryBuilderFalso;
   maybeSingle(): Promise<{ data: FilaFalsa | null; error: { message: string } | null }>;
@@ -101,6 +103,7 @@ export function crearClienteFalso(
       select(cols: string) { selectStr = cols; return builder; },
       eq(col: string, val: unknown) { filtros.push({ col, op: "eq", val }); return builder; },
       in(col: string, vals: unknown[]) { filtros.push({ col, op: "in", val: vals }); return builder; },
+      gte(col: string, val: unknown) { filtros.push({ col, op: "gte", val }); return builder; },
       order() { return builder; },
       range(desde: number, hasta: number) { rango = [desde, hasta]; return builder; },
       async maybeSingle() {

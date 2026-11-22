@@ -3,7 +3,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { aFiltrosRpc, aQuery, entero, esFechaValida, hayFiltros, parsearFiltros, POR_PAGINA, totalPaginas } from "../lib/gestionContratos/filtros.ts";
+import { aFiltrosRpc, aplicarPisoViajeReciente, aQuery, entero, esFechaValida, hayFiltros, parsearFiltros, POR_PAGINA, totalPaginas } from "../lib/gestionContratos/filtros.ts";
+import { fechaNegocio } from "../lib/fechaNegocio.ts";
 import { crearDebounce } from "../lib/gestionContratos/debounce.ts";
 import { parsearRespuesta, type FilaGestion } from "../lib/gestionContratos/tipos.ts";
 import { accionesSeguimiento, comisionVista, enlacesDe, facturaEmisionVista, facturaEnvioVista, fechaCorta, fechaHoraBogota, saldoVista, voucherEntregaVista, voucherGeneracionVista } from "../lib/gestionContratos/presentacion.ts";
@@ -237,5 +238,47 @@ describe("nota explicativa de la lista (hallazgo de navegador, 2026-11-18)", () 
     const pagina = leer("app/(dashboard)/dashboard/gestion-contratos/page.tsx");
     // el <p className="… flex …"> contiene el ícono y exactamente un <span> con todo el texto
     assert.match(pagina, /<p className="[^"]*\bflex\b[^"]*">\s*<Info [^>]*\/>\s*<span>\s*Cada voucher y cada factura[\s\S]*?hasta que se registre el acuse\.\s*<\/span>\s*<\/p>/);
+  });
+});
+
+// #126-E — «Viaje más reciente» (orden salida_asc): salidas de HOY (America/Bogota) en adelante; el historial se alcanza con fechas de viaje explícitas u otros órdenes.
+describe("#126-E · piso «hoy» de Viaje más reciente", () => {
+  const base = (extra: Record<string, string> = {}) => parsearFiltros({ orden: "salida_asc", ...extra }).filtros;
+  test("solo el orden salida_asc recibe el piso; el resto de órdenes y filtros quedan como están", () => {
+    const r = aplicarPisoViajeReciente(base(), "2030-06-15");
+    assert.equal(r.pisoDesde, "2030-06-15");
+    assert.deepEqual(aFiltrosRpc(r.filtros), { salida_desde: "2030-06-15" });
+    for (const orden of ["venta_desc", "venta_asc", "salida_desc", "saldo_desc", "numero_asc"]) {
+      const f = parsearFiltros({ orden }).filtros;
+      assert.equal(aplicarPisoViajeReciente(f, "2030-06-15").pisoDesde, null, orden);
+      assert.equal(aplicarPisoViajeReciente(f, "2030-06-15").filtros, f, "ni siquiera copia: no cambia nada");
+    }
+  });
+  test("una fecha de viaje explícita (desde o hasta) manda: no se aplica el piso (historial accesible)", () => {
+    assert.equal(aplicarPisoViajeReciente(base({ salida_desde: "2020-01-01" }), "2030-06-15").pisoDesde, null);
+    assert.equal(aplicarPisoViajeReciente(base({ salida_hasta: "2029-12-31" }), "2030-06-15").pisoDesde, null);
+    assert.deepEqual(aFiltrosRpc(aplicarPisoViajeReciente(base({ salida_hasta: "2029-12-31" }), "2030-06-15").filtros), { salida_hasta: "2029-12-31" });
+  });
+  test("el piso NO se escribe en la URL ni cuenta como filtro del usuario: el enlace compartido sigue diciendo solo el orden", () => {
+    const f = base({ estado: "pendiente" });
+    const { filtros } = aplicarPisoViajeReciente(f, "2030-06-15");
+    assert.equal(aQuery(f), "?estado=pendiente&orden=salida_asc");
+    assert.equal(f.salidaDesde, undefined, "los filtros originales no se mutan");
+    assert.equal(filtros.salidaDesde, "2030-06-15");
+    assert.equal(filtros.estado, "pendiente");
+  });
+  test("el día es el de BOGOTÁ (UTC-5): 23:59:59 sigue siendo hoy aunque en UTC ya sea mañana; 00:00:00 cambia el día", () => {
+    assert.equal(fechaNegocio(new Date("2030-06-15T17:00:00Z")), "2030-06-15");
+    assert.equal(fechaNegocio(new Date("2030-06-16T04:59:59Z")), "2030-06-15");
+    assert.equal(fechaNegocio(new Date("2030-06-16T05:00:00Z")), "2030-06-16");
+    assert.equal(fechaNegocio(new Date("2030-06-16T02:00:00Z")), "2030-06-15", "trampa: el día UTC sería el 16");
+    assert.equal(fechaNegocio(new Date("2030-01-01T04:59:59Z")), "2029-12-31", "cruce de año");
+  });
+  test("el cargador usa el reloj inyectado y fechaNegocio (no la fecha UTC del servidor)", () => {
+    const c = leer("lib/gestionContratos/cargar.server.ts");
+    assert.match(c, /ahora: Date = new Date\(\)/);
+    assert.match(c, /aplicarPisoViajeReciente\(filtros, fechaNegocio\(ahora\)\)/);
+    assert.match(c, /aFiltrosRpc\(efectivos\)/);
+    assert.doesNotMatch(c, /toISOString\(\)\.slice\(0, 10\)/);
   });
 });

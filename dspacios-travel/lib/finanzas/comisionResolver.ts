@@ -34,6 +34,8 @@ export type DetalleComision = {
 };
 
 export type AliadoCatalogo = {
+  /** Id de la ficha (catálogo `aliados`): la aceptación electrónica (#98) se ata a la ficha, nunca al nombre. */
+  id?: number;
   nombre: string;
   tipo_documento: string | null;
   nit: string | null;
@@ -63,6 +65,8 @@ export type ComisionResuelta = {
   // vía 1 (flujo tarifario B2B de mayorista) no tiene log de abonos: el
   // estado de cuenta de abonos no aplica ahí (queda null).
   aliadoB2bId: number | null;
+  /** Vida del contrato (`ventas.contrato_uid`): clave estable de la aceptación (#98) cuando no hay fila en aliados_b2b. */
+  contratoUid: string | null;
 };
 
 
@@ -107,7 +111,7 @@ export async function resolverComisionB2B(
   const admin = createAdminClient();
   const { data: v } = await admin
     .from("ventas")
-    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant, cotizacion_id, estado")
+    .select("numero_contrato, cliente, destino, fecha_salida, precio_venta, moneda, modo_compra, comision_b2b, comision_estado, b2b_usuario_id, aliado_id, agencia_nombre, freelance_nombre, tipo_asesor, tenant, cotizacion_id, estado, contrato_uid")
     .eq("numero_contrato", numero)
     .maybeSingle();
   if (!v) return null;
@@ -367,5 +371,6 @@ export async function resolverComisionB2B(
     esInterno,
     esDueno,
     aliadoB2bId: fila?.id ?? null,
+    contratoUid: (v.contrato_uid as string | null) ?? null,
   };
 }

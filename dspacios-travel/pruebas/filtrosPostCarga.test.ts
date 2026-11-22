@@ -22,7 +22,7 @@ function clienteFalso(tablas: Record<string, Fila>) {
     // siempre el fixture completo deja sin avanzar al bucle paginado.
     let rangeArgs: [number, number] | null = null;
     return {
-      select() { return this; }, eq() { return this; }, in() { return this; },
+      select() { return this; }, eq() { return this; }, in() { return this; }, gte() { return this; },
       order() { return this; },
       range(from: number, to: number) { rangeArgs = [from, to]; return this; },
       then(resolve: (v: { data: unknown; error: unknown }) => void) {

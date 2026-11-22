@@ -13,7 +13,10 @@ export type ContratoFlujo = {
   // servidor con la TRM promedio de cada contrato).
   precio_venta: number;
   costo_total: number;
+  /** Pesos efectivamente recibidos. */
   cobrado: number;
+  /** #126: equivalente CONTABLE en pesos (a la TRM de cada pago) de abonos recibidos en dólares: no son pesos recibidos. */
+  cobradoDolaresEquivalente?: number;
   pagado: number;
 };
 
@@ -74,7 +77,7 @@ export function FlujoCajaClient({ contratos, fijosDefault = 0, movimientos = [] 
       const fecha = lente === "viaje" ? c.fecha_salida : c.fecha_venta;
       const key = mesKeyDe(fecha);
       if (!key) continue;
-      const ingreso = base === "esperado" ? c.precio_venta : c.cobrado;
+      const ingreso = base === "esperado" ? c.precio_venta : c.cobrado + (c.cobradoDolaresEquivalente ?? 0);
       const egreso = base === "esperado" ? c.costo_total : c.pagado;
       const cur = acc.get(key) ?? { ingresos: 0, egresosVar: 0, contratos: 0 };
       cur.ingresos += ingreso;
@@ -127,6 +130,7 @@ export function FlujoCajaClient({ contratos, fijosDefault = 0, movimientos = [] 
     });
   }, [contratos, movimientos, lente, base, fijosMes, mesActual]);
 
+  const equivDolares = useMemo(() => contratos.reduce((s, c) => s + (c.cobradoDolaresEquivalente ?? 0), 0), [contratos]);
   const totales = useMemo(() => {
     const ingresos = filas.reduce((a, f) => a + f.ingresos, 0);
     const egresos = filas.reduce((a, f) => a + f.egresos, 0);
@@ -174,9 +178,14 @@ export function FlujoCajaClient({ contratos, fijosDefault = 0, movimientos = [] 
       <p className="-mt-3 text-[11px] text-gray-400">
         {base === "esperado"
           ? "Esperado: ingreso = precio de venta del contrato; egreso = costos directos. Útil para proyectar el futuro."
-          : "Caja: ingreso = abonos cobrados en cartera; egreso = pagos hechos a proveedores. Útil para el flujo real."}
+          : "Caja: ingreso = pesos recibidos en cartera más, si hay, el equivalente contable de abonos recibidos en dólares; egreso = pagos hechos a proveedores. Útil para el flujo real."}
         {" "}Los costos fijos se imputan a cada mes con contratos (se presumen, aunque no se hayan gastado).
       </p>
+      {base === "caja" && equivDolares > 0 && (
+        <p data-testid="nota-equivalente-dolares" className="-mt-3 text-[11px] text-amber-700">
+          Los ingresos de caja incluyen {formatCOP(equivDolares)} que son el equivalente contable (a la TRM de cada pago) de abonos recibidos en dólares: no son pesos recibidos.
+        </p>
+      )}
 
       {/* Tarjetas resumen */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

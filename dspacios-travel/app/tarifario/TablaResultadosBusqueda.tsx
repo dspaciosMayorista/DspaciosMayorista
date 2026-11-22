@@ -10,6 +10,10 @@
 //      O4: es un valor de REFERENCIA. Nunca se suma a un total anterior ni se reserva: el total real sale de repetir la búsqueda con el regreso
 //      extendido (misma composición y filtros) y recalcular la estadía COMPLETA en el servidor.
 import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { EtiquetaPromocionHotel } from "@/components/cotizacion/EtiquetaPromocionHotel";
+import { CargosMenoresUnidad } from "./CargosMenoresUnidad";
+import { DesgloseUnidad } from "./DesgloseUnidad";
 import Link from "next/link";
 import { CalendarPlus } from "lucide-react";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
@@ -45,7 +49,7 @@ function LineasPorPersona({ lineas, moneda, vacio = "—" }: { lineas: LineaDesg
             <span className="text-[11px] text-slate-500">{etiquetaLinea(l)}</span>
             <span className="tabular-nums font-medium" style={{ color: "var(--brand-primary)" }}>{formatMoneda(l.tarifa, moneda)}</span>
           </div>
-          <NotaNinoGratis l={l} moneda={moneda} className="sm:text-right" />
+          <NotaNinoGratis l={l} moneda={moneda} className="sm:text-right" conPasajero={false} />
         </li>
       ))}
     </ul>
@@ -222,6 +226,12 @@ export function TablaResultadosBusqueda({
                         {!!f.c.edadesComoAdulto?.length && (
                           <span className="block text-[10px] text-amber-700">{f.c.edadesComoAdulto.join(", ")} años: tarifa de adulto en este hotel</span>
                         )}
+                        {(f.c.descuento?.etiqueta || f.c.promocion?.etiqueta) && (
+                          <span className="mt-1 flex flex-wrap justify-end gap-1" data-testid="etiquetas-oferta">
+                            <EtiquetaDescuentoHotel descuento={f.c.descuento} />
+                            <EtiquetaPromocionHotel promocion={f.c.promocion} />
+                          </span>
+                        )}
                         </div>
                       </td>
                     </tr>
@@ -245,7 +255,7 @@ export function TablaResultadosBusqueda({
             <span className="text-[11px] uppercase tracking-wide text-slate-400">Precio por habitación, no por persona</span>
           </div>
           <p className="mb-2 text-xs text-slate-500" data-testid="unidad-aviso">
-            Estos hoteles cobran por unidad (habitación), así que no hay tarifa de adulto ni de menor para repartir: se muestra el total de la reserva y las habitaciones que el hotel confirmó con su capacidad y sus edades.
+            Estos hoteles cobran por unidad (habitación), así que no hay tarifa de adulto para repartir: se muestra el total de la reserva y las habitaciones que el hotel confirmó con su capacidad y sus edades. Si viaja un menor se aclara debajo de la habitación su edad y si va incluido, tiene un cargo propio (por noche o por toda la estadía, ya incluido en el total) o paga como adulto.
             No se calcula una noche adicional para ellos; para extender la estadía cambia la fecha de regreso y busca de nuevo.
           </p>
           <ResponsiveTableShell minWidth={860} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -271,7 +281,7 @@ export function TablaResultadosBusqueda({
                         </td>
                         <td className={`${celda} text-slate-600`} data-label="Categoría">{f.o.categoria}</td>
                         <td className={`${celda} text-slate-600`} data-label="Alimentación">{f.o.alimentacion}</td>
-                        <td className={`${celda} text-xs text-slate-600`} data-label="Habitaciones y viajeros">{textoOcupacionUnidad(f.o)}</td>
+                        <td className={`${celda} text-xs text-slate-600`} data-label="Habitaciones y viajeros">{textoOcupacionUnidad(f.o)}<CargosMenoresUnidad menores={f.o.menores} moneda={f.o.moneda} /><DesgloseUnidad precioVenta={f.o.precioVenta} moneda={f.o.moneda} ocupacion={f.o.ocupacion} menores={f.o.menores} /></td>
                         <td className={`${celda} text-right tabular-nums`} data-label="Total de la reserva">
                           <div>
                             <span className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(f.o.precioVenta, f.o.moneda || "COP")}</span>

@@ -319,6 +319,8 @@ export function tablasBase(o: {
     armado_empaquetados: (o.empaquetadosLigados ?? []).map((e) => ({ paquete_id: PAQUETE_ID, empaquetado_id: e, aplica_mk: true, ta: 0 })),
     // #63 (227): las salidas de Dinámico vinculadas a Empaquetados cuentan como un vínculo más; este caso (Bloqueo) no tiene ninguna.
     salidas_dinamicas: [],
+    // #127: cierres generales del hotel (la generación y la reserva los leen siempre); sin cierres en estos casos de destinos aéreos.
+    hotel_blackouts: [],
   };
 }
 

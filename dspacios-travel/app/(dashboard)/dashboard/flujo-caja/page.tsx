@@ -38,7 +38,7 @@ export default async function FlujoCajaPage() {
   // Entradas reales: abonos de cartera. Ya entran en PESOS (monto_cop).
   const { data: abonos } = await sb
     .from("abonos")
-    .select("numero_contrato, valor_abono, monto_cop").eq("tenant", tenant);
+    .select("numero_contrato, valor_abono, monto_cop, moneda_pago").eq("tenant", tenant);
 
   // Salidas reales: pagos a proveedores (log ilimitado en cxp_pagos). En USD se
   // pagan en pesos a la TRM del día (valor × trm); en COP, trm = 1.
@@ -81,13 +81,16 @@ export default async function FlujoCajaPage() {
   }
   const movimientos = [...movMap.entries()].map(([mes, v]) => ({ mes, ...v }));
 
-  // Cobrado real en pesos (suma de monto_cop; en abonos viejos COP = valor_abono).
+  // Cobrado real en pesos (suma de monto_cop; en abonos viejos COP = valor_abono). #126: un pago recibido en DÓLARES (moneda_pago = USD) NO son pesos recibidos: su monto_cop es el equivalente
+  // CONTABLE a la TRM del pago, y se separa para que la base «Caja» lo nombre así en vez de mezclarlo con los pesos.
   const cobradoPorContrato = new Map<string, number>();
+  const equivDolaresPorContrato = new Map<string, number>();
   for (const a of abonos ?? []) {
     const k = a.numero_contrato as string;
     if (!k) continue;
     const cop = Number(a.monto_cop) || Number(a.valor_abono) || 0;
-    cobradoPorContrato.set(k, (cobradoPorContrato.get(k) ?? 0) + cop);
+    const mapa = a.moneda_pago === "USD" ? equivDolaresPorContrato : cobradoPorContrato;
+    mapa.set(k, (mapa.get(k) ?? 0) + cop);
   }
   // Pagado real en pesos (valor × trm; trm 1 si null = COP).
   const pagadoPorContrato = new Map<string, number>();
@@ -119,6 +122,7 @@ export default async function FlujoCajaPage() {
       precio_venta: (Number(v.precio_venta) || 0) * factor,
       costo_total: costoTotal * factor,
       cobrado: cobradoPorContrato.get(nc) ?? 0,
+      cobradoDolaresEquivalente: equivDolaresPorContrato.get(nc) ?? 0,
       pagado: pagadoPorContrato.get(nc) ?? 0,
     };
   });

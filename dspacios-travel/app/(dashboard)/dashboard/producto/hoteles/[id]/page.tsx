@@ -241,7 +241,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
         />
         <HotelFotos hotelId={hotelId} fotos={fotos ?? []} />
         <HotelPromociones hotelId={hotelId} reglas={(reglasDescuento ?? []) as ReglaFila[]} errorCarga={!!errorReglas} errorCombinaciones={!!errorComb} combinaciones={(Array.isArray(combinaciones) ? combinaciones : []) as unknown as EstadoCombinacion[]} />
-        <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} categorias={categorias} />
+        <HotelBlackouts hotelId={hotelId} blackouts={blackouts ?? []} categorias={categorias} esUnidad={modeloTarifario === "unidad"} />
         <HotelDocumentos hotelId={hotelId} documentos={documentos ?? []} />
         <HotelAcomodacionesEditor
           hotelId={hotelId}

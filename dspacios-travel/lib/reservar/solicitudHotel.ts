@@ -144,7 +144,9 @@ export function aplicarNetaSolicitud(
     armadoHotel: datos.armadoHotel ? { ...datos.armadoHotel, categorias: null, regimenes: null } : datos.armadoHotel,
     temporadas: args.sintetica.temporadas,
     tarifas: args.sintetica.tarifas,
-    blackouts: [],
+    // #127: la neta sintética sustituye TARIFAS y VIGENCIAS (de ahí que las exclusiones de temporada ya no existan), pero NO los cierres GENERALES del hotel (`hotel_blackouts`):
+    // una venta valorada bajo solicitud jamás atraviesa un hotel cerrado esas noches.
+    blackouts: datos.blackouts,
     redondeoCentavos: true,
     vuelo: args.vuelo ? { aporte: args.vuelo.aporte, feeInfante: args.vuelo.feeInfante } : undefined,
   };

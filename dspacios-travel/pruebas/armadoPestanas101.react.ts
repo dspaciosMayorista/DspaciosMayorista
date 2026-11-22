@@ -381,6 +381,60 @@ test("un hotel sin fila doble lo dice en vez de inventar una referencia", async 
   assert.match(cabecera(raiz, /Hotel Solo Niño/)!.textContent ?? "", /Sin tarifa doble/);
 });
 
+// #126-C — con una promoción que sigue la base, el infante conserva su tarifa base y queda en un grupo BASE sin adultos: se rotula como tal.
+test("#126-C: el grupo base que solo conserva la tarifa de infante dice «Solo tarifa de infante» y apunta a la promoción; ningún precio cambia", async () => {
+  // F4: las filas publicadas traen su estadía (fechas); el enlace solo existe cuando la promoción tiene los adultos de ESA misma estadía.
+  const estadia = { fecha_ida: "2030-06-10", fecha_regreso: "2030-06-13" };
+  const promo = { temporada_ganadora: "PRE BF", es_promocion: true, ...estadia };
+  const base = { temporada_ganadora: "BASE A", es_promocion: false, ...estadia };
+  const filas = [fila(1, "Hotel Dubai", "doble", 900_000, promo), fila(2, "Hotel Dubai", "sencilla", 1_200_000, promo), fila(3, "Hotel Dubai", "nino", 450_000, promo), fila(4, "Hotel Dubai", "infante", 88_000, base)];
+  const raiz = await montar(props("bloqueo", { pestanaInicial: "tarifario", resultado: filas as unknown as Props["resultado"] }));
+  await pulsar(cabecera(raiz, /Hotel Dubai/)!);
+  const lineas = [...raiz.querySelectorAll("[data-testid=grupos-tarifa] > li")];
+  assert.equal(lineas.length, 2, "dos grupos: la promoción y la base (no se borra ninguno)");
+  const grupoBase = lineas.find((l) => /BASE A/.test(l.textContent ?? ""))!;
+  const grupoPromo = lineas.find((l) => /^ESTANDAR · Promoción · PRE BF/.test(l.textContent ?? ""))!;
+  assert.match(grupoBase.textContent ?? "", /Solo tarifa de infante/);
+  assert.match(grupoBase.textContent ?? "", /adultos en «Promoción · PRE BF»/);
+  assert.doesNotMatch(grupoBase.textContent ?? "", /Sin tarifa doble/, "ya no parece una oferta de adulto vacía");
+  assert.match(grupoPromo.textContent ?? "", new RegExp(`Doble desde\\s*${formatCOP(900_000).replace(/[$.]/g, "\\$&")}`));
+  (globalThis as unknown as { requestAnimationFrame?: (cb: () => void) => number }).requestAnimationFrame ??= (cb) => setTimeout(cb, 0) as unknown as number;
+  (globalThis as unknown as { cancelAnimationFrame?: (n: number) => void }).cancelAnimationFrame ??= (n) => clearTimeout(n);
+  await pulsar(grupoBase.querySelector("button")!);
+  const nota = document.querySelector("[data-testid=nota-solo-infante]");
+  assert.ok(nota, "la ventana explica por qué solo hay infante");
+  assert.match(nota!.textContent ?? "", /conserva su tarifa base/);
+  const celdas = [...document.querySelectorAll("[role=dialog] tbody tr")].map((tr) => tr.textContent ?? "");
+  assert.equal(celdas.length, 1, "la fila del infante sigue publicada, sin tarifa de adulto inventada");
+  assert.match(celdas[0], /Infante/);
+  assert.match(celdas[0], new RegExp(formatCOP(88_000).replace(/[$.]/g, "\\$&")));
+});
+
+// F4 (Codex ronda 3): sin relación establecida por las filas, el grupo solo-infante se explica sin enlazar ninguna promoción.
+test("#126-C F4: infante base y promoción de OTRAS fechas → explicación neutral, sin «adultos en …»; filas y precios intactos", async () => {
+  const base = { temporada_ganadora: "BASE ENERO", es_promocion: false, fecha_ida: "2030-01-01", fecha_regreso: "2030-01-03" };
+  const promo = { temporada_ganadora: "PROMO DICIEMBRE", es_promocion: true, fecha_ida: "2030-12-01", fecha_regreso: "2030-12-03" };
+  const filas = [fila(1, "Hotel Dubai", "doble", 900_000, promo), fila(2, "Hotel Dubai", "infante", 88_000, base)];
+  const raiz = await montar(props("bloqueo", { pestanaInicial: "tarifario", resultado: filas as unknown as Props["resultado"] }));
+  await pulsar(cabecera(raiz, /Hotel Dubai/)!);
+  const lineas = [...raiz.querySelectorAll("[data-testid=grupos-tarifa] > li")];
+  assert.equal(lineas.length, 2, "ningún grupo se borra");
+  const grupoBase = lineas.find((l) => /BASE ENERO/.test(l.textContent ?? ""))!;
+  assert.match(grupoBase.textContent ?? "", /Solo tarifa de infante/);
+  assert.doesNotMatch(grupoBase.textContent ?? "", /adultos en|PROMO DICIEMBRE/, "no se inventa un enlace a una promoción de otras fechas");
+  (globalThis as unknown as { requestAnimationFrame?: (cb: () => void) => number }).requestAnimationFrame ??= (cb) => setTimeout(cb, 0) as unknown as number;
+  (globalThis as unknown as { cancelAnimationFrame?: (n: number) => void }).cancelAnimationFrame ??= (n) => clearTimeout(n);
+  await pulsar(grupoBase.querySelector("button")!);
+  const nota = document.querySelector("[data-testid=nota-solo-infante]");
+  assert.ok(nota);
+  assert.match(nota!.textContent ?? "", /conserva su tarifa base/);
+  assert.doesNotMatch(nota!.textContent ?? "", /están en «/, "la nota tampoco enlaza");
+  assert.match(nota!.textContent ?? "", /no se publican en este grupo/);
+  const celdas = [...document.querySelectorAll("[role=dialog] tbody tr")].map((tr) => tr.textContent ?? "");
+  assert.equal(celdas.length, 1);
+  assert.match(celdas[0], new RegExp(formatCOP(88_000).replace(/[$.]/g, "\\$&")));
+});
+
 test("los servicios del resultado van aparte y plegados", async () => {
   const raiz = await montar(props("bloqueo", { pestanaInicial: "tarifario", resultado: RESULTADO as unknown as Props["resultado"] }));
   const cab = cabecera(raiz, /Servicios opcionales \(1\)/);

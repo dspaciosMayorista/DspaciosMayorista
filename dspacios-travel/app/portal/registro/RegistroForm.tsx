@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { enviarSolicitudB2B } from "./actions";
+import { confirmarCodigoYSolicitarB2B, continuarRegistroB2B, iniciarRegistroB2B, reenviarCodigoB2B } from "./actions";
+import { ESPERA_REENVIO_S } from "@/lib/auth/codigoRegistro";
+import { almacenNavegador, borrarBorradorRegistro, guardarBorradorRegistro, leerBorradorRegistro } from "@/lib/auth/borradorRegistroB2B";
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-export function RegistroForm() {
+export function RegistroForm({ retomar = false }: { retomar?: boolean }) {
   const [f, setF] = useState({
     tipo: "agencia", tipoDocumento: "NIT", nombre: "", nit: "", contacto: "", email: "", telefono: "", ciudad: "", notas: "", aceptaNotificaciones: true,
     password: "", passwordConfirm: "",
@@ -19,12 +21,60 @@ export function RegistroForm() {
   const [msg, setMsg] = useState("");
   const [ok, setOk] = useState(false);
 
+  // #62: paso 2 = código que llega al correo. El enfriamiento de reenvío es un contador LOCAL (sin red); Auth además limita los envíos.
+  const [paso, setPaso] = useState<"datos" | "codigo" | "continuar">("datos");
+  const [codigo, setCodigo] = useState("");
+  const [espera, setEspera] = useState(0);
+  // O-4: tras cambiar la contraseña desde «Continúa tu registro» se vuelve aquí con los datos del formulario (sin contraseña) y se retoma ese paso.
+  useEffect(() => {
+    if (!retomar) return;
+    const d = leerBorradorRegistro(almacenNavegador());
+    if (!d) return;
+    setF((p) => ({ ...p, ...d, password: "", passwordConfirm: "" }));
+    setPaso("continuar");
+    setMsg("Contraseña actualizada. Escribe tu contraseña NUEVA para terminar de enviar tu solicitud.");
+  }, [retomar]);
+  useEffect(() => {
+    if (espera <= 0) return;
+    const t = setTimeout(() => setEspera((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [espera]);
+
   function enviar() {
     setMsg("");
     start(async () => {
-      const r = await enviarSolicitudB2B(f);
+      const r = await iniciarRegistroB2B(f);
+      if (r.ok) { setPaso("codigo"); setEspera(ESPERA_REENVIO_S); } else { setMsg(r.error); if (r.continuar) setPaso("continuar"); }
+    });
+  }
+  function verificar() {
+    setMsg("");
+    start(async () => {
+      const { password: _p, passwordConfirm: _c, ...datos } = f;
+      const r = await confirmarCodigoYSolicitarB2B({ ...datos, codigo });
       if (r.ok) setOk(true);
+      else { setMsg(r.error); if (r.continuar) setPaso("continuar"); }
+    });
+  }
+  // B6: el correo ya quedó verificado pero la solicitud no se completó. Correo + contraseña del registro prueban la titularidad (saber el correo no basta).
+  function continuar() {
+    setMsg("");
+    start(async () => {
+      const { passwordConfirm: _c, ...datos } = f;
+      const r = await continuarRegistroB2B(datos);
+      if (r.ok) { borrarBorradorRegistro(almacenNavegador()); setOk(true); }
       else setMsg(r.error);
+    });
+  }
+  // O-4: se guardan los datos (nunca la contraseña) y se sale al flujo de recuperación ya existente; no hay ningún atajo de acceso.
+  function guardarParaRecuperar() {
+    guardarBorradorRegistro(almacenNavegador(), f);
+  }
+  function reenviar() {
+    setMsg("");
+    start(async () => {
+      const r = await reenviarCodigoB2B(f.email);
+      if (r.ok) { setEspera(ESPERA_REENVIO_S); setMsg("Si el correo tiene un registro pendiente, te enviamos un código nuevo."); } else setMsg(r.error);
     });
   }
 
@@ -37,6 +87,55 @@ export function RegistroForm() {
           Revisaremos tu registro y te avisaremos cuando se apruebe. Luego podrás iniciar sesión en el Portal B2B.
         </p>
         <Link href="/portal/b2b" className="mt-4 inline-block text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>← Volver al Portal B2B</Link>
+      </div>
+    );
+  }
+
+  if (paso === "continuar") {
+    return (
+      <div className="space-y-3" data-testid="paso-continuar">
+        <h2 className="text-base font-semibold text-gray-800">Continúa tu registro</h2>
+        <p className="text-sm text-gray-600">
+          Tu correo <strong>{f.email.trim().toLowerCase()}</strong> ya está verificado. Escribe la contraseña que elegiste al registrarte para terminar de enviar tu solicitud de aprobación.
+        </p>
+        <div>
+          <label htmlFor="continuar-password" className={lbl}>Contraseña del registro</label>
+          <Input id="continuar-password" type="password" autoComplete="current-password" value={f.password} onChange={(e) => set("password", e.target.value)} />
+        </div>
+        {msg && <p role="alert" className="text-sm text-red-600">{msg}</p>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={continuar} disabled={pending || f.password.length < 6 || !f.email.trim()} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "Continuando…" : "Continuar y enviar solicitud"}
+          </Button>
+          <Link href="/recuperar?desde=registro" onClick={guardarParaRecuperar} data-testid="olvide-contrasena" className="text-sm font-medium text-[#1D7C9A] hover:underline">
+            Olvidé mi contraseña
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (paso === "codigo") {
+    return (
+      <div className="space-y-3" data-testid="paso-codigo">
+        <h2 className="text-base font-semibold text-gray-800">Verifica tu correo</h2>
+        <p className="text-sm text-gray-600">
+          Enviamos un código a <strong>{f.email.trim().toLowerCase()}</strong>. Escríbelo aquí para enviar tu solicitud de aprobación. Si no lo ves, revisa la carpeta de spam.
+        </p>
+        <div>
+          <label htmlFor="codigo-correo" className={lbl}>Código de verificación</label>
+          <Input id="codigo-correo" inputMode="numeric" autoComplete="one-time-code" maxLength={10} value={codigo}
+            onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ""))} placeholder="123456" />
+        </div>
+        {msg && <p role="alert" className="text-sm text-red-600">{msg}</p>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button onClick={verificar} disabled={pending || codigo.length < 6} style={{ backgroundColor: "var(--brand-primary)" }}>
+            {pending ? "Verificando…" : "Verificar y enviar solicitud"}
+          </Button>
+          <button type="button" onClick={reenviar} disabled={pending || espera > 0} className={`text-sm font-medium ${espera > 0 ? "text-gray-400" : "text-[#1D7C9A]"}`}>
+            {espera > 0 ? `Reenviar código en ${espera} s` : "Reenviar código"}
+          </button>
+        </div>
       </div>
     );
   }
@@ -94,7 +193,7 @@ export function RegistroForm() {
       </label>
       {msg && <p className="text-sm text-red-600">{msg}</p>}
       <Button onClick={enviar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>
-        {pending ? "Enviando…" : "Enviar solicitud de registro"}
+        {pending ? "Enviando…" : "Continuar: enviar código al correo"}
       </Button>
     </div>
   );

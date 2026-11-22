@@ -33,6 +33,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 import { type AcomRoom } from "../acomodaciones.ts";
+import type { CargoMenorUnidad } from "../reservar/cargosMenoresUnidad.ts";
 import {
   validarHabitacionesOcupacion,
   type HabitacionOcupacionEntrada,
@@ -82,6 +83,8 @@ export type OpcionUnidadConfirmada = {
   fechaIda: string;
   fechaRegreso: string;
   ocupacion: { id: string; acom: AcomRoom; adultos: number; edadesMenores: number[] }[];
+  /** #126-B: cargo explícito de cada menor (incluido / por noche / por estadía / paga como adulto); sin netos ni brutos. Vacío si no viajan menores. */
+  menores?: CargoMenorUnidad[];
 };
 
 /** Veredicto CONFIRMADO por hotel — solo estas dos formas pueden afirmarse:
@@ -207,7 +210,7 @@ export type EntradaComputarDisponibilidad = {
  * `OpcionUnidadConfirmada`; ninguno de los demás cruza esta frontera porque
  * este tipo ni siquiera los declara. */
 export type ResultadoComputarDisponibilidad =
-  | { ok: true; precioVenta: number; moneda: string; paxTotal: number }
+  | { ok: true; precioVenta: number; moneda: string; paxTotal: number; menores?: CargoMenorUnidad[] }
   | { ok: false; codigo: string; mensaje: string };
 
 export type EntradaEvaluarHotelUnidad = {
@@ -380,6 +383,7 @@ export async function evaluarDisponibilidadHotelUnidad(
         fechaIda,
         fechaRegreso,
         ocupacion,
+        menores: (resultado.menores ?? []).map((m) => ({ habitacion: m.habitacion, edad: m.edad, clase: m.clase, cobro: m.cobro, cargoVenta: m.cargoVenta, noches: m.noches })),
       });
       continue;
     }

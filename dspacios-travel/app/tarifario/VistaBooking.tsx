@@ -1,7 +1,9 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
+import { CargosMenoresUnidad } from "./CargosMenoresUnidad";
+import { DesgloseUnidad } from "./DesgloseUnidad";
+import { MENSAJE_EDADES_HOTEL_PUBLICO, validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import { useEscapeCerrar } from "@/components/ui/useEscapeCerrar";
 import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode, type CSSProperties, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
@@ -101,6 +103,7 @@ import type { CondicionHotelFechas } from "@/lib/reservar/liquidacionHotel";
 import { combinarTernario, etiquetaCondicion, etiquetaPolitica, type EvidenciaTernaria } from "@/lib/tarifario/condicionOferta";
 import { personaCoincideFiltros, unidadCoincideFiltros, type FiltrosBusquedaBooking, type ComboPersonaElegido } from "@/lib/tarifario/filtrosBusqueda";
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { EtiquetaPromocionHotel } from "@/components/cotizacion/EtiquetaPromocionHotel";
 import { ArrowUpDown, SlidersHorizontal, X, PawPrint, BadgeCheck, PlaneTakeoff, PlaneLanding, CalendarClock } from "lucide-react";
 
 const CAP_VACIA = { paxMin: null as number | null, paxMax: null as number | null, acom: [] as AcomConfig[] };
@@ -465,7 +468,7 @@ function PanelFiltrosResto({
 export function TarjetaHotelCard({
   onClick, foto, fotos, hotelNombre, destino, estrellas = null, clasificacion = null,
   adultsOnly = false, petFriendly = false, tieneCondicion, descripcion, desde = null, desdeEstadia = null, moneda,
-  badgeEsquina, controlesFechas = null, precioFechas = null, etiquetaDescuento = null, calculando = false,
+  badgeEsquina, controlesFechas = null, precioFechas = null, etiquetaDescuento = null, etiquetaPromocion = null, calculando = false,
 }: {
   /** #43/#60 entrega 6: noches y entrada de la estadía que produce el «desde» (porción con grupos). */
   desdeEstadia?: { entrada: string; noches: number } | null;
@@ -490,6 +493,8 @@ export function TarjetaHotelCard({
   precioFechas?: { total: number; moneda: string; rotulo: string } | null;
   /** #90: regla EBB / Long Stay del MISMO cálculo que `precioFechas`; nunca junto al «desde». */
   etiquetaDescuento?: { etiqueta: string } | null;
+  /** #126-D: promoción ganadora del mismo cálculo por fechas. */
+  etiquetaPromocion?: { etiqueta: string } | null;
   calculando?: boolean;
 }) {
   return (
@@ -516,6 +521,7 @@ export function TarjetaHotelCard({
           <EtiquetasHotel adultsOnly={adultsOnly} petFriendly={petFriendly} />
           {tieneCondicion !== undefined && <CondicionCompacta activo={tieneCondicion} />}
           {precioFechas && <EtiquetaDescuentoHotel descuento={etiquetaDescuento} />}
+          {precioFechas && <EtiquetaPromocionHotel promocion={etiquetaPromocion} />}
         </div>
         <div className="mt-0.5 text-xs text-gray-500">{destino ?? ""}</div>
         {descripcion?.trim() && (
@@ -549,7 +555,7 @@ export function TarjetaHotelCard({
 }
 
 /** #90: la tarjeta «desde» con selector de fechas/salida; precio y etiqueta salen de UNA cotización y caducan juntos (selección o día de negocio distintos). */
-export function TarjetaHotelConFechas({ card, ventana, cotizar, hoy, onClick, ...resto }: Omit<ComponentProps<typeof TarjetaHotelCard>, "controlesFechas" | "precioFechas" | "etiquetaDescuento" | "calculando" | "onClick"> & {
+export function TarjetaHotelConFechas({ card, ventana, cotizar, hoy, onClick, ...resto }: Omit<ComponentProps<typeof TarjetaHotelCard>, "controlesFechas" | "precioFechas" | "etiquetaDescuento" | "etiquetaPromocion" | "calculando" | "onClick"> & {
   /** Recibe la selección de la tarjeta para que «Ver opciones» la conserve. */
   onClick: (seleccion: SeleccionTarjeta | null) => void;
   card: Pick<HotelCard, "filas" | "paqueteId" | "hotelId">;
@@ -558,7 +564,7 @@ export function TarjetaHotelConFechas({ card, ventana, cotizar, hoy, onClick, ..
   hoy?: () => string;
 }) {
   const q = useCotizacionTarjeta({ filas: card.filas, paqueteId: card.paqueteId ?? 0, hotelId: card.hotelId, ventana, cotizar, hoy });
-  return <TarjetaHotelCard {...resto} onClick={() => onClick(q.seleccion)} controlesFechas={q.controles} precioFechas={q.precio} etiquetaDescuento={q.etiqueta} calculando={q.calculando} />;
+  return <TarjetaHotelCard {...resto} onClick={() => onClick(q.seleccion)} controlesFechas={q.controles} precioFechas={q.precio} etiquetaDescuento={q.etiqueta} etiquetaPromocion={q.etiquetaPromocion} calculando={q.calculando} />;
 }
 
 type Opcion = {
@@ -2897,6 +2903,9 @@ export function TarjetaUnidadBusqueda({
 
         {errorAgregar && <p className="text-xs text-red-600">{errorAgregar}</p>}
 
+        <CargosMenoresUnidad menores={opcionSel.menores} moneda={opcionSel.moneda} className="space-y-0.5 text-[11px] text-gray-500" />
+        <DesgloseUnidad precioVenta={opcionSel.precioVenta} moneda={opcionSel.moneda} ocupacion={opcionSel.ocupacion} menores={opcionSel.menores} />
+
         <div className="flex items-end justify-between">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-gray-400">total {opcionSel.paxTotal} pax</div>
@@ -3271,7 +3280,7 @@ function Selector({
       <TextoCategoriaHotel hotelId={hotel.hotelId} categoria={catEff} />
 
       {eligioOtra && <p role="status" data-testid="modal-seleccion-ajustada" className="text-xs text-amber-700">Tu elección anterior no está disponible en esta salida: te mostramos {catEff} · {regEff}.</p>}
-      {cc && <div data-testid="modal-precio-fechas" className="text-xs text-gray-500">Importes calculados para la salida que elegiste{comboCot?.descuento && <span className="ml-2"><EtiquetaDescuentoHotel descuento={comboCot.descuento} /></span>}</div>}
+      {cc && <div data-testid="modal-precio-fechas" className="text-xs text-gray-500">Importes calculados para la salida que elegiste{comboCot?.descuento && <span className="ml-2"><EtiquetaDescuentoHotel descuento={comboCot.descuento} /></span>}{comboCot?.promocion && <span className="ml-2"><EtiquetaPromocionHotel promocion={comboCot.promocion} /></span>}</div>}
       <EditorPax pvp={pvp} pvpMenor2={pvpMenor2} pvpInfanteSinFijo={pvpInfanteSinFijo} acomConfig={cap.acom} paxMin={cap.paxMin} paxMax={cap.paxMax} moneda={hotel.moneda} edadesNota={textoEdadesHotel(hotel)} edadInfanteMax={hotel.infMax} edadNinoMax={hotel.ninoMax} nota={!puedeReservar ? "El valor es una estimación con tarifas publicadas; el precio final se confirma al generar la cotización." : undefined} onAgregar={agregarItem}
         servicios={servicios ? {
           ...servicios, paqueteId: opcion.paqueteId, hotelNombre: hotel.hotelNombre,
@@ -3466,7 +3475,7 @@ function EditorPax({
   let clasifError: string | null = null;
   let ninos = 0, ninos2 = 0, infantes = 0;
   if (cantidadMenores > 0 && edadesValidas) {
-    const rClas = gEdadesHotel.ok ? clasificarMenoresPorEdad(edades, infanteMax, ninoMax) : { ok: false as const, error: gEdadesHotel.error };
+    const rClas = gEdadesHotel.ok ? clasificarMenoresPorEdad(edades, infanteMax, ninoMax) : { ok: false as const, error: MENSAJE_EDADES_HOTEL_PUBLICO };
     if (!rClas.ok) {
       clasifError = rClas.error;
     } else {
@@ -3935,9 +3944,17 @@ function EditorPax({
                 <div className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>
                   {formatMoneda(resultadoCotizacion.pvp, resultadoCotizacion.moneda)}
                 </div>
-                <div className="text-[11px] text-gray-400">
-                  ≈ {formatMoneda(resultadoCotizacion.promedioPorViajero, resultadoCotizacion.moneda)} por viajero (referencia)
-                </div>
+                {/* O-2: el total se explica con base de la unidad + cargos propios de menores (+ equivalente por adulto cuando es honesto); sin eso queda el promedio de referencia de siempre. */}
+                {!!resultadoCotizacion.menores && payloadBernalo.length > 0 && (
+                  <DesgloseUnidad precioVenta={resultadoCotizacion.pvp} moneda={resultadoCotizacion.moneda}
+                    ocupacion={payloadBernalo.map((h) => ({ acom: h.acom, adultos: h.adultos }))} menores={resultadoCotizacion.menores}
+                    className="mt-1.5 w-full space-y-0.5 rounded-md bg-slate-50 px-2 py-1.5 text-[11px] text-slate-500" />
+                )}
+                {!(resultadoCotizacion.menores && payloadBernalo.length > 0) && (
+                  <div className="text-[11px] text-gray-400">
+                    ≈ {formatMoneda(resultadoCotizacion.promedioPorViajero, resultadoCotizacion.moneda)} por viajero (referencia)
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -4122,6 +4139,7 @@ function SelectorPorFechas({
         {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
         {/* Entrega 5: el combo elegido trae su etiqueta si la precedencia decidió distinto por acomodación. */}
         {combos && (comboCot && "descuentoHotel" in comboCot ? comboCot.descuentoHotel : descuentoHotel) && <div className="mt-2"><EtiquetaDescuentoHotel descuento={comboCot && "descuentoHotel" in comboCot ? comboCot.descuentoHotel : descuentoHotel} /></div>}
+        {combos && comboCot?.promocionHotel && <div className="mt-2" data-testid="promocion-del-combo"><EtiquetaPromocionHotel promocion={comboCot.promocionHotel} /></div>}
         {serviciosGrupo.length > 0 && (
           <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700">
             Este plan incluye {serviciosGrupo.join(", ")} con tarifa por grupo: su valor depende del

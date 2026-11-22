@@ -565,6 +565,8 @@ export type Database = {
           valor_abono: number;
           monto_cop: number | null;
           trm: number | null;
+          /** #126 (migración 312): moneda en que llegó el dinero; USD = dólares recibidos (monto_cop es su equivalente contable); NULL = abono previo, se lee como pesos recibidos. */
+          moneda_pago: string | null;
           tenant: string;
           forma_pago: string | null;
           referencia: string | null;
@@ -581,6 +583,7 @@ export type Database = {
           valor_abono: number;
           monto_cop?: number | null;
           trm?: number | null;
+          moneda_pago?: string | null;
           tenant?: string;
           forma_pago?: string | null;
           referencia?: string | null;
@@ -4786,6 +4789,11 @@ export type Database = {
       p97_dependencias_comision_faltantes: { Args: Record<string, never>; Returns: string | null };
       crear_cotizacion_manual_con_acuerdo: {
         Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json; p_aliado_id: number; p_bnc: number };
+        Returns: number;
+      };
+      // Migración 317 (#48): dinámica B2B normal con precio NETO sellado (aliado por id). SOLO service_role. Errores: `COMPARATIVA_DATOS: …`.
+      crear_cotizacion_manual_neto: {
+        Args: { p_usuario_id: string; p_tenant: string; p_cabecera: Json; p_servicios: Json; p_aliado_id: number; p_reconoce: boolean; p_autorizar: boolean };
         Returns: number;
       };
       // ── Paquete 100 % dinámico (migración 274, #82). Errores: `DIN_82_<X>: …` ─────

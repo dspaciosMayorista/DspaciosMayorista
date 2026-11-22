@@ -1,0 +1,30 @@
+pruebas/bernaloIntegracionGuardWiring.test.ts :: el mensaje de éxito incluye r.aviso cuando viene presente
+pruebas/cableadoPersonasCotizacion42.wiring.test.ts :: workflow endurecido: pull_request, solo lectura, sin secretos ni Supabase remoto, limpieza always()
+pruebas/capturaTarifario40.test.ts :: CE elegido: el contacto se guarda con tipo CE y documento literal; la solicitud sigue
+pruebas/capturaTarifario40.test.ts :: colisión 23505: la solicitud OK, un solo insert, nada se sobrescribe y no se registra ningún error
+pruebas/condicionHotelBookingCarrito.wiring.test.ts :: VistaBooking.tsx (tarjeta de exploración — 'O explora todos los alojamientos'/'Hoteles disponibles'): muestra el badge compacto 'Con condiciones'
+pruebas/convertirCotizacionCarritoBernaloWiring.test.ts :: el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja
+pruebas/cotizacionEdicion39.wiring.test.ts :: pull_request normal, solo lectura, sin secretos, con timeout y limpieza
+pruebas/crmLeads.wiring.test.ts :: crm_lead_actualizar exige el formulario completo antes de bloquear y la app manda esas claves
+pruebas/dinamicoBooking.test.ts :: DinamicoModal muestra el cotizador del carrito sin condicionarlo al acceso (ni aviso de 'sin permiso')
+pruebas/disponibilidadServicios256.test.ts :: persistencia: la composición guardada conserva el desglose por tramos (y se lee de vuelta), con neto = suma
+pruebas/etiquetaDescuentoHotel90.test.ts :: la vitrina con precio base NO la usa
+pruebas/filtrosVistaBookingWiring.test.ts :: las opciones de zona/estrellas del panel salen de recomendados + resto combinados (universoFiltrable) — nunca solo del resto
+pruebas/filtrosVistaBookingWiring.test.ts :: tarjetas filtra los recomendados con filtrarPorFiltros y ordena el resto con ordenarYFiltrarResto, usando el MISMO filtrosVistaEfectivos
+pruebas/hotelModalOrdenSecciones.test.ts :: aparecen en el orden exacto: Salidas < Motor interno < Incluye < Servicios add-on
+pruebas/hotelModalOrdenSecciones.test.ts :: las 4 secciones existen dentro de HotelModal
+pruebas/loginWiring.test.ts :: es Server Component (sin 'use client'), lee QUICK_LOGIN_ENABLED e inactivo de searchParams, y los pasa a LoginClient
+pruebas/medicionFlujoWiring.test.ts :: reservarProgramaInterno: 36 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez
+pruebas/ocupacionBernaloUI3EWiring.test.ts :: Incluye/No incluye y add-ons dependen de LA OFERTA elegida (hotel.paqueteId), nunca de un paqueteId fijo ni de precio/disponibilidad — usan los componentes compartidos SeccionesIncluye/AddonsPaquete
+pruebas/ocupacionBernaloUI3EWiring.test.ts :: ubicación: usa el componente compartido UbicacionHotel, con info?.ubicacion del hotel FÍSICO (nunca de la oferta)
+pruebas/personasConsulta.wiring.test.ts :: el código SQL no usa los helpers globales con deuda ni soy_asesor_del_contrato
+pruebas/personasConsulta.wiring.test.ts :: la consulta es SECURITY DEFINER y solo authenticated la ejecuta
+pruebas/personasConsulta.wiring.test.ts :: las tablas no se conceden a anon ni authenticated
+pruebas/reciclajeContrato.test.ts :: el código de la migración 289 solo emite motivos que la interfaz conoce
+pruebas/suitesPruebas.test.ts :: cada pruebas/*.react.ts está en test:react o test:calendar
+pruebas/tarifarioDetalleWiring.test.ts :: el botón 'Ver opciones' llama abrirHotel (no setAbierto directo, que saltaría el detalle)
+pruebas/tarjetaCompletaBuscarAlojamiento.test.ts :: conserva foto/video, categoría, etiquetas, condición, descripción — usa los componentes compartidos, nunca JSX reinventada
+pruebas/tarjetaCompletaBuscarAlojamiento.test.ts :: conserva foto/video, categoría, etiquetas, condición, descripción — usa los mismos componentes compartidos que Resultado
+pruebas/tarjetaCompletaBuscarAlojamiento.test.ts :: conserva ubicación/mapa vía el componente compartido UbicacionHotel
+pruebas/tarjetaCompletaBuscarAlojamiento.test.ts :: conserva ubicación/mapa vía el componente compartido UbicacionHotel
+pruebas/tarjetaHotelExpandible.test.ts :: UbicacionHotel (mapa) sigue sin cambios — sin control expandible agregado

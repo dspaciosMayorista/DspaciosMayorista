@@ -13,6 +13,10 @@ import { ETIQUETA_MODO_B2B, planDeGrupoB2B, planesDeGruposB2B, type PlanB2BCotiz
 import { convertirCotizacionCarrito } from "../../reservar/actions";
 import { type PasajeroReserva } from "@/lib/reservar/computo";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
+import { estadoFilaConversion, resumenFilaConversion } from "@/lib/reservar/resumenPasajeroConversion";
+import { notaUniverso, puedeAgregarFila, universoDeViajeros } from "@/lib/reservar/universoViajeros";
+import { documentoPasajeroAdmitido, documentoPasajeroDesdeCliente } from "@/lib/personas/tiposDocumento";
+import type { PasajeroAliado } from "@/lib/portal/preparacionContrato";
 import { recalcularVinculosPorEdadPorFila } from "@/lib/reservar/pasajerosFilas";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
@@ -28,7 +32,8 @@ import {
   limpiarResponsablesInvalidosPorContrato,
 } from "@/lib/reservar/carritoAsignaciones";
 
-type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string };
+/** O-3: `tipoDoc` es el que el titular eligió en el checkout (vacío = no eligió). */
+type ClientePrefill = { nombres: string; apellidos: string; numeroDoc: string; tipoDoc?: string };
 type ItemCarritoUI = { hotelNombre: string; destino: string | null; pax: number; fechaIda: string | null; /** Total del ítem en la moneda de la cotización (solo para la vista previa del cobro). */ precio?: number };
 // `hotelIndice`: índice en `items` del hotel al que pertenece el servicio
 // (vínculo ya validado en page.tsx con `resolverVinculosCotizacion`), o
@@ -42,8 +47,10 @@ type TourCarritoUI = { nombre: string; destino: string | null; pax: number; fech
 // pasajeros (igual que CotizacionAcciones) y, si el carrito trae 2+ destinos
 // distintos, deja elegir 1 contrato para todo o 1 contrato por destino.
 export function ConvertirCarritoBtn({
-  id, pax, items, tours, manuales = [], destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null, contratosPorGrupo = {}, recobroUnidades = [],
+  id, pax, items, tours, manuales = [], destinos, cliente, esSuperadmin, asesores, miNombre, miRolVenta, vinculoError: vinculoErrorProp = null, monedaOferta = "COP", b2b = null, b2bError = null, contratosPorGrupo = {}, recobroUnidades = [], pasajerosAliado = [],
 }: {
+  /** O-3: pasajeros adicionales que el ALIADO escribió en su cotización (después del titular). Precargan las filas 2…n sin retipear; lo que no escribió queda vacío (nadie se inventa). */
+  pasajerosAliado?: PasajeroAliado[];
   /** #14-A: recobro de cada hotel (misma posición que `items`) de una cotización INTERNA a cliente final (sin plan B2B): suma al total a cobrar del contrato. Con plan B2B el recobro viene en el plan. */
   recobroUnidades?: number[];
   /** #64: grupos ya convertidos en un intento anterior (destino → contrato). Si el primero ya tiene contrato, el servidor no usa costos manuales y no se piden. */
@@ -96,15 +103,16 @@ export function ConvertirCarritoBtn({
   // se sustituye el máximo por la suma como supuesto silencioso, ambos
   // serían adivinar; lo correcto es que quien convierte declare el universo
   // real.
-  const totalInicial = Math.max(1, pax || 1);
+  const totalInicial = Math.max(1, pax || 1, 1 + pasajerosAliado.length);
   const [paxRows, setPaxRows] = useState<PasajeroReserva[]>(() =>
     Array.from({ length: totalInicial }, (_, i) => ({
-      nombres: i === 0 ? cliente.nombres : "",
-      apellidos: i === 0 ? cliente.apellidos : "",
-      tipoDoc: "CC",
-      numeroDoc: i === 0 ? cliente.numeroDoc : "",
-      fechaNacimiento: "",
-      nacionalidad: "Colombiana",
+      nombres: i === 0 ? cliente.nombres : pasajerosAliado[i - 1]?.nombres ?? "",
+      apellidos: i === 0 ? cliente.apellidos : pasajerosAliado[i - 1]?.apellidos ?? "",
+      // O-3: el titular que el aliado escribió llega como pasajero 1 con SU tipo de documento (antes siempre «CC»), igual que en `CotizacionAcciones`; un tipo que la
+      // reserva no admite para un pasajero (NIT, PPT) deja el documento por capturar (no se inventa). Sin tipo elegido en el checkout queda «CC», como siempre.
+      ...(i === 0 ? documentoPasajeroDesdeCliente(cliente.tipoDoc?.trim() || "CC", cliente.numeroDoc) : { tipoDoc: pasajerosAliado[i - 1]?.tipoDoc || "CC", numeroDoc: pasajerosAliado[i - 1]?.numeroDoc ?? "" }),
+      fechaNacimiento: i === 0 ? "" : pasajerosAliado[i - 1]?.fechaNacimiento ?? "",
+      nacionalidad: (i > 0 && pasajerosAliado[i - 1]?.nacionalidad) || "Colombiana",
       esInfante: false,
     }))
   );
@@ -162,6 +170,13 @@ export function ConvertirCarritoBtn({
   const fechasReferenciaPorFila = paxRows.map((_, i) =>
     fechaContratoDePasajero(i + 1, gruposIndicesUnidades, asignacionesUnidadesPos, unidadesFechas, fechaMasTemprana)
   );
+  // Filas COMPACTAS (resumen + «Editar»): nacen compactas solo las que ya no tienen nada que bloquee la generación; una fila incompleta o inválida nace abierta.
+  // No se auto-compacta mientras se escribe (sería saltar bajo el cursor): solo con «Listo». Alineada por posición con `paxRows`.
+  const contextoFila = (r: PasajeroReserva, i: number) => ({ edad: calcularEdad(r.fechaNacimiento, fechasReferenciaPorFila[i]), esInfante: esInfantePorEdad(r.fechaNacimiento, fechasReferenciaPorFila[i]) });
+  const [compactas, setCompactas] = useState<boolean[]>(() => paxRows.map((r, i) => estadoFilaConversion(r, contextoFila(r, i)).problemas.length === 0));
+  // Universo declarado (ver `universoViajeros`): una sola unidad ⇒ su pax exacto; varias unidades independientes ⇒ AMBIGUO (no se oculta por máximo ni por suma; la suma solo es cota).
+  const universo = universoDeViajeros(pax, [...items.map((it) => ({ pax: it.pax })), ...tours.map((t) => ({ pax: t.pax, vinculada: t.hotelIndice != null }))]);
+  const puedeAgregar = puedeAgregarFila(universo, paxRows.length);
 
   // Recalcula los vínculos INF→responsable con matrices y AGRUPACIÓN dadas —
   // cambiar dónde viaja un pasajero, o el modo de agrupación, cambia SU fecha
@@ -237,6 +252,7 @@ export function ConvertirCarritoBtn({
       nombres: "", apellidos: "", tipoDoc: "CC", numeroDoc: "", fechaNacimiento: "", nacionalidad: "Colombiana", esInfante: false,
     });
     setPaxRows(filas);
+    setCompactas((c) => [...c, false]);
     setAsignaciones(asignacionesPorItem);
     setAsignacionesTours((prev) => prev.map((fila) => [...fila, false]));
   };
@@ -244,6 +260,7 @@ export function ConvertirCarritoBtn({
     if (paxRows.length <= 1) return;
     const { filas, asignacionesPorItem } = quitarPosicionDeUniverso(paxRows, asignaciones, idx);
     setPaxRows(filas);
+    setCompactas((c) => c.filter((_, i) => i !== idx));
     setAsignaciones(asignacionesPorItem);
     setAsignacionesTours((prev) => prev.map((fila) => fila.filter((_, i) => i !== idx)));
   };
@@ -268,9 +285,14 @@ export function ConvertirCarritoBtn({
   };
 
   function generar() {
+    // Lo que bloquea nunca queda escondido: se abren las filas con problemas antes de cualquier mensaje.
+    setCompactas((c) => c.map((v, i) => (v && paxRows[i] && estadoFilaConversion(paxRows[i], contextoFila(paxRows[i], i)).problemas.length > 0 ? false : v)));
     if (vinculoError) { setErr(vinculoError); return; }
     const falta = paxRows.findIndex((p) => !p.nombres.trim() || !p.apellidos.trim());
     if (falta >= 0) { setErr(`Pasajero ${falta + 1}: nombres y apellidos son obligatorios.`); return; }
+    // O-3: la MISMA regla de documento que la función atómica de pasajeros (solo dígitos salvo Pasaporte), comprobada aquí para no llegar al servidor con un documento que rechazaría.
+    const malDoc = paxRows.findIndex((p) => !documentoPasajeroAdmitido(p.tipoDoc, p.numeroDoc));
+    if (malDoc >= 0) { setErr(`Pasajero ${malDoc + 1}: el documento debe ser solo números (excepto Pasaporte).`); return; }
     const menorConCC = paxRows.findIndex((p, i) => {
       const edad = calcularEdad(p.fechaNacimiento, fechasReferenciaPorFila[i]);
       return edad != null && edad < 18 && p.tipoDoc === "CC";
@@ -401,6 +423,12 @@ export function ConvertirCarritoBtn({
                 ))}
               </ul>
             )}
+            {monedaOferta === "USD" && (
+              <p className="mt-1 text-[11px] text-gray-600" data-testid="nota-cobro-usd-trm-por-pago">
+                <b>USD:</b> el principal queda en dólares y cada pago en pesos pide <b>su propia TRM</b> (acredita pesos ÷ la TRM de ese pago); lo cobrado en pesos es el real de cada pago.
+                {" "}<b>COP:</b> el total en pesos se congela con la TRM de cobro de arriba y todos los pagos usan esa misma tasa.
+              </p>
+            )}
             <p className="mt-1 text-[10px] text-gray-400">
               Una sola elección para todos los contratos. La oferta conserva su moneda e importes; solo el total a cobrar se convierte, una vez por contrato y
               redondeado hacia arriba. Es una vista previa: el sistema recalcula y congela el total real al generar, y no se cambia después.
@@ -450,10 +478,13 @@ export function ConvertirCarritoBtn({
                 que el total es el máximo ni la suma de los ítems.
               </p>
             </div>
-            <Button type="button" onClick={agregarPasajero} disabled={pending} className="shrink-0" style={{ backgroundColor: "var(--brand-accent)" }}>
-              + Agregar pasajero
-            </Button>
+            {puedeAgregar && (
+              <Button type="button" onClick={agregarPasajero} disabled={pending} className="shrink-0" style={{ backgroundColor: "var(--brand-accent)" }} data-testid="agregar-pasajero">
+                + Agregar pasajero
+              </Button>
+            )}
           </div>
+          {notaUniverso(universo, paxRows.length) && <p className="text-xs text-gray-500" data-testid="nota-universo">{notaUniverso(universo, paxRows.length)}</p>}
           {(() => {
             // Edad REAL por fecha de nacimiento — cada fila contra SU PROPIA
             // fecha de referencia (`fechasReferenciaPorFila`, B13 revisita
@@ -464,8 +495,28 @@ export function ConvertirCarritoBtn({
             // recalculó por fecha — solo queda el criterio derivado, real.
             const edadesReales = paxRows.map((p, i) => calcularEdad(p.fechaNacimiento, fechasReferenciaPorFila[i]));
             const esInfanteRealRow = paxRows.map((p, i) => esInfantePorEdad(p.fechaNacimiento, fechasReferenciaPorFila[i]));
-            return paxRows.map((p, i) => (
-              <div key={i} className="rounded-lg bg-gray-50 p-2">
+            return paxRows.map((p, i) => {
+              const ctx = { edad: edadesReales[i], esInfante: esInfanteRealRow[i] };
+              const est = estadoFilaConversion(p, ctx);
+              if (compactas[i] && est.problemas.length === 0) {
+                const resp = p.responsableIndex != null ? paxRows[p.responsableIndex] : null;
+                const res = resumenFilaConversion(p, ctx, resp ? `${resp.nombres} ${resp.apellidos}`.trim() || `Pasajero ${p.responsableIndex! + 1}` : null);
+                return (
+                  <div key={i} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-lg bg-gray-50 px-2 py-1.5" data-testid="pasajero-resumen">
+                    <p className="min-w-0 text-xs">
+                      <span className="font-semibold text-gray-600">Pasajero {i + 1}</span> <span className="text-gray-800">{res.titulo}</span>
+                      {res.detalle && <span className="text-gray-500"> · {res.detalle}</span>}
+                      {est.faltan.length > 0 && <span className="ml-1 text-amber-700" data-testid="pasajero-faltan">Faltan: {est.faltan.join(", ")}</span>}
+                    </p>
+                    <span className="flex shrink-0 items-center gap-3">
+                      <button type="button" onClick={() => setCompactas((c) => c.map((v, j) => (j === i ? false : v)))} aria-label={`Editar pasajero ${i + 1}`} data-testid="editar-pasajero" className="text-[11px] font-medium text-[#1D7C9A] hover:underline">Editar</button>
+                      <button type="button" onClick={() => quitarPasajero(i)} disabled={paxRows.length <= 1} aria-label={`Quitar pasajero ${i + 1}`} className="text-[11px] font-medium text-red-500 disabled:cursor-not-allowed disabled:text-gray-300">Quitar</button>
+                    </span>
+                  </div>
+                );
+              }
+              return (
+              <div key={i} className="rounded-lg bg-gray-50 p-2" data-testid="pasajero-fila">
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="w-32"><label className="text-[11px] text-gray-500">Nombres</label><Input value={p.nombres} onChange={(e) => setRow(i, "nombres", e.target.value)} /></div>
                   <div className="w-32"><label className="text-[11px] text-gray-500">Apellidos</label><Input value={p.apellidos} onChange={(e) => setRow(i, "apellidos", e.target.value)} /></div>
@@ -499,6 +550,9 @@ export function ConvertirCarritoBtn({
                   <span className="pb-2 text-[11px] text-gray-400">
                     {edadesReales[i] == null ? "—" : `${esInfanteRealRow[i] ? "Infante" : edadesReales[i]! < 12 ? "Niño" : "Adulto"} · ${edadesReales[i]}a`}
                   </span>
+                  {est.problemas.length === 0 && (
+                    <button type="button" onClick={() => setCompactas((c) => c.map((v, j) => (j === i ? true : v)))} data-testid="compactar-pasajero" className="pb-2 text-[11px] font-medium text-[#1D7C9A] hover:underline">Listo</button>
+                  )}
                   <button type="button" onClick={() => quitarPasajero(i)} disabled={paxRows.length <= 1}
                     className="pb-2 text-[11px] font-medium text-red-500 disabled:cursor-not-allowed disabled:text-gray-300">
                     Quitar
@@ -539,7 +593,8 @@ export function ConvertirCarritoBtn({
                   );
                 })()}
               </div>
-            ));
+              );
+            });
           })()}
 
           {items.length + tours.length > 1 && (

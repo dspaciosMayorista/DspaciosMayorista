@@ -67,7 +67,8 @@ describe("dónde se muestra", () => {
   });
   test("tarjeta de búsqueda por fechas: la etiqueta va con las demás etiquetas del hotel y sale de r.descuentoHotel", () => {
     const c = leer("app/tarifario/BuscadorBooking.tsx");
-    assert.ok(c.includes("<EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : r.descuentoHotel} />"), "tras revalidar, la etiqueta es la de la revalidación (par con el precio nuevo)");
+    // #126-D: la etiqueta es la del combo SELECCIONADO (`combo.descuento`); `r.descuentoHotel` (el del más barato) solo sirve de respaldo cuando el combo no trae el campo.
+    assert.ok(c.includes("<EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : combo && combo.descuento !== undefined ? combo.descuento : r.descuentoHotel} />"), "tras revalidar, la etiqueta es la de la revalidación (par con el precio nuevo)");
     assert.ok(c.indexOf("<EtiquetasHotel adultsOnly") < c.indexOf("<EtiquetaDescuentoHotel descuento={tarifaHotel"), "va con las demás etiquetas del hotel");
     // Entrega 5: la etiqueta de la búsqueda sale de descuentoMostrado (por acomodación de la composición consultada si difiere).
     // #102 (integración con main): la evaluación por combo vive en el motor compartido; cotizar.ts solo toma el descuento del mejor combo.

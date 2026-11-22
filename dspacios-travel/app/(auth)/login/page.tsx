@@ -12,7 +12,7 @@ import { LoginClient } from "./LoginClient";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ inactivo?: string; sinperfil?: string }>;
+  searchParams: Promise<{ inactivo?: string; sinperfil?: string; clave?: string }>;
 }) {
   const sp = await searchParams;
   return (
@@ -20,6 +20,7 @@ export default async function LoginPage({
       quickLoginEnabled={process.env.QUICK_LOGIN_ENABLED === "1"}
       inactivoInicial={sp.inactivo === "1"}
       sinPerfilInicial={sp.sinperfil === "1"}
+      claveActualizadaInicial={sp.clave === "1"}
     />
   );
 }

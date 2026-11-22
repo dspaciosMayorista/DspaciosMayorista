@@ -31,7 +31,7 @@ function cliente(tablas: Tablas) {
     const filtros: ((r: Fila) => boolean)[] = [];
     let uno = false;
     const b: Record<string, unknown> = {};
-    b.select = () => b; b.order = () => b; b.range = () => b; b.limit = () => b; b.not = () => b;
+    b.select = () => b; b.gte = () => b; b.order = () => b; b.range = () => b; b.limit = () => b; b.not = () => b;
     b.eq = (c: string, v: unknown) => { filtros.push((r) => r[c] === v); return b; };
     b.in = (c: string, v: unknown[]) => { filtros.push((r) => v.includes(r[c])); return b; };
     b.is = (c: string, v: unknown) => { filtros.push((r) => (r[c] ?? null) === v); return b; };
@@ -55,8 +55,8 @@ function cliente(tablas: Tablas) {
       }),
     });
     b.then = (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
-      if (tablas[tabla] === undefined) throw new Error(`fixture incompleto: falta la tabla "${tabla}"`);
-      const filas = tablas[tabla].filter((r) => filtros.every((f) => f(r)));
+      if (tablas[tabla] === undefined && tabla !== "hotel_blackouts") throw new Error(`fixture incompleto: falta la tabla "${tabla}"`);
+      const filas = (tablas[tabla] ?? []).filter((r) => filtros.every((f) => f(r)));
       return Promise.resolve({ data: uno ? (filas[0] ?? null) : filas, error: null }).then(res, rej);
     };
     return b;

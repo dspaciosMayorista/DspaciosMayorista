@@ -47,16 +47,21 @@ export function textoNinoGratis(l: LineaDesglose): string | null {
   const promo = b.promociones.length ? ` · ${b.promociones.join(", ")}` : "";
   return b.gratisTotal
     ? `Niño gratis${promo}`
-    : `Alojamiento gratis solo en las noches de la promoción${promo}; las demás noches y los servicios o cargos retenidos se pagan`;
+    : `El alojamiento de este niño es gratis solo en las noches de la promoción${promo}; las demás noches y los servicios o cargos retenidos se pagan`;
 }
 
-/** Nota bajo la línea del niño: «Tarifa regular» tachada + explicación. La tarifa a pagar la muestra la propia línea. */
-export function NotaNinoGratis({ l, moneda, className = "" }: { l: LineaDesglose; moneda: string; className?: string }) {
+/**
+ * Nota del niño con beneficio. Nombra al pasajero/clase al que pertenece (p. ej. «Niño 1 · 8 años»), pone juntas la tarifa regular tachada y lo que de verdad paga
+ * (la misma cifra de su línea) y explica el alcance sin sugerir que toda la estadía —ni otros viajeros— sea gratis. `conPasajero={false}` cuando la etiqueta de la clase
+ * ya está en la línea inmediatamente anterior (vista tabla).
+ */
+export function NotaNinoGratis({ l, moneda, className = "", conPasajero = true }: { l: LineaDesglose; moneda: string; className?: string; conPasajero?: boolean }) {
   const b = beneficioNino(l);
   if (!b) return null;
   return (
-    <p className={`text-[10px] leading-snug text-emerald-700 ${className}`} data-nino-gratis>
-      Tarifa regular <s className="tabular-nums text-slate-500" data-tarifa-regular>{formatMoneda(b.regular, moneda)}</s> · {textoNinoGratis(l)}
+    <p className={`text-[10px] leading-snug text-emerald-800 ${className}`} data-nino-gratis>
+      {conPasajero && <><b className="font-semibold" data-nino-gratis-pasajero>{etiquetaLinea(l)}</b>: </>}
+      tarifa regular <s className="tabular-nums text-slate-500" data-tarifa-regular>{formatMoneda(b.regular, moneda)}</s> · a pagar <b className="tabular-nums" data-tarifa-a-pagar>{formatMoneda(l.tarifa, moneda)}</b> c/u · {textoNinoGratis(l)}
     </p>
   );
 }
@@ -78,13 +83,13 @@ export function DesgloseTarifas({ combo, moneda, noches, etiquetaBase, compacto 
       </p>
       <dl className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
         {lineas.map((l, i) => (
-          <div key={i} className="contents" data-clase={l.clase}>
+          <div key={i} className={beneficioNino(l) ? "col-span-3 grid grid-cols-subgrid items-baseline gap-y-0.5 rounded-md border-l-2 border-emerald-500 bg-emerald-50/70 py-1 pl-2 pr-1" : "contents"} data-clase={l.clase} data-con-beneficio={beneficioNino(l) ? "" : undefined}>
             <dt className="min-w-0 truncate" title={etiquetaLinea(l)}>
               {l.clase !== "servicio_grupo" && <span className="tabular-nums text-slate-400">{l.cantidad}× </span>}{etiquetaLinea(l)}
             </dt>
             <dd className="text-right tabular-nums text-slate-500">{l.clase === "servicio_grupo" ? "" : `${formatMoneda(l.tarifa, moneda)} c/u`}</dd>
             <dd className="text-right font-medium tabular-nums text-slate-700">{formatMoneda(l.subtotal, moneda)}</dd>
-            {beneficioNino(l) && <dd className="col-span-3 -mt-0.5"><NotaNinoGratis l={l} moneda={moneda} /></dd>}
+            {beneficioNino(l) && <dd className="col-span-3"><NotaNinoGratis l={l} moneda={moneda} /></dd>}
           </div>
         ))}
         <dt className="col-span-2 border-t border-slate-200 pt-1 font-semibold text-slate-800">Total de la reserva</dt>

@@ -43,3 +43,27 @@ export function tipoDocumentoParaVenta(tipo: unknown, numero: unknown): TipoDocP
   const codigo = t === "PASAPORTE" ? "PAS" : t;
   return (TIPOS_DOC_PERSONA as readonly string[]).includes(codigo) ? (codigo as TipoDocPersona) : null;
 }
+
+/**
+ * O-3: número de un PASAJERO tal como lo exige la función atómica de pasajeros (167/168): tipo del catálogo de pasajeros, solo dígitos salvo Pasaporte
+ * (letras y números), hasta 30 caracteres. Es LA regla de la conversión: la usan también la captura del aliado y la conversión en pantalla para que
+ * lo que se acepta al escribir sea lo que luego se acepta al convertir. Vacío = aún sin número (cada pantalla decide si lo exige).
+ */
+export function documentoPasajeroAdmitido(tipo: string, numero: string): boolean {
+  const n = numero.trim();
+  if (n === "") return true;
+  if (!(TIPOS_DOC_PASAJERO as readonly string[]).includes(tipo) || n.length > 30) return false;
+  return tipo === "PAS" ? /^[A-Za-z0-9]+$/.test(n) : /^\d+$/.test(n);
+}
+
+/**
+ * O-3: error del documento del TITULAR al capturarlo (checkout), con la misma gramática que se aplicará al convertir: CC/CE/TI/RC/NIT solo dígitos; PAS y PPT admiten letras.
+ * Un número con letras SIN tipo elegido es ambiguo (en la conversión nacería como «CC» y se rechazaría): se pide el tipo en vez de adivinar. null = válido.
+ */
+export function errorDocumentoTitular(tipo: string, numero: string): string | null {
+  const n = numero.trim();
+  if (n === "") return null;
+  if (n.length > 30) return "El número de documento es demasiado largo.";
+  if (tipo.trim() === "") return /^\d+$/.test(n) ? null : "Elige el tipo de documento: un número con letras solo es válido como Pasaporte o PPT.";
+  return documentoClienteAdmitido(tipo, n) ? null : "El número de documento debe ser solo números (excepto Pasaporte y PPT).";
+}

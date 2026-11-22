@@ -14,6 +14,8 @@ import { formatFechaLarga } from "@/lib/utils";
 import { formatoExacto } from "@/lib/contrato/repartoTarifa";
 import { bloquesCondiciones, condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel } from "@/lib/cotizacion/comparativa";
 import type { ResumenHotelUI } from "@/lib/cotizacion/comparativaAcciones";
+import type { LogoAliadoDoc } from "@/lib/aliados/logo";
+import { EmisorLinea, LogoAliado } from "@/components/cotizacion/MarcaAliado";
 import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
 
 const PRIMARY = COLOR_DOCUMENTO;
@@ -36,8 +38,10 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }: {
+export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad, logoAliado = null }: {
   madre: MadreHoja; grupos: GrupoHotel[]; resumenes: Record<string, ResumenHotelUI>; vencida: boolean; identidad: IdentidadHoja;
+  /** #32: logo del aliado que presenta la comparativa (marca principal); el emisor legal no cambia. Ausente = hoja de siempre. */
+  logoAliado?: LogoAliadoDoc | null;
 }) {
   const minorista = madre.tenant === "minorista";
   // #49: identidad SOLO de la fila de la agencia dueña (la ruta ya la acreditó). Sin fallback: `EMPRESA` es la identidad de Minorista, no de Mayorista.
@@ -102,8 +106,12 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
   return (
     <div className="contrato-doc mx-auto max-w-3xl bg-white text-gray-800" data-testid="comparativa-hoja">
       <header className="flex flex-col gap-3 rounded-t-xl px-5 py-5 text-white sm:flex-row sm:items-start sm:justify-between sm:gap-4 md:px-8 md:py-6 print:py-3" style={{ backgroundColor: PRIMARY }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={minorista ? "/marca/logo-minorista-white.png" : "/marca/logo-white.png"} alt={minorista ? "Marca de la agencia" : "D'spacios Travel — Mayorista de Turismo"} className="h-12 w-auto self-start print:h-10" />
+        {logoAliado ? (
+          <LogoAliado logo={logoAliado} className="h-12 print:h-10" />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={minorista ? "/marca/logo-minorista-white.png" : "/marca/logo-white.png"} alt={minorista ? "Marca de la agencia" : "D'spacios Travel — Mayorista de Turismo"} className="h-12 w-auto self-start print:h-10" />
+        )}
         <div className="sm:text-center">
           <div className="flex items-center gap-1.5 text-base font-semibold sm:justify-center"><GitCompareArrows size={16} aria-hidden /> COTIZACIÓN COMPARATIVA</div>
           <div className="mt-1 text-xs opacity-90">Cotización #: {madre.codigo}</div>
@@ -117,6 +125,7 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad }
           {rnt && <div className="mt-1">RNT {rnt}</div>}
         </div>
       </header>
+      {logoAliado && <EmisorLinea razonSocial={razon} nit={nit} rnt={rnt} aliado={logoAliado.nombre} />}
 
       <div className={"border-b px-5 py-2 text-center text-xs font-semibold md:px-8 " + (vencida ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-700")}>
         {vencida

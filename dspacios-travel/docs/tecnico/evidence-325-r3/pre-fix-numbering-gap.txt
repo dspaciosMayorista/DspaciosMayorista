@@ -1,0 +1,16 @@
+# Pre-fix state (build 4-dRjgtyvXMlmAEXhvfUy, before the pre-numbering guardian check), disposable copy rev_verif_int_o3b
+# DTM contracts created by the journey (sections X, W, Y):
+DTM-0001 | Marta Ejemplo COP
+DTM-0002 | Laura Ejemplo Manual
+DTM-0003 | Elena Ejemplo 125 PRE BF
+DTM-0004 | Mateo Ejemplo 125 sucesivas
+DTM-0005 | Julián Ejemplo USD
+DTM-0006 | Nora Prueba Menores
+DTM-0007 | Sofía Ejemplo 125 abierta
+DTM-0009 | Sofía Ejemplo 125 abierta
+# contrato_seq_mayorista last_value (consecutive consumed):
+9
+# DTM-0008 exists?
+0
+# numeros_dtm_liberados rows:
+0

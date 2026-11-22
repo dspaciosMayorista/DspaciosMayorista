@@ -4,7 +4,7 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { cargarEstadoCuenta, numeroRecibo } from "@/lib/cuenta/estado";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
 export const dynamic = "force-dynamic";
@@ -27,15 +27,15 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ n
 
   return (
     <div className="min-h-screen bg-gray-100 py-6">
-      <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
+      <div className={`mx-auto mb-4 flex ${ec.cobradoCop != null ? "max-w-4xl" : "max-w-3xl"} items-center justify-between px-4 print:hidden`}>
         <Link href={volver} className="text-sm text-gray-500 hover:text-gray-800">← Volver</Link>
         <PrintButton />
       </div>
-      <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
-        <div className="doc-print rounded-xl bg-white p-8 shadow-sm print:rounded-none print:shadow-none">
+      <div className={`mx-auto ${ec.cobradoCop != null ? "max-w-4xl" : "max-w-3xl"} px-4 print:max-w-none print:px-0`}>
+        <div className="doc-print rounded-xl bg-white p-4 shadow-sm sm:p-8 print:rounded-none print:p-8 print:shadow-none">
           <DocHeader tenant={ec.tenant} />
 
-          <div className="mt-5 flex items-end justify-between">
+          <div className="mt-5 flex items-end justify-between gap-3">
             <div>
               <h1 className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>ESTADO DE CUENTA</h1>
               <p className="mt-0.5 text-sm text-gray-500">Generado el {formatFechaLarga(hoy)}</p>
@@ -63,34 +63,43 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ n
               Aún no hay pagos registrados.
             </p>
           ) : (
-            <div className="overflow-hidden rounded-lg border border-gray-200">
-              <table className="w-full text-sm">
+            <div className="overflow-x-auto rounded-lg border border-gray-200 print:overflow-visible" data-testid="movimientos-estado-cuenta">
+              <table className={`w-full text-xs sm:text-sm ${ec.cobradoCop != null ? "sm:min-w-[700px]" : "sm:min-w-[560px]"} print:min-w-0`}>
                 <thead>
                   <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
-                    <th className="px-3 py-2">Fecha</th>
-                    <th className="px-3 py-2">Recibo</th>
-                    <th className="px-3 py-2">Forma</th>
-                    <th className="px-3 py-2">Referencia</th>
-                    <th className="px-3 py-2 text-right">Abono</th>
-                    <th className="px-3 py-2 text-right">Saldo</th>
+                    <th className="px-2 py-2 sm:px-3">Fecha</th>
+                    <th className="hidden px-3 py-2 sm:table-cell print:table-cell">Recibo</th>
+                    <th className="hidden px-3 py-2 sm:table-cell print:table-cell">Forma</th>
+                    <th className="hidden px-3 py-2 sm:table-cell print:table-cell">Referencia</th>
+                    {ec.cobradoCop != null && <th className="px-2 py-2 text-right sm:px-3">Pagado (COP)</th>}
+                    {ec.cobradoCop != null && <th className="hidden px-3 py-2 text-right sm:table-cell print:table-cell">TRM del pago</th>}
+                    <th className="px-2 py-2 text-right sm:px-3">Abono</th>
+                    <th className="px-2 py-2 text-right sm:px-3">Saldo</th>
                   </tr>
                 </thead>
                 <tbody>
                   {ec.abonos.map((a) => (
                     <tr key={a.id} className="border-t border-gray-100">
-                      <td className="px-3 py-2 text-gray-600">{formatFechaLarga(a.fecha_abono)}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-gray-500">{numeroRecibo(a.id)}</td>
-                      <td className="px-3 py-2 text-gray-600">{a.forma_pago ?? "—"}</td>
-                      <td className="px-3 py-2 text-gray-500">{a.referencia ?? "—"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMoneda(a.valor_abono, ec.moneda)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMoneda(a.saldoTras, ec.moneda)}</td>
+                      <td className="px-2 py-2 text-gray-600 sm:px-3">{formatFechaLarga(a.fecha_abono)}</td>
+                      <td className="hidden px-3 py-2 font-mono text-xs text-gray-500 sm:table-cell print:table-cell">{numeroRecibo(a.id)}</td>
+                      <td className="hidden px-3 py-2 text-gray-600 sm:table-cell print:table-cell">{a.forma_pago ?? "—"}</td>
+                      <td className="hidden px-3 py-2 text-gray-500 sm:table-cell print:table-cell">{a.referencia ?? "—"}</td>
+                      {ec.cobradoCop != null && <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3" data-testid="pago-cop">{a.moneda_pago === "USD"
+                        ? <span data-testid="pago-usd-recibido" title="Se recibieron dólares; el valor en pesos es solo el equivalente contable a la TRM del pago"><span className="block text-gray-400">Recibido en USD</span><span className="block text-[10px] text-gray-400">equiv. contable {a.monto_cop != null ? formatCOP(a.monto_cop) : "—"}</span></span>
+                        : (a.monto_cop != null ? formatCOP(a.monto_cop) : "—")}{a.trm != null && <span className="block text-[10px] text-gray-400 sm:hidden print:hidden" data-testid="pago-trm-movil">TRM {formatCOP(a.trm)}</span>}</td>}
+                      {ec.cobradoCop != null && <td className="hidden whitespace-nowrap px-3 py-2 text-right tabular-nums text-gray-500 sm:table-cell print:table-cell" data-testid="pago-trm">{a.trm != null ? formatCOP(a.trm) : "—"}</td>}
+                      <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-700 sm:px-3">{formatMoneda(a.valor_abono, ec.moneda)}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-500 sm:px-3">{formatMoneda(a.saldoTras, ec.moneda)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
-                    <td className="px-3 py-2 text-gray-600" colSpan={4}>Total abonado</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-800">{formatMoneda(ec.pagado, ec.moneda)}</td>
+                    <td className="px-3 py-2 text-gray-600 sm:hidden print:hidden">Total abonado</td>
+                    <td className="hidden px-3 py-2 text-gray-600 sm:table-cell print:table-cell" colSpan={4}>Total abonado</td>
+                    {ec.cobradoCop != null && <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-800 sm:px-3" data-testid="total-cobrado-cop">{formatCOP(ec.cobradoCop)}</td>}
+                    {ec.cobradoCop != null && <td className="hidden px-3 py-2 sm:table-cell print:table-cell"></td>}
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-800 sm:px-3">{formatMoneda(ec.pagado, ec.moneda)}</td>
                     <td className="px-3 py-2"></td>
                   </tr>
                 </tfoot>
@@ -98,6 +107,11 @@ export default async function EstadoCuentaPage({ params }: { params: Promise<{ n
             </div>
           )}
 
+          {ec.recibidoUsd != null && ec.recibidoUsd > 0 && (
+            <p data-testid="nota-usd-recibidos" className="mt-2 text-[11px] text-gray-500">
+              Incluye {formatMoneda(ec.recibidoUsd, "USD")} recibidos en dólares (equivalente contable en pesos {formatCOP(ec.equivalenteContableCop ?? 0)} a la TRM de cada pago). «Pagado (COP)» suma solo los pesos efectivamente recibidos.
+            </p>
+          )}
           {/* Saldo actual */}
           <div className="mt-5 flex items-center justify-between rounded-lg px-4 py-3"
             style={{ backgroundColor: ec.saldo > 0 ? "rgba(192,57,43,0.06)" : "rgba(102,181,150,0.12)" }}>

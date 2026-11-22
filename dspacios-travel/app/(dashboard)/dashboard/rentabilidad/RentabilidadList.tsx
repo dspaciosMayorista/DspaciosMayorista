@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { formatCOP, formatUSD } from "@/lib/utils";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
+import { AVISO_COP_PROVISIONAL } from "@/lib/finanzas/cobroUsdReporte";
 
 export type RentRow = {
   numero_contrato: string;
@@ -35,6 +36,7 @@ export type RentRow = {
   moneda?: string;
   pvpUsd?: number;
   trm?: number;
+  copProvisional?: boolean;
   // Facturación configurada (Contabilidad): split IRT / Ingreso propio (en COP).
   facturacion?: { irt: number; ingresoPropio: number; exento: number };
 };
@@ -199,7 +201,7 @@ function Fila({ r, tasas }: { r: RentRow; tasas?: Tasas }) {
         </td>
         <td className="px-2 py-2.5 text-gray-700" data-label="Cliente">{r.cliente ?? "—"}</td>
         <td className="px-2 py-2.5 text-gray-500" data-label="Asesor">{r.asesor ?? "—"}</td>
-        <td className="px-2 py-2.5 text-right tabular-nums" data-label="Ingreso">{formatCOP(r.ingreso)}</td>
+        <td className="px-2 py-2.5 text-right tabular-nums" data-label="Ingreso">{formatCOP(r.ingreso)}{r.copProvisional && <span data-testid="ingreso-provisional" title={AVISO_COP_PROVISIONAL} className="block text-[10px] font-medium text-amber-700">provisional (saldo USD abierto)</span>}</td>
         <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="Costo">{formatCOP(r.costoNeto)}</td>
         <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="Comisiones">{formatCOP(r.comB2B + r.comAsesor)}</td>
         <td className="px-2 py-2.5 text-right tabular-nums text-gray-500" data-label="Provisiones">{formatCOP(r.totalProvisiones)}</td>
@@ -222,6 +224,7 @@ function Fila({ r, tasas }: { r: RentRow; tasas?: Tasas }) {
               <p className="mb-3 rounded-lg border border-[#26BBD9]/30 bg-[#26BBD9]/5 px-3 py-2 text-xs text-gray-600">
                 Contrato en <b>USD</b>: PVP <b>{formatUSD(r.pvpUsd ?? 0)}</b> · convertido a COP a la TRM promedio{" "}
                 <b>{r.trm ? formatCOP(r.trm) : "—"}</b> {r.trm ? `(= ${formatCOP(r.ingreso + r.ivaGenerado)} aprox.)` : ""}. Las cifras de abajo están en pesos.
+                {r.copProvisional && <span data-testid="cop-provisional" className="mt-1 block font-medium text-amber-700">{AVISO_COP_PROVISIONAL}</span>}
               </p>
             )}
             {r.facturacion && (

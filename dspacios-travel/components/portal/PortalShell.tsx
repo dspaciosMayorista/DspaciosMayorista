@@ -1,18 +1,19 @@
 import Link from "next/link";
 import Image from "next/image";
-import { CreditCard, FileText, House, ClipboardList, ReceiptText, Wallet, Users } from "lucide-react";
+import { CreditCard, FileText, House, ClipboardList, ReceiptText, Wallet, Users, KeyRound, ContactRound } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
 import { CampanaAvisos } from "@/components/avisos/CampanaAvisos";
 import s from "./vidrio.module.css";
 
-export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "cartera" | "documentos" | "agentes" | "perfil";
+export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "clientes" | "cartera" | "documentos" | "agentes" | "perfil";
 
 const ICONO = { size: 20, "aria-hidden": true } as const;
 const PESTANAS: { id: PestanaPortal; href: string; label: string; corto: string; icono: React.ReactNode }[] = [
   { id: "inicio", href: "/portal/b2b", label: "Inicio", corto: "Inicio", icono: <House {...ICONO} /> },
   { id: "cotizaciones", href: "/portal/b2b/cotizaciones", label: "Cotizaciones", corto: "Cotiz.", icono: <ClipboardList {...ICONO} /> },
   { id: "ventas", href: "/portal/b2b/ventas", label: "Mis ventas", corto: "Ventas", icono: <ReceiptText {...ICONO} /> },
+  { id: "clientes", href: "/portal/b2b/clientes", label: "Mis clientes", corto: "Clientes", icono: <ContactRound {...ICONO} /> },
   { id: "cartera", href: "/portal/b2b/cartera", label: "Cartera", corto: "Cartera", icono: <Wallet {...ICONO} /> },
   { id: "documentos", href: "/portal/b2b/documentos", label: "Documentos", corto: "Docs.", icono: <FileText {...ICONO} /> },
 ];
@@ -103,6 +104,11 @@ export function PortalShell({ children, nombre, rol, detalle, activa, mostrarAge
                   </a>
                 )}
                 {activa && <CampanaAvisos />}
+                {activa && (
+                  <Link href="/cuenta/contrasena" className={s.btnVidrio}>
+                    <KeyRound aria-hidden size={18} /> Contraseña
+                  </Link>
+                )}
                 <LogoutButton className={s.btnVidrio} />
                 {cta}
               </div>

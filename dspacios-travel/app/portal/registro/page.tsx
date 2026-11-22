@@ -4,7 +4,8 @@ import { RegistroForm } from "./RegistroForm";
 
 export const dynamic = "force-dynamic";
 
-export default function RegistroB2BPage() {
+export default async function RegistroB2BPage({ searchParams }: { searchParams: Promise<{ retomar?: string }> }) {
+  const sp = await searchParams;
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-brand-gradient px-6 py-8 text-white">
@@ -16,7 +17,7 @@ export default function RegistroB2BPage() {
       </header>
       <main className="mx-auto max-w-2xl px-6 py-8">
         <div className="rounded-xl border border-gray-200 bg-white p-6">
-          <RegistroForm />
+          <RegistroForm retomar={sp.retomar === "1"} />
         </div>
       </main>
     </div>

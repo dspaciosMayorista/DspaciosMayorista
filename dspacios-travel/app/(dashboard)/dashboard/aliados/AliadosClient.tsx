@@ -3,7 +3,10 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { crearAliado, actualizarAliado, eliminarAliado } from "./actions";
+import { crearAliado, actualizarAliado, eliminarAliado, historialCambiosAliado } from "./actions";
+import type { LineaHistorial } from "@/lib/aliados/historial";
+import { CorreccionAliado } from "./CorreccionAliado";
+import { LogoAliadoInterno } from "@/components/aliados/LogoAliadoInterno";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 
@@ -20,8 +23,8 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
 export function AliadosClient({
-  aliados, defAgencia, defFreelance,
-}: { aliados: Aliado[]; defAgencia: number; defFreelance: number }) {
+  aliados, defAgencia, defFreelance, puedeLogo = false,
+}: { aliados: Aliado[]; defAgencia: number; defFreelance: number; puedeLogo?: boolean }) {
   const [tipo, setTipo] = useState<"agencia" | "freelance">("agencia");
   const [nombre, setNombre] = useState("");
   const [tipoDoc, setTipoDoc] = useState("NIT");
@@ -114,7 +117,7 @@ export function AliadosClient({
               <th className="px-3 py-2 text-right">% comisión</th><th className="px-3 py-2 text-center">Retención</th>
               <th className="px-3 py-2 text-right">% ret.</th><th className="px-3 py-2 text-center">Activo</th><th className="px-3 py-2">Acciones</th>
             </tr></thead>
-            <tbody>{aliados.map((a) => <Row key={a.id} a={a} defAgencia={defAgencia} defFreelance={defFreelance} />)}</tbody>
+            <tbody>{aliados.map((a) => <Row key={a.id} a={a} defAgencia={defAgencia} defFreelance={defFreelance} puedeLogo={puedeLogo} />)}</tbody>
           </table>
         </ResponsiveTableShell>
       )}
@@ -122,7 +125,7 @@ export function AliadosClient({
   );
 }
 
-function Row({ a, defAgencia, defFreelance }: { a: Aliado; defAgencia: number; defFreelance: number }) {
+function Row({ a, defAgencia, defFreelance, puedeLogo }: { a: Aliado; defAgencia: number; defFreelance: number; puedeLogo: boolean }) {
   const def = (a.tipo === "freelance" ? defFreelance : defAgencia) * 100;
   const [pct, setPct] = useState(a.pct_comision == null ? "" : String((a.pct_comision * 100)));
   const [ret, setRet] = useState(a.aplica_retencion);
@@ -167,6 +170,9 @@ function Row({ a, defAgencia, defFreelance }: { a: Aliado; defAgencia: number; d
         <tr className="border-t border-gray-50 bg-gray-50/60">
           <td colSpan={8} className="px-4 py-3">
             <DatosPago a={a} />
+            <CorreccionAliado a={a} />
+            {puedeLogo && <LogoAliadoInterno aliadoId={a.id} nombre={a.nombre} />}
+            <HistorialAliado id={a.id} />
           </td>
         </tr>
       )}
@@ -212,6 +218,52 @@ function DatosPago({ a }: { a: Aliado }) {
         </Button>
         {msg && <span className="text-xs text-gray-500">{msg}</span>}
       </div>
+    </div>
+  );
+}
+
+// #25 — Historial de cambios de la ficha (solo al pedirlo: una lectura acotada). Muestra quién, cuándo, desde dónde (portal del aliado o interno) y qué campos.
+function HistorialAliado({ id }: { id: number }) {
+  const [estado, setEstado] = useState<"idle" | "cargando" | "listo" | "error">("idle");
+  const [lineas, setLineas] = useState<LineaHistorial[]>([]);
+  const [msg, setMsg] = useState("");
+  async function cargar() {
+    setEstado("cargando"); setMsg("");
+    const r = await historialCambiosAliado(id);
+    if (r.ok) { setLineas(r.lineas); setEstado("listo"); } else { setMsg(r.error); setEstado("error"); }
+  }
+  return (
+    <div className="mt-4 border-t border-gray-200 pt-3">
+      <div className="flex items-center gap-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">Historial de cambios</p>
+        {estado !== "listo" && (
+          <button type="button" onClick={cargar} disabled={estado === "cargando"} className="text-xs font-medium text-[#1D7C9A] hover:underline disabled:opacity-50">
+            {estado === "cargando" ? "Cargando…" : "Ver historial"}
+          </button>
+        )}
+      </div>
+      {estado === "error" && <p className="mt-2 text-xs text-amber-700" role="alert">{msg}</p>}
+      {estado === "listo" && (lineas.length === 0
+        ? <p className="mt-2 text-xs text-gray-500">Sin cambios registrados para esta ficha.</p>
+        : (
+          <ol className="mt-2 space-y-2" aria-label="Historial de cambios">
+            {lineas.map((l) => (
+              <li key={l.id} className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="font-semibold">{l.accion}</span>
+                  <span className="text-gray-500">{new Date(l.fecha).toLocaleString("es-CO", { timeZone: "America/Bogota", dateStyle: "medium", timeStyle: "short" })}</span>
+                  <span>· {l.actor}{l.rol ? ` (${l.rol})` : ""}</span>
+                  {l.origen === "portal" && <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">Desde el portal del aliado</span>}
+                </div>
+                {l.cambios.length > 0 && (
+                  <ul className="mt-1 space-y-0.5">
+                    {l.cambios.map((c) => <li key={c.campo}><span className="font-medium">{c.campo}:</span> <span className="text-gray-500">{c.antes}</span> → <span>{c.despues}</span></li>)}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ol>
+        ))}
     </div>
   );
 }

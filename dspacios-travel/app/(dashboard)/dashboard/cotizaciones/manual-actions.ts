@@ -79,13 +79,24 @@ export async function crearCotizacionManual(
   if (!ctx.ok) return { ok: false, error: "No autorizado." };
   // #97: B2B → aliado del catálogo (id, nunca texto libre) y BNC escrita expresamente (vacío ≠ 0). El % y la base los fija la base de datos.
   let acuerdo: { aliadoId: number; bnc: number } | null = null;
+  // #48: modalidad NETO (solo B2B). La base decide rol, margen y descuento con el actor real; aquí solo se lee la entrada y se exige el aliado por id.
+  const mod = leerEntradaModalidad(input.modalidad ?? null);
+  if (!mod.ok) return { ok: false, error: mod.error };
+  let neto: { aliadoId: number; reconoce: boolean; autorizar: boolean } | null = null;
   if (input.tipoAsesor !== "interno") {
     if (!Number.isInteger(input.aliadoId) || (input.aliadoId as number) <= 0) {
       return { ok: false, error: "Elige la agencia o el freelance del catálogo: sin aliado identificado no se puede acordar su comisión." };
     }
-    const bnc = validarBnc(input.bnc, armado.cabecera.precio_venta);
-    if (!bnc.ok) return { ok: false, error: bnc.error };
-    acuerdo = { aliadoId: input.aliadoId as number, bnc: bnc.bnc };
+    if (mod.datos?.modalidad === "neto") {
+      // NETO no usa BNC ni crea acuerdo #97: la participación va DENTRO del descuento. «Reconocer» solo cuenta si hay participación (> 0).
+      neto = { aliadoId: input.aliadoId as number, reconoce: mod.datos.reconoceRecobro === true && Number(input.recobroAliado) > 0, autorizar: mod.datos.autorizarMargen };
+    } else {
+      const bnc = validarBnc(input.bnc, armado.cabecera.precio_venta);
+      if (!bnc.ok) return { ok: false, error: bnc.error };
+      acuerdo = { aliadoId: input.aliadoId as number, bnc: bnc.bnc };
+    }
+  } else if (mod.datos?.modalidad === "neto") {
+    return { ok: false, error: "El precio NETO solo aplica a ventas de una agencia o freelance del catálogo." };
   }
   // #40 E3: la fecha de vigencia la elige solo el personal interno; un rol externo que la envíe por red se rechaza.
   if (ctx.interno === false && input.vigenciaHasta?.trim()) return { ok: false, error: "No tienes permiso para elegir la vigencia." };
@@ -107,10 +118,13 @@ export async function crearCotizacionManual(
     p_cabecera: armado.cabecera as unknown as Json,
     p_servicios: armado.servicios as unknown as Json,
   };
-  const { data: id, error } = acuerdo
-    ? await admin.rpc("crear_cotizacion_manual_con_acuerdo", { ...argsBase, p_aliado_id: acuerdo.aliadoId, p_bnc: acuerdo.bnc })
-    : await admin.rpc("crear_cotizacion_manual", argsBase);
-  if (error || id == null) return { ok: false, error: mensajeEdicion39(error?.message, "No se pudo crear la cotización.") };
+  const { data: id, error } = neto
+    ? await admin.rpc("crear_cotizacion_manual_neto", { ...argsBase, p_aliado_id: neto.aliadoId, p_reconoce: neto.reconoce, p_autorizar: neto.autorizar })
+    : acuerdo
+      ? await admin.rpc("crear_cotizacion_manual_con_acuerdo", { ...argsBase, p_aliado_id: acuerdo.aliadoId, p_bnc: acuerdo.bnc })
+      : await admin.rpc("crear_cotizacion_manual", argsBase);
+  // Los rechazos de NETO traen su propio texto claro (COMPARATIVA_DATOS: margen, rol, descuento 0…); el resto, el mapa de siempre.
+  if (error || id == null) return { ok: false, error: neto ? mensajeErrorComparativa(error?.message) : mensajeEdicion39(error?.message, "No se pudo crear la cotización.") };
 
   // #42: alta del titular en el registro de personas desde lo que se acaba de persistir (las
   // cantidades nunca crean personas; la 216 ya estampó el autor). La cotización ya quedó
@@ -358,6 +372,8 @@ function mensajeSeguro(msg: string): string {
   if (!m) return "No se pudo convertir la cotización a contrato. Inténtalo de nuevo.";
   if (/COTIZACION_SALIDA_PASADA/.test(m)) return MENSAJE_SALIDA_PASADA;
   if (/COTIZACION_VENCIDA/.test(m)) return MENSAJE_COTIZACION_VENCIDA;
+  // #48: con precio NETO el primer pago congela el total NETO; convertir antes deja el total congelado sin fijar (la base lo rechaza antes de numerar).
+  if (/NETO: el total congelado/.test(m)) return "Esta cotización tiene precio NETO: registra primero el pago previo (congela el total NETO) y luego genera el contrato.";
   if (/(duplicate key|violates (foreign key|not-null|check) constraint|constraint "|relation "|pg_|sqlstate|serialization failure|contradice la política|new row violates)/i.test(m)) {
     return "No se pudo convertir por un conflicto de datos. Reintenta; si persiste, revisa que los pagos previos y las condiciones estén correctos.";
   }

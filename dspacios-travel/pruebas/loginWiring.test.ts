@@ -1,6 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -189,7 +189,6 @@ describe("19. Sin afirmaciones inventadas (Stitch y ronda 1/2)", () => {
     [/B2B\s*NETWORK/i, "B2B Network como certificación"],
     [/\+57/, "número de soporte inventado"],
     [/afiliaci[oó]n/i, "solicitud de afiliación sin ruta funcional"],
-    [/[Oo]lvidaste tu contrase/, "recuperación de contraseña sin flujo real"],
     [/Recordar sesión/i, "recordar sesión sin implementación real"],
     [/Google Workspace/, "Google Workspace (la integración real solo se llama Google)"],
     [/cupos? (garantizados|en vivo)|tarifario.{0,15}en vivo/i, "cupos/tarifario en vivo ficticios"],
@@ -206,6 +205,13 @@ describe("19. Sin afirmaciones inventadas (Stitch y ronda 1/2)", () => {
       assert.doesNotMatch(client, re);
     });
   }
+
+  // #62: la recuperación de contraseña dejó de ser un texto sin flujo: el enlace existe SOLO porque la ruta real existe (la regla sigue siendo «ningún enlace ficticio»).
+  test("«¿Olvidaste tu contraseña?» apunta a /recuperar y esa ruta existe con su acción real", () => {
+    assert.match(client, /href="\/recuperar"[^>]*>\s*¿Olvidaste tu contraseña\?/);
+    assert.ok(existsSync(new URL("../app/(auth)/recuperar/page.tsx", import.meta.url)), "falta la página /recuperar");
+    assert.match(readFileSync(new URL("../app/(auth)/recuperar/RecuperarClient.tsx", import.meta.url), "utf8"), /resetPasswordForEmail\(/);
+  });
 });
 
 describe("20. Logo oficial — único logo de D'Spacios, nunca reconstruido", () => {

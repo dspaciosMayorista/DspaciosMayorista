@@ -1,6 +1,8 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
+import { CamposPagoUsd, valorCopDelPago } from "@/components/contrato/PagoUsdCampos";
+import { trmNormalizada, type ModoPagoUsd } from "@/lib/finanzas/pagoUsd";
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -305,7 +307,7 @@ function FilaAbonoCartera({
     start(async () => {
       const r = await actualizarAbonoCartera(a.id, numeroContrato, {
         valor: Number(valor) || 0, fecha, formaPago: forma, referencia: ref,
-        trmInput: esUSD ? Number(trm) || 0 : undefined,
+        trmInput: esUSD ? trmNormalizada(trm) ?? 0 : undefined,
       }, identidad);
       if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
     });
@@ -373,11 +375,12 @@ function AbonoInline({
   const [trm, setTrm] = useState("");
   const [fecha, setFecha] = useState(() => fechaNegocio());
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
-  const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
+  const [modo, setModo] = useState<ModoPagoUsd>("cop");
+  const valorEnviado = esUSD ? valorCopDelPago(modo, valor, trm) : valor;
   const reg = useRegistroAbono({
-    campos: { valor, forma, ref, trm, fecha },
+    campos: { valor: valorEnviado, forma, ref, trm, fecha, monedaPago: esUSD ? (modo === "usd" ? "USD" : "COP") : undefined },
     esUSD,
-    registrar: (e, confirmar) => registrarAbonoCartera(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion, identidad),
+    registrar: (e, confirmar) => registrarAbonoCartera(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion, identidad, e.monedaPago),
     reiniciar: () => { setValor(""); setForma(""); setRef(""); setTrm(""); setFecha(fechaNegocio()); },
   });
   const { pending, error } = reg;
@@ -387,22 +390,12 @@ function AbonoInline({
       <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
       <ConfirmacionPendienteAbono mensaje={reg.confirmacionPendiente} pending={pending} onReintentar={reg.reintentarConfirmacion} />
       <div className="flex flex-wrap items-end gap-3">
-        <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">{esUSD ? "Valor pagado (COP)" : "Valor"}</label>
-          <Input
-            type="number"
-            min={0}
-            value={valor}
-            onChange={(e) => setValor(e.target.value)}
-            placeholder="0"
-            className="w-36"
-          />
-        </div>
-        {esUSD && (
+        {esUSD ? (
+          <CamposPagoUsd modo={modo} onModo={setModo} valor={valor} onValor={setValor} trm={trm} onTrm={setTrm} saldo={saldo} />
+        ) : (
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-600">TRM del día</label>
-            <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-28" />
-            <p className="mt-1 text-[11px] text-gray-400">{usdEq != null ? `= ${formatMoneda(usdEq, "USD")}` : "COP por 1 USD"}</p>
+            <label className="mb-1 block text-xs font-medium text-gray-600">Valor</label>
+            <Input type="number" min={0} value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0" className="w-36" />
           </div>
         )}
         <div>

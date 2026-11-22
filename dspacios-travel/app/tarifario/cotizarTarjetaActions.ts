@@ -6,7 +6,7 @@
 // Públicas por diseño (como el checkout): devuelven solo PVP por persona; los motivos internos van al log, no al navegador.
 import { createClient } from "@/lib/supabase/server";
 import { computarReserva, type ReservaInput } from "@/lib/reservar/computo";
-import { validarEntradaTarjeta, MENSAJE_TARJETA as MENSAJE, MOTIVO_RECHAZO_TARJETA, type ComboTarjeta, type DescuentoTarjeta } from "@/lib/tarifario/entradaTarjeta";
+import { validarEntradaTarjeta, MENSAJE_TARJETA as MENSAJE, MOTIVO_RECHAZO_TARJETA, type ComboTarjeta, type DescuentoTarjeta, type PromocionTarjeta } from "@/lib/tarifario/entradaTarjeta";
 import { crearLecturasCompartidas } from "@/lib/reservar/lecturasCompartidas";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { motivosUnicos } from "@/lib/tarifario/motivoTarjeta";
@@ -36,6 +36,8 @@ export type TarjetaCotizada =
       /** Día (America/Bogota) con el que se calculó el descuento: si el día cambia, el par precio+etiqueta caduca y se recalcula. */
       fechaCalculo: string;
       descuentoHotel: DescuentoTarjeta | null;
+      /** #126-D: promoción ganadora de la combinación más barata (null = ninguna). */
+      promocionHotel?: PromocionTarjeta | null;
       /** Todas las categorías/regímenes que se pudieron cotizar para esas fechas (el modal los usa tal cual). */
       combos: ComboTarjeta[];
     }
@@ -62,7 +64,7 @@ export async function cotizarTarjetaHotel(raw: unknown): Promise<TarjetaCotizada
   const sb = await createClient();
   // Memo EXCLUSIVO de esta llamada: las lecturas idénticas entre combinaciones (paquete, hotel, origen, temporadas, incluidos, evidencia) se hacen una vez; las que dependen del combo, no.
   const lecturas = crearLecturasCompartidas();
-  let mejor: { precio: number; moneda: string; categoria: string; regimen: string; fechaIda: string; fechaRegreso: string; descuento: DescuentoTarjeta | null } | null = null;
+  let mejor: { precio: number; moneda: string; categoria: string; regimen: string; fechaIda: string; fechaRegreso: string; descuento: DescuentoTarjeta | null; promocion: PromocionTarjeta | null } | null = null;
   // TODOS los combos fallidos (no solo el último): categoría, régimen y el mensaje de negocio
   // devuelto por computarReserva (o el sintético "sin tarifa doble" de aquí abajo) — el log del
   // servidor los registra todos; el motivo clasificado (lista blanca) solo llega al navegador
@@ -89,15 +91,18 @@ export async function cotizarTarjetaHotel(raw: unknown): Promise<TarjetaCotizada
     // Una habitación doble: una sola acomodación, la etiqueta nunca es mixta.
     const d0 = comp.data.descuentoHotel;
     const d = d0?.tipo && d0.umbral != null && d0.pct != null ? { etiqueta: d0.etiqueta, tipo: d0.tipo, umbral: d0.umbral, pct: d0.pct } : null;
+    const promo: PromocionTarjeta | null = comp.data.promocionHotel?.etiqueta ? { etiqueta: comp.data.promocionHotel.etiqueta } : null;
     combos.push({
       categoria: c.categoria, regimen: c.regimen, precios: { ...comp.data.pvpPorAcom }, preciosMenor2: { ...comp.data.pvpMenor2PorAcom }, infanteSinFijo: { ...comp.data.pvpInfanteSinFijo },
       descuento: d?.etiqueta ? { etiqueta: d.etiqueta, tipo: d.tipo, umbral: d.umbral, pct: d.pct } : null,
+      promocion: promo,
     });
     if (mejor == null || precio < mejor.precio) {
       mejor = {
         precio, moneda: comp.data.monedaReserva, categoria: c.categoria, regimen: c.regimen,
         fechaIda: comp.data.meta.fecha_ida ?? e.fechaIda ?? "", fechaRegreso: comp.data.meta.fecha_regreso ?? e.fechaRegreso ?? "",
         descuento: d?.etiqueta ? { etiqueta: d.etiqueta, tipo: d.tipo, umbral: d.umbral, pct: d.pct } : null,
+        promocion: promo,
       };
     }
   }
@@ -120,6 +125,6 @@ export async function cotizarTarjetaHotel(raw: unknown): Promise<TarjetaCotizada
   return {
     ok: true, precio: mejor.precio, moneda: mejor.moneda, categoria: mejor.categoria, regimen: mejor.regimen,
     fechaIda: mejor.fechaIda, fechaRegreso: mejor.fechaRegreso, noches: Number.isFinite(a) && Number.isFinite(b) ? Math.round((b - a) / 86_400_000) : 0,
-    fechaCalculo: fechaNegocio(), descuentoHotel: mejor.descuento, combos,
+    fechaCalculo: fechaNegocio(), descuentoHotel: mejor.descuento, promocionHotel: mejor.promocion, combos,
   };
 }

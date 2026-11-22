@@ -203,13 +203,14 @@ describe("cableado de app/auth/callback/route.ts", () => {
   const fuente = readFileSync(new URL("../app/auth/callback/route.ts", import.meta.url), "utf8");
 
   test("valida `next` con destinoLocalSeguro antes de redirigir", () => {
-    assert.match(fuente, /import \{ destinoLocalSeguro \} from "@\/lib\/auth\/destinoSeguro";/);
+    assert.match(fuente, /import \{ destinoLocalSeguro(, DESTINO_POR_DEFECTO)? \} from "@\/lib\/auth\/destinoSeguro";/);
     assert.match(fuente, /const next = destinoLocalSeguro\(searchParams\.get\("next"\), origin\);/);
     assert.doesNotMatch(fuente, /searchParams\.get\("next"\) \?\?/);
   });
 
   test("el intercambio de sesión y la ruta de error no cambian", () => {
-    assert.match(fuente, /const \{ error \} = await supabase\.auth\.exchangeCodeForSession\(code\);/);
+    // #62 (B1): ahora también se lee `data` (la sesión canjeada) para decidir la recuperación por su token; el comportamiento lo prueban callbackRecuperacion62.test.ts.
+    assert.match(fuente, /const \{ data, error \} = await supabase\.auth\.exchangeCodeForSession\(code\);/);
     assert.equal((fuente.match(/exchangeCodeForSession\(/g) ?? []).length, 1);
     assert.match(fuente, /return NextResponse\.redirect\(`\$\{origin\}\/login\?error=oauth`\);/);
   });

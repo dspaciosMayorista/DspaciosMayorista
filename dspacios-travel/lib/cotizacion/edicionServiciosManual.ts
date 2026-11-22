@@ -19,7 +19,7 @@ export const ROLES_EDICION_COMPLETA = ["superadmin", "gerencia", "administracion
 
 export type CodigoEdicion39 =
   | "NO_AUTORIZADO" | "SUSPENDIDA" | "NO_ELEGIBLE" | "CONGELADA" | "CON_PAGOS"
-  | "VENCIDA" | "AUTOR" | "MOTIVO" | "REVISION" | "SERVICIOS" | "INCOHERENTE";
+  | "VENCIDA" | "AUTOR" | "NETO_FIJADO" | "MOTIVO" | "REVISION" | "SERVICIOS" | "INCOHERENTE";
 
 /** Lo que la ficha sabe de la cotización. */
 export type CotizacionEditable = {
@@ -45,6 +45,7 @@ const MENSAJES: Record<CodigoEdicion39, string> = {
   CON_PAGOS: "La cotización tuvo pagos previos (aunque estén anulados); no se edita.",
   VENCIDA: "La cotización está vencida: renueva su vigencia antes de editarla.",
   AUTOR: "Solo puedes editar las cotizaciones que tú creaste.",
+  NETO_FIJADO: "La cotización tiene precio NETO fijado: sus servicios no se editan (el descuento y el margen autorizado quedarían desactualizados). Crea otra cotización.",
   MOTIVO: "Indica el motivo del cambio.",
   REVISION: "La cotización cambió mientras la editabas: recarga la página y vuelve a intentarlo.",
   SERVICIOS: "La cotización debe tener al menos un servicio válido.",
@@ -63,7 +64,7 @@ function no(codigo: CodigoEdicion39): Elegibilidad {
  */
 export function elegibilidadEdicion(
   c: CotizacionEditable,
-  ctx: { actor: ActorEdicion; habilitada: boolean; hoy: string; tienePagos: boolean },
+  ctx: { actor: ActorEdicion; habilitada: boolean; hoy: string; tienePagos: boolean; /** #48: sello NETO de la cotización (la base lo vuelve a comprobar). */ netoFijado?: boolean },
 ): Elegibilidad {
   const rol = ctx.actor.rol ?? "";
   if (!ctx.actor.activo || !ctx.actor.id || !(ROLES_EDICION_COMPLETA as readonly string[]).concat("venta").includes(rol)) {
@@ -72,6 +73,7 @@ export function elegibilidadEdicion(
   if (!ctx.habilitada) return no("SUSPENDIDA");
   if (c.tipo !== "manual" || (c.modo ?? "simple") !== "simple" || c.cotizacion_origen_id != null) return no("NO_ELEGIBLE");
   if (c.estado !== "abierta" || c.numero_contrato) return no("NO_ELEGIBLE");
+  if (ctx.netoFijado) return no("NETO_FIJADO");
   if (c.condicion_pago_congelada_en) return no("CONGELADA");
   if (ctx.tienePagos) return no("CON_PAGOS");
   if (!c.vigencia_hasta || c.vigencia_hasta < ctx.hoy) return no("VENCIDA");

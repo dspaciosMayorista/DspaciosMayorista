@@ -16,10 +16,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { comisionDefault, categoriaAliado } from "@/lib/b2b";
 import { contratosDelPortalB2B, consultasPortalSupabase, COLUMNAS_DECISION } from "@/lib/auth/contratosPortalB2B";
 import { contratosPorParticipacion } from "@/lib/auth/participacionComisionB2B";
+import { origenDeCotizacion } from "@/lib/portal/origenCotizacion";
 import { leerTodoConConteo, PAGINA_FILAS, type PaginaConConteo } from "@/lib/auth/fichaComisionManual";
 import { comisionesDelPortal, type ComisionPortal } from "@/lib/finanzas/comisionPortal";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
 import { contratosPagadosCompletos } from "@/lib/voucher/pagoCompleto";
+import { cargarValorContratos } from "@/lib/portal/valorContrato";
+import type { SolicitudContrato } from "@/lib/portal/solicitudContrato";
 import { clasificarComparativas, ordenarContratosDesc, type AbonoPortal, type MetaComparativa, type VentaPortal, type VoucherPortal } from "@/lib/portal/b2bPortal";
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -213,6 +216,9 @@ export type CotizacionFila = {
 };
 
 const COLUMNAS_COT = "id, codigo, modo, cliente, destino, hotel, pax, precio_venta, moneda, fecha_salida, vigencia_hasta, estado, share_token, numero_contrato, created_at";
+// Procedencia que el servidor selló al crear la cotización (solo se lee para clasificar; no sale de este módulo).
+const COLUMNAS_PROCEDENCIA = "creado_por, plan_origen:payload->b2bAsistido->>origen, plan_rol:payload->b2bAsistido->asistido_por->>rol, plan_aliado:payload->b2bAsistido->>aliado_id";
+type FilaConProcedencia = CotizacionFila & { creado_por: string | null; plan_origen: string | null; plan_rol: string | null; plan_aliado: string | null };
 
 /** Lectura COMPLETA o nada: pagina avanzando por lo recibido y falla cerrado ante cualquier anomalía (ver `leerTodoConConteo`). */
 async function leerTodasCotizaciones(pagina: (desde: number, hasta: number) => PromiseLike<PaginaConConteo<CotizacionFila>>) {
@@ -221,8 +227,9 @@ async function leerTodasCotizaciones(pagina: (desde: number, hasta: number) => P
 }
 
 /**
- * Cada cotización se clasifica UNA sola vez. Si lleva un plan B2B asistido para este aliado es «asistida», aunque el
- * propio aliado figure en `creado_por` (mismo correo): el plan congelado manda sobre el autor.
+ * Cada cotización se clasifica UNA sola vez por su ORIGEN REAL (ver `origenDeCotizacion`): «directa» si la generó el propio aliado —con o sin plan B2B congelado, en NETO o en
+ * comisión— y «asistida» si el plan lo selló personal de D'spacios. La procedencia es la que el servidor escribió en `payload.b2bAsistido` (`origen`, `asistido_por`); el autor
+ * (`creado_por`) solo decide las cotizaciones sin plan. Antes, TODA cotización con plan para este aliado iba a «Asistidas» aunque la hubiera creado él.
  */
 export async function cargarCotizacionesPortal(ctx: Ok) {
   const admin = createAdminClient();
@@ -232,7 +239,7 @@ export async function cargarCotizacionesPortal(ctx: Ok) {
   const asistidasQ = ctx.aliadoId != null
     ? await leerTodasCotizaciones((d, h) =>
         admin.from("cotizaciones")
-          .select(`${COLUMNAS_COT}, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible`, { count: "exact" })
+          .select(`${COLUMNAS_COT}, ${COLUMNAS_PROCEDENCIA}, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible`, { count: "exact" })
           .eq("payload->b2bAsistido->>aliado_id", String(ctx.aliadoId))
           .order("id", { ascending: false }).range(d, h) as unknown as PromiseLike<PaginaConConteo<CotizacionFila>>)
     : { filas: [] as CotizacionFila[], error: false };
@@ -240,16 +247,47 @@ export async function cargarCotizacionesPortal(ctx: Ok) {
   // Tampoco filtran por tenant: un correo no pertenece a dos agencias y lo suyo en Minorista también es suyo.
   const directasQ = ctx.email
     ? await leerTodasCotizaciones((d, h) =>
-        admin.from("cotizaciones").select(COLUMNAS_COT, { count: "exact" })
+        admin.from("cotizaciones").select(`${COLUMNAS_COT}, ${COLUMNAS_PROCEDENCIA}, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible`, { count: "exact" })
           .eq("creado_por", ctx.email as string)
           .order("id", { ascending: false }).range(d, h) as unknown as PromiseLike<PaginaConConteo<CotizacionFila>>)
     : { filas: [] as CotizacionFila[], error: false };
 
   const vivas = (filas: CotizacionFila[]) => filas.filter((c) => c.estado !== "descartada" && c.modo !== "comparativa");
-  const asistidas = vivas(asistidasQ.filas);
-  const idsAsistidas = new Set(asistidas.map((c) => c.id));
-  const directas = vivas(directasQ.filas).filter((c) => !idsAsistidas.has(c.id));
+  // Unión por id (una cotización puede venir de las dos consultas) y UNA sola clasificación por su origen real. Lo que no es de este aliado por ninguna vía se descarta.
+  // Las que trae la consulta por plan (`payload.b2bAsistido.aliado_id` = esta ficha) llevan plan congelado POR CONSTRUCCIÓN; las de la consulta por autor, solo si el plan lo dice.
+  const porId = new Map<number, FilaConProcedencia & { delPlan?: boolean }>();
+  for (const c of asistidasQ.filas as FilaConProcedencia[]) if (!porId.has(c.id)) porId.set(c.id, { ...c, delPlan: true });
+  for (const c of directasQ.filas as FilaConProcedencia[]) if (!porId.has(c.id)) porId.set(c.id, c);
+  const directas: CotizacionFila[] = [], asistidas: CotizacionFila[] = [];
+  for (const c of vivas([...porId.values()]) as (FilaConProcedencia & { delPlan?: boolean })[]) {
+    const { creado_por, plan_origen, plan_rol, plan_aliado, delPlan, ...fila } = c;
+    const tienePlan = delPlan === true || plan_aliado != null || plan_origen != null || plan_rol != null || c.b2b_modo != null;
+    const origen = origenDeCotizacion({ creado_por, tiene_plan: tienePlan, origen_plan: plan_origen, rol_plan: plan_rol }, ctx.email);
+    if (origen === "directa") directas.push(fila); else if (origen === "asistida") asistidas.push(fila);
+  }
+  const masNuevaPrimero = (x: CotizacionFila, y: CotizacionFila) => y.id - x.id;
+  directas.sort(masNuevaPrimero); asistidas.sort(masNuevaPrimero);
   return { directas, asistidas, error: directasQ.error || asistidasQ.error };
+}
+
+/** #84 (ADL-039): valor VIGENTE de los contratos de las cotizaciones convertidas que el aliado ya ve (ver `valorContrato.ts`); solo se llama desde la lista de cotizaciones. */
+export async function cargarValorContratosPortal(ctx: Ok, cotizaciones: Pick<CotizacionFila, "estado" | "numero_contrato">[]) {
+  return cargarValorContratos(createAdminClient(), ctx, cotizaciones.filter((c) => c.estado === "convertida").map((c) => c.numero_contrato));
+}
+
+/**
+ * #78: solicitudes de contrato ABIERTAS del propio aliado (por sesión, nunca de otro). Lectura completa o nada (pagina avanzando por lo recibido); si falla, `error`
+ * y mapa vacío: la pantalla lo dice en vez de mostrar «sin solicitudes». Una consulta por carga de la pestaña, acotada a las filas del aliado.
+ */
+export async function cargarSolicitudesContratoPortal(ctx: Ok): Promise<{ porCotizacion: Record<number, SolicitudContrato>; error: boolean }> {
+  // La tabla es nueva (323) y aún no está en types/database.ts.
+  const admin = createAdminClient() as unknown as { from: (t: string) => { select: (c: string, o: { count: "exact" }) => { eq: (a: string, b: string) => { eq: (a: string, b: string) => { order: (c: string, o: { ascending: boolean }) => { range: (d: number, h: number) => unknown } } } } } };
+  const r = await leerTodoConConteo<SolicitudContrato & { id: number }>(
+    (d, h) => admin.from("cotizacion_solicitudes_contrato").select("id, cotizacion_id, notificados, creado_en", { count: "exact" })
+      .eq("solicitante_id", ctx.userId).eq("estado", "solicitada").order("id", { ascending: true }).range(d, h) as unknown as PromiseLike<PaginaConConteo<SolicitudContrato & { id: number }>>,
+    PAGINA_FILAS, (f) => typeof f?.id === "number" && typeof f?.cotizacion_id === "number");
+  if (!r.completa) return { porCotizacion: {}, error: true };
+  return { porCotizacion: Object.fromEntries(r.filas.map((f) => [f.cotizacion_id, { cotizacion_id: f.cotizacion_id, notificados: f.notificados, creado_en: f.creado_en }])), error: false };
 }
 
 export type ComparativaPortal = {

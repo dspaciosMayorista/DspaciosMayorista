@@ -260,3 +260,22 @@ test("infante: la tabla muestra el precio del menor de 2 años de la cotización
   assert.match(tablaTexto(), /(?<![\d.])120\.000(?![\d.])/);
   assert.doesNotMatch(tablaTexto(), /(?<![\d.])(60|180|200)\.000(?![\d.])/);
 });
+
+// #126-D — la tabla por salida pinta la promoción que ganó en ESA cotización (junto a EBB / Long Stay) y la cambia con la salida; sin promoción ganadora no hay etiqueta.
+test("#126-D salida con promoción: etiqueta de promoción de la cotización elegida; la otra salida (sin promoción) no la hereda", async () => {
+  g.__detalleActionsFake = fakeDetalleDin();
+  const conPromo = (ida: string, reg: string, noches: number, doble: number, d: Desc, promo: string | null) => {
+    const r = cotiz(ida, reg, noches, doble, d) as { combos: Record<string, unknown>[] } & Record<string, unknown>;
+    return { ...r, promocionHotel: promo ? { etiqueta: promo } : null, combos: r.combos.map((x) => ({ ...x, promocion: promo ? { etiqueta: promo } : null })) };
+  };
+  g.__cotizarTarjetaFake = async (i: { salidaId: number }) => i.salidaId === 541 ? conPromo(IDA2, REG2, 4, 1_000_000, EBB3, "Promoción PRE BF · solo en algunas noches") : conPromo(IDA1, REG1, 3, 800_000, EBB2, null);
+  const c = await montar(FILAS_DIN);
+  await clic(tabDinamico(c)); await pausa();
+  const promos = () => [...document.querySelectorAll('[data-testid="etiqueta-promocion-hotel"]')].map((e) => e.textContent?.replace(/\s+/g, " ").trim());
+  assert.deepEqual(promos(), [], "enero: sin promoción ganadora");
+  await clic(chip(IDA2)); await pausa();
+  assert.deepEqual(promos(), ["Promoción PRE BF · solo en algunas noches"]);
+  assert.deepEqual(etiquetas(), [EBB3.etiqueta], "EBB y promoción conviven, cada una con su texto");
+  await clic(chip(IDA1)); await pausa();
+  assert.deepEqual(promos(), [], "al volver a enero no queda la etiqueta de la otra salida");
+});

@@ -2,8 +2,10 @@
 import { validarRangoFechasConsulta } from "../reservar/edadesMenores.ts";
 
 export type DescuentoTarjeta = { etiqueta: string; tipo: "ebb" | "long_stay"; umbral: number; pct: number };
+/** #126-D: promoción que ganó en ese cálculo (texto ya con su alcance; sin importes). */
+export type PromocionTarjeta = { etiqueta: string };
 /** Precios por persona (con la regla de HOY ya aplicada) de UNA categoría/régimen para las fechas cotizadas: lo que el modal «Ver opciones» muestra en vez del publicado. */
-export type ComboTarjeta = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2: Record<string, number>; infanteSinFijo: { mayor2: number | null; menor2: number | null }; descuento: DescuentoTarjeta | null };
+export type ComboTarjeta = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2: Record<string, number>; infanteSinFijo: { mayor2: number | null; menor2: number | null }; descuento: DescuentoTarjeta | null; promocion?: PromocionTarjeta | null };
 export const MENSAJE_TARJETA = "No pudimos calcular el precio para esas fechas. Elige otras o intenta de nuevo.";
 const MENSAJE = MENSAJE_TARJETA;
 /**

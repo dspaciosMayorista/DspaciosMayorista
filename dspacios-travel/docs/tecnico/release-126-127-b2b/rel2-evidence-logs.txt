@@ -1,0 +1,278 @@
+REL-2 evidence logs — old source 312608a5922d4424ac912153394f4aee99357cb2 x complete final chain 001-326 (2026-11-21). Disposable Docker databases only; timings, ports and database names normalized.
+
+######## 1. Templates and chain checks (rel2_plantillas.sh)
+== plantilla_rel2_viejo (esquema de PRODUCCIÓN 001–311, de plantillab2b)
+viejo tiene algún objeto de 312+ (columna moneda_pago, disparador 315, función 313, tablas 316/318/319/322/323/324/325): f
+viejo tiene la 307–311 (contrato_minimo_acuerdo, fn_gestion_contratos 309, promocion_guardar_reglas de 8 args 310, sin defaults de edad 311): t
+
+== plantilla_rel2_final (cadena final 001–326)
+OK    325 preflight: 7 filas OK/INFO
+OK    325 migración aplicada (20260601000325_evidencia_y_pasajeros_aliado_cotizacion.sql)
+OK    325 postcheck: 8 filas OK/INFO
+OK    326 preflight: 6 filas OK/INFO
+OK    326 migración aplicada (20260601000326_pasajeros_aliado_tope_universo.sql)
+OK    326 postcheck: 7 filas OK/INFO
+
+== postchecks 312–326 (solo lectura) sobre la FINAL: la cadena completa debe estar instalada
+OK    postcheck 312: 4 filas OK/INFO
+OK    postcheck 313: 6 filas OK/INFO
+OK    postcheck 314: 6 filas OK/INFO
+OK    postcheck 315: 4 filas OK/INFO
+OK    postcheck 316: 6 filas OK/INFO
+OK    postcheck 317: 8 filas OK/INFO
+OK    postcheck 318: 9 filas OK/INFO
+OK    postcheck 319: 9 filas OK/INFO
+OK    postcheck 322: 7 filas OK/INFO
+OK    postcheck 323: 9 filas OK/INFO
+OK    postcheck 324: 8 filas OK/INFO
+OK    postcheck 325: 8 filas OK/INFO
+OK    postcheck 326: 7 filas OK/INFO
+
+== control negativo: los postchecks 312, 315 y 324 sobre la VIEJA NO deben pasar
+postcheck 312 sobre la vieja: 1 fila(s)/error(es) de fallo (esperado > 0)
+postcheck 315 sobre la vieja: 3 fila(s)/error(es) de fallo (esperado > 0)
+postcheck 324 sobre la vieja: 1 fila(s)/error(es) de fallo (esperado > 0)
+
+== objetos del esquema public: viejo → final (nada debe desaparecer)
+objetos viejo=3514 final=3651
+DESAPARECEN en la final (esperado 0): 0
+NUEVOS en la final: 137
+a256 C:aliado_firmas.storage_path C:aliado_firmas.vigente C:aliado_logos.aliado_id C:aliado_logos.id C:aliado_logos.mime C:aliado_logos.path C:aliado_logos.retirado_en C:aliado_logos.retirado_por C:al
+cotizacion_evidencias.id C:cotizacion_evidencias.mime C:cotizacion_evidencias.nombre_original C:cotizacion_evidencias.path C:cotizacion_evidencias.retirado_en C:cotizacion_evidencias.retirado_por C:co
+enant C:cotizacion_solicitudes_contrato.aliado_id C:cotizacion_solicitudes_contrato.cotizacion_id C:cotizacion_solicitudes_contrato.creado_en C:cotizacion_solicitudes_contrato.estado C:cotizacion_soli
+o_aceptaciones.id C:cuenta_cobro_aceptaciones.snapshot C:cuenta_cobro_aceptaciones.snapshot_hash C:cuenta_cobro_aceptaciones.version C:recuperaciones_consumidas.aplicada_en C:recuperaciones_consumidas
+.estado C:recuperaciones_consumidas.evento C:recuperaciones_consumidas.reclamada_en C:recuperaciones_consumidas.user_id C:registro_b2b_estado.actualizado_en C:registro_b2b_estado.creado_en C:registro_
+b2b_estado.datos C:registro_b2b_estado.en_vuelo C:registro_b2b_estado.estado C:registro_b2b_estado.fallos C:registro_b2b_estado.reclamados C:registro_b2b_estado.ultimo_reclamo C:registro_b2b_estado.us
+_auditoria G:trg_cuenta_cobro_aceptaciones_inmutable G:trg_f313_abonos_moneda T:aliado_clientes T:aliado_firmas T:aliado_logos T:cotizacion_evidencias T:cotizacion_pasajeros_aliado T:cotizacion_solici
+tudes_contrato T:cuenta_cobro_aceptaciones T:recuperaciones_consumidas T:registro_b2b_estado
+CADENA FINAL COMPLETA VERIFICADA
+
+######## 2. Old tree export (rel2_exportar_viejo.sh)
+commit: 312608a5922d4424ac912153394f4aee99357cb2
+tree:   7cb08520e786b982147b90c6652cc6e03a519e4e
+archivos exportados: 3192
+node_modules enlazado: @base-ui @playwright
+lista de archivos idéntica al commit (3190)
+sha256 igual (sin CR; archive aplica autocrlf): dspacios-travel/app/(dashboard)/dashboard/contratos/actions.ts
+sha256 igual (sin CR; archive aplica autocrlf): dspacios-travel/lib/reservar/computo.ts
+sha256 igual (sin CR; archive aplica autocrlf): dspacios-travel/supabase/migrations/20260601000311_hoteles_edades_sin_default.sql
+sha256 igual (sin CR; archive aplica autocrlf): dspacios-travel/pruebas/pagoUsdConversion2611.pg.ts
+ausentes en el árbol viejo (código/migraciones de este bloque):
+  ausente: dspacios-travel/lib/portal/origenCotizacion.ts
+  ausente: dspacios-travel/lib/reservar/universoViajeros.ts
+  ausente: dspacios-travel/app/(auth)/recuperar
+  ausente: dspacios-travel/supabase/migrations/20260601000312_abono_moneda_pago.sql
+  ausente: dspacios-travel/supabase/migrations/20260601000326_pasajeros_aliado_tope_universo.sql
+  ausente: dspacios-travel/lib/tarifario/cierresHotel.ts
+
+######## 3. Old suites vs final template (rel2_suites.sh)
+=== pago USD 2611 (pruebas/pagoUsdConversion2611.pg.ts)
+    ℹ tests 6
+    ℹ pass 6
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+  -> OK
+=== minimo acuerdo 307 (pruebas/minimoAcuerdo307.pg.ts)
+    ℹ tests 3
+    ℹ pass 3
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+  -> OK
+=== voucher acceso 307 (pruebas/voucherAcceso307.pg.ts)
+    ℹ tests 10
+    ℹ pass 10
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+  -> OK
+=== personas cotizaciones 1 (pruebas/personasCotizaciones1.pg.ts)
+    ℹ tests 27
+    ℹ pass 27
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+  -> OK
+=== carrito 1 (pruebas/personasCotizaciones1Carrito.pg.ts)
+    ℹ tests 6
+    ℹ pass 6
+    ℹ fail 0
+    ℹ cancelled 0
+    ℹ skipped 0
+  -> OK
+=== resumen: 5 suites, 0 en falla
+=== neto nino gratis 2611 (pruebas/netoNinoGratisReal2611.pg.ts)
+PostgREST en http://127.0.0.1:PORT contra tpg_<disposable>
+▶ G4 · NETO asistido con niño gratis (motor REAL): cotización → contrato → datos persistidos
+  ✔ N0 la cotización PVP de referencia reproduce el ejemplo del dueño (C-0005): 2 adultos + niño de 8 (gratis) + niño de 5 (paga) = 1.757.000
+  ✔ N1 NETO con agencia 10 %: la comisión descontada es 10 % × 1.757.000 = 175.700 y lo exigible 1.581.300; el contrato nace con ese precio y la comisión DESCONTADA
+  ✔ N2 un solo niño de 8 años, NETO: 1.464.000 PVP → comisión 146.400 → exigible 1.317.600; se guarda también la línea firmada (misma forma de DTM-0003)
+✔ G4 · NETO asistido con niño gratis (motor REAL): cotización → contrato → datos persistidos
+▶ G4 · ruta RESERVAR (contratos DTM-0003/0004 del dueño): ¿qué se sella por niño? (motor real, PVP)
+  ✔ N3 un niño gratis (8 años): contrato 1.464.000 con la línea firmada −366.000; se lee qué dato por niño queda sellado (resumen de precios) además de la línea
+✔ G4 · ruta RESERVAR (contratos DTM-0003/0004 del dueño): ¿qué se sella por niño? (motor real, PVP)
+✔ volcado de los datos persistidos para el render real de documentos (G4_OUT)
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+
+######## 4. portalB2B65 — final chain vs old schema (same three failing names on both)
+--- portal65 on plantilla_rel2_final
+  ✖ A: propios de AMBOS tenants (directa + asistidas); participación por comisión aparte; el homónimo y lo de B no entran
+  ✖ Cartera: Con saldo y Pagos de los propios (ambos tenants), sin los pagos de contratos ajenos
+  ✖ Inicio: los indicadores salen del mismo conjunto (saldo 600.000 + 500.000 = 1.100.000 de contratos propios)
+ℹ fail 3
+ℹ pass 21
+ℹ tests 24
+✖ A: propios de AMBOS tenants (directa + asistidas); participación por comisión aparte; el homónimo y lo de B no entran
+✖ Cartera: Con saldo y Pagos de los propios (ambos tenants), sin los pagos de contratos ajenos
+✖ Inicio: los indicadores salen del mismo conjunto (saldo 600.000 + 500.000 = 1.100.000 de contratos propios)
+✖ P65-4 · contratos propios, participación y documentos
+✖ failing tests:
+--- portal65 on plantilla_rel2_viejo
+  ✖ A: propios de AMBOS tenants (directa + asistidas); participación por comisión aparte; el homónimo y lo de B no entran
+  ✖ Cartera: Con saldo y Pagos de los propios (ambos tenants), sin los pagos de contratos ajenos
+  ✖ Inicio: los indicadores salen del mismo conjunto (saldo 600.000 + 500.000 = 1.100.000 de contratos propios)
+ℹ fail 3
+ℹ pass 21
+ℹ tests 24
+✖ A: propios de AMBOS tenants (directa + asistidas); participación por comisión aparte; el homónimo y lo de B no entran
+✖ Cartera: Con saldo y Pagos de los propios (ambos tenants), sin los pagos de contratos ajenos
+✖ Inicio: los indicadores salen del mismo conjunto (saldo 600.000 + 500.000 = 1.100.000 de contratos propios)
+✖ P65-4 · contratos propios, participación y documentos
+✖ failing tests:
+
+######## 5. PG315 (old crearBlackout/eliminarBlackout + old read path): final chain, then control on the old schema
+--- final
+PostgREST en http://127.0.0.1:PORT contra tpg_<disposable>
+▶ R2-315 · código VIEJO (312608a59) × base con la cadena final 001–326
+  ✔ S0 procedencia: es el árbol viejo exacto y la base lleva la cadena completa
+  ✔ S1 antes de cualquier cierre: las tres filas publicadas se ven, por la vista y por el cargador VIEJO
+  ✔ S2 el código VIEJO escribe el cierre (sin error): el disparador de la 315 oculta SOLO la fila afectada, no la borra
+  ✔ S3 el código VIEJO borra el cierre (sin error): la fila permanece oculta hasta regenerar (comportamiento de la 315, no una regresión del código viejo)
+✔ R2-315 · código VIEJO (312608a59) × base con la cadena final 001–326
+ℹ tests 4
+ℹ pass 4
+ℹ fail 0
+--- control: old schema (expected failures S0, S2, S3)
+  ✖ S0 procedencia: es el árbol viejo exacto y la base lleva la cadena completa (199.3868ms)
+  ✔ S1 antes de cualquier cierre: las tres filas publicadas se ven, por la vista y por el cargador VIEJO (472.6316ms)
+  ✖ S2 el código VIEJO escribe el cierre (sin error): el disparador de la 315 oculta SOLO la fila afectada, no la borra (478.4516ms)
+  ✖ S3 el código VIEJO borra el cierre (sin error): la fila permanece oculta hasta regenerar (comportamiento de la 315, no una regresión del código viejo) (689.8042ms)
+✖ R2-315 · código VIEJO (312608a59) × base con la cadena final 001–326 (1843.4124ms)
+ℹ pass 1
+ℹ fail 3
+✖ failing tests:
+✖ S0 procedencia: es el árbol viejo exacto y la base lleva la cadena completa (199.3868ms)
+✖ S2 el código VIEJO escribe el cierre (sin error): el disparador de la 315 oculta SOLO la fila afectada, no la borra (478.4516ms)
+✖ S3 el código VIEJO borra el cierre (sin error): la fila permanece oculta hasta regenerar (comportamiento de la 315, no una regresión del código viejo) (689.8042ms)
+
+######## 6. PG313 (old registrarAbono: replay/confirmation): final chain, then control on the old schema
+--- final
+PostgREST en http://127.0.0.1:PORT contra tpg_<disposable>
+▶ R2-313 · código VIEJO (312608a59) × base con la cadena final 001–326: pago, reintento y confirmación
+  ✔ A0 la base trae 312/313 y el código es el viejo
+  ✔ A1 pago bajo el mínimo (30 % = 300.000): 200.000 se registra, el contrato sigue pendiente y la columna nueva queda NULL
+  ✔ A2 REINTENTO de la misma operación (doble pulsación): no crea un segundo abono ni cambia el estado
+  ✔ A3 el pago que completa el mínimo confirma el contrato en la MISMA operación; una operación nueva suma otro abono
+  ✔ A4 después de confirmar, un reintento de la operación anterior sigue sin duplicar
+✔ R2-313 · código VIEJO (312608a59) × base con la cadena final 001–326: pago, reintento y confirmación
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+--- control: old schema (A0/A1/A3 fail by design: they read columns of 312/313; A2/A4 replay behave identically)
+  ✖ A0 la base trae 312/313 y el código es el viejo (334.9986ms)
+  ✖ A1 pago bajo el mínimo (30 % = 300.000): 200.000 se registra, el contrato sigue pendiente y la columna nueva queda NULL (1223.6254ms)
+  ✔ A2 REINTENTO de la misma operación (doble pulsación): no crea un segundo abono ni cambia el estado (1315.7046ms)
+  ✖ A3 el pago que completa el mínimo confirma el contrato en la MISMA operación; una operación nueva suma otro abono (909.7689ms)
+  ✔ A4 después de confirmar, un reintento de la operación anterior sigue sin duplicar (1224.6203ms)
+✖ R2-313 · código VIEJO (312608a59) × base con la cadena final 001–326: pago, reintento y confirmación (5013.4425ms)
+ℹ pass 2
+ℹ fail 3
+✖ failing tests:
+✖ A0 la base trae 312/313 y el código es el viejo (334.9986ms)
+✖ A1 pago bajo el mínimo (30 % = 300.000): 200.000 se registra, el contrato sigue pendiente y la columna nueva queda NULL (1223.6254ms)
+✖ A3 el pago que completa el mínimo confirma el contrato en la MISMA operación; una operación nueva suma otro abono (909.7689ms)
+
+######## 7. REL-1 — test-publish-release.ps1 -RealRepoProbe (scratch repositories + read-only/guaranteed-rejected probes on the real worktree)
+== Rejections that must happen BEFORE anything is staged
+  ok   wrong branch
+  ok   detached HEAD
+  ok   main checkout (not the linked worktree)
+  ok   upstream already configured
+  ok   HEAD is not the base
+  ok   index not empty at start (pre-existing staging is left untouched)
+  ok   unexpected untracked file
+  ok   manifest path missing on disk
+  ok   manifest lists an excluded .next-* path
+  ok   manifest lists a PNG
+  ok   manifest has a duplicate line
+  ok   manifest has a blank line
+  ok   a path appears in two manifests
+  ok   manifest has a parent-directory segment
+  ok   manifest size differs from the expected count
+  ok   tracked file deleted in the working tree
+  ok   modified tracked file outside the manifests
+  ok   Commit without -Number
+  ok   Commit 2 before commit 1
+  ok   Push without the migrations confirmation
+  ok   Push with -ConfirmMigrationsApplied but no commits
+  ok   Check -Whitespace sees trailing whitespace (read-only)
+== Staged-then-rejected: the helper restores the empty index and does not commit
+  ok   diff --cached --check finding after staging
+== A non-zero exit code of ANY single git call stops the run (fake git forwards everything else)
+  ok   fake git: 'status' exits 7
+  ok   fake git: 'rev-parse --show-toplevel' exits 7
+  ok   fake git: 'add' exits 7
+  ok   fake git: 'diff --cached --name-status' exits 7
+  ok   fake git: 'diff --cached --check' exits 7
+  ok   fake git: 'commit' exits 7
+== Happy path on the scratch repository (real add/commit/push there; the real repository is never touched)
+== Push guards that need three commits first
+  ok   Push stops when remote main moved
+  ok   Push stops with an uncommitted releasable file
+== REAL worktree: read-only check and guaranteed rejections (no staging, no commit, no push possible)
+== Check (read-only)
+  OK   git: git version 2.56.0.windows.2  (C:\Program Files\Git\cmd\git.exe)
+  OK   repository root: <repo>
+  OK   linked worktree (not the main checkout)
+  OK   branch: codex/integracion-126-127-b2b
+  OK   no merge/rebase/cherry-pick/revert/bisect in progress
+  OK   no upstream configured (as expected before the first push)
+  OK   HEAD == base (312608a5922d4424ac912153394f4aee99357cb2)
+  OK   index is empty
+  OK   manifests are disjoint and every path exists, is allowed and is listed once
+  OK   releasable working-tree changes == manifests 1..3 (458 paths; 17774 excluded entries ignored)
+  OK   no excluded path is tracked
+  OK   origin/main == base (local ref; add -Fetch to refresh)
+  OK   whitespace gate: no git diff --check finding in 458 files (read-only preview)
+CHECK PASSED - nothing was staged, committed or pushed.
+checks: 90, failures: 0
+ALL TESTS PASSED
+
+######## 8. REL-3 — rel2_exportar_viejo.sh is non-destructive (test_rel2_exportar_viejo.sh)
+== static: the exporter contains no deletion command
+  ok   no rm/rmdir/unlink/-delete in rel2_exportar_viejo.sh
+== refusal: existing sentinel DIRECTORY (with a nested file and a subfolder)
+  ok   exit code 2 (got 2)
+  ok   message says REFUSED
+  ok   sentinel byte-identical afterwards (listing, sizes, mtimes, SHA-256)
+  ok   nothing was extracted into the sentinel
+== refusal: existing EMPTY directory
+  ok   empty directory refused and still empty (rc=2)
+== refusal: existing regular FILE
+  ok   file refused and unchanged (rc=2)
+== refusal: a JUNCTION pointing at the sentinel (the exporter must not follow it)
+  ok   junction refused; sentinel behind it unchanged (rc=2)
+== refusal: the retained old export itself (read-only check of the real default destination, if present)
+  ok   retained export refused and unchanged (rc=2)
+  ok   default destination (no override) also refused when it exists (rc=2)
+== fresh destination: the export works (path that does not exist yet)
+  ok   fresh export exit 0 (rc=0)
+  ok   commit marker written
+  ok   file list identical to the commit
+  ok   node_modules junction present
+
+checks: 14, failures: 0
+ALL TESTS PASSED

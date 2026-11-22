@@ -32,6 +32,7 @@ import { agruparHotelesPorViaje, esClaveGrupoViaje, fechasDeVuelo, vuelosComunes
 const ContinuarComparativa = lazy(() => import("@/lib/cotizacion/comparativaCheckout").then((m) => ({ default: m.ContinuarComparativa })));
 import { MAX_OPCIONES, mensajeAcomodacionComparativa, validarAcomodacionComparativa } from "@/lib/cotizacion/comparativa";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
+import { errorDocumentoTitular } from "@/lib/personas/tiposDocumento";
 
 // El servidor devolvió que el desglose B2B cambió entre la vista previa y generar (no se creó nada).
 const esTerminosCambiaron = (r: SolicitudResult): r is Extract<SolicitudResult, { tipo: "terminos_cambiaron" }> => !r.ok && "tipo" in r && r.tipo === "terminos_cambiaron";
@@ -434,6 +435,7 @@ export default function CheckoutPage() {
     setPrecioCambio(null);
     if (!c.nombres.trim() || !c.apellidos.trim()) { setErr("Ingresa nombres y apellidos."); return; }
     if (!c.numeroDoc.trim()) { setErr("El documento es obligatorio."); return; }
+    { const eDoc = errorDocumentoTitular(c.tipoDoc, c.numeroDoc); if (eDoc) { setErr(eDoc); return; } }
     if (!c.telefono.trim()) { setErr("El teléfono / WhatsApp es obligatorio."); return; }
     if (asistenciaB2B && !aliadoElegido) { setErr("Elige un aliado de la lista (agencia o freelance) de la venta B2B."); return; }
     if (!recobroForm.ok) { setErr(recobroForm.error); return; }

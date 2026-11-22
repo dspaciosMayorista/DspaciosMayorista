@@ -51,8 +51,8 @@ describe("paridad: la plantilla de cada opción = la cotización dinámica que a
     ["interno sin recobro", {}],
     ["interno con recobro oculto", { recobro: 100000 }],
     ["con niños y recobro", { recobro: 100000, ninos: 2, tarifaNino: 250000 }],
-    ["B2B agencia con recobro al aliado", { tipoAsesor: "agencia" as const, agenciaNombre: "Agencia Uno", recobro: 100000, recobroAliado: 60000 }],
-    ["B2B freelance", { tipoAsesor: "freelance" as const, freelanceNombre: "Free Uno", recobro: 50000, recobroAliado: 20000 }],
+    ["B2B agencia con recobro al aliado", { tipoAsesor: "agencia" as const, agenciaNombre: "Agencia Uno", aliadoId: 7, recobro: 100000, recobroAliado: 60000 }],
+    ["B2B freelance", { tipoAsesor: "freelance" as const, freelanceNombre: "Free Uno", aliadoId: 8, recobro: 50000, recobroAliado: 20000 }],
     ["USD", { moneda: "USD" }],
   ] as const) {
     test(nombre, () => {

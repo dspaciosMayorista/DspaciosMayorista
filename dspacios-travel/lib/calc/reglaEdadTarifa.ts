@@ -83,7 +83,13 @@ export type ValidacionEdadesHotel =
   | { ok: true; regla: ReglaEdadTarifa }
   | { ok: false; faltantes: string[]; invalidos: string[]; error: string };
 
-/** Mensaje accionable (se muestra tal cual al personal y al visitante; no expone datos internos). */
+/**
+ * O-1: texto para visitantes, aliados B2B y cualquier respuesta que salga del servidor hacia un usuario externo cuando un hotel no se puede
+ * cotizar con menores por su configuración interna. No nombra campos, rutas internas ni instrucciones de Producto.
+ */
+export const MENSAJE_EDADES_HOTEL_PUBLICO = "Este hotel no está disponible para cotizar con menores en este momento. Consulta con un asesor o cotiza solo con adultos.";
+
+/** Mensaje accionable SOLO INTERNO (nombra campos y la ruta de Producto). Nunca debe llegar a un usuario externo: ver `lib/tarifario/detalleInterno.ts`. */
 export function mensajeEdadesHotel(nombreHotel: string | null | undefined, faltantes: readonly string[], invalidos: readonly string[]): string {
   const quien = nombreHotel && nombreHotel.trim() ? `El hotel «${nombreHotel.trim()}»` : "Este hotel";
   const detalle = [

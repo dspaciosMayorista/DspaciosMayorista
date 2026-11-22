@@ -17,9 +17,10 @@ export async function registrarAbonoCartera(
   confirmarExcedente: boolean | undefined, // pago adicional intencional sobre un contrato ya cubierto
   operacionId: string | undefined,         // idempotencia del registro (una por intento de formulario)
   identidad: IdentidadContrato,
+  monedaPago?: "COP" | "USD",              // #126: moneda en que llegó el dinero (solo contratos cobrados en USD); opcional, después de la identidad
 ): Promise<ResultadoAbono> {
   if (!(valor > 0)) return { ok: false, error: "El valor debe ser mayor a 0" };
-  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm, fecha, confirmarExcedente, operacionId, identidad);
+  const r = await registrarAbono(numeroContrato, valor, formaPago, referencia, trm, fecha, confirmarExcedente, operacionId, identidad, monedaPago);
   if (!r.ok) return r;
   revalidatePath("/dashboard/cartera");
   return { ok: true };

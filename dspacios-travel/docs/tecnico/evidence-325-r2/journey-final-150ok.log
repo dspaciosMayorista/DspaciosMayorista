@@ -1,0 +1,178 @@
+
+══ S.1 · entrada: el documento del titular se valida con la regla de la conversión (checkout real de la freelance) ══
+OK    S.1 CE «E1234567»: el checkout lo rechaza al capturar y dice por qué
+OK    S.1 el rechazo no creó ninguna cotización
+OK    S.1 letras sin tipo elegido: se pide elegir el tipo
+OK    S.1 con CE «1234567» se generó C-0007 (id 8, 2 viajeros) con el titular tal cual
+
+══ Q/P · portal del aliado: pasajeros adicionales opcionales y comprobantes (ANTES de cualquier contrato) ══
+OK    Q/P C-0007 muestra su panel «Preparar la solicitud (opcional)» y NO obliga a usarlo
+OK    Q/P el resumen parte en 0 comprobantes y 0 pasajeros adicionales (nada inventado)
+OK    Q un CE con letras se rechaza al guardar (misma regla que la conversión) y no se guarda nada
+OK    Q el pasajero adicional quedó guardado tal como se escribió ([{"nombres": "Marco", "tipoDoc": "CE", "apellidos": "Vega Demo", "numeroDoc": "7654321", "nacionalidad": "", "fechaNacimiento": "1987-02-02"}])
+OK    Q con 2 viajeros cotizados el tope es 1 adicional: «Agregar pasajero» queda deshabilitado
+OK    Q tras guardar, el resumen dice 1 pasajero adicional (el servidor releyó lo guardado)
+OK    Q al recargar, el pasajero adicional sigue precargado en el portal
+OK    P el comprobante quedó vigente en la cotización y su huella coincide con la del archivo (dd30987a1b29…)
+OK    P el archivo se guardó en el bucket privado (un objeto más)
+OK    P adjuntar NO crea ni aprueba un pago: abonos, pagos previos, contratos y soportes de contrato idénticos
+OK    P un .txt se rechaza por su contenido real: sin fila nueva ni objeto nuevo
+OK    P un texto disfrazado de .png se rechaza por su contenido real: sin fila nueva ni objeto nuevo
+OK    P reintento con el MISMO archivo: sin fila ni objeto duplicados (idempotente)
+OK    P un segundo archivo distinto queda vigente (2)
+OK    P retirar conserva la fila (vigente 1 de 2) y el archivo (el objeto no se borra)
+OK    P el retiro deja constancia de quién y cuándo
+OK    P tras subir, rechazar, repetir y retirar, el dinero sigue intacto
+OK    U portal del aliado (panel abierto) · escritorio (1366px): 12 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U portal del aliado (panel abierto) · intermedio (820px): 12 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U portal del aliado (panel abierto) · movil (390px): 12 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+
+══ Q/P · otro aliado y otros roles NO alcanzan esta evidencia ni estos pasajeros ══
+OK    P Beto (otro aliado) no ve C-0007 ni a Marco en su portal
+OK    P Beto (otro aliado): por la API directa (RLS) no lee evidencias ni pasajeros guardados (200/200)
+OK    P Camila (la dueña): por la API directa (RLS) no lee evidencias ni pasajeros guardados (200/200)
+OK    P visitante anónimo: por la API directa (RLS) no lee evidencias ni pasajeros guardados (401/401)
+OK    P un aliado no puede llamar las funciones de escritura desde el navegador (solo el servidor: 403/403)
+
+══ R · solicitud → aviso → administración@ (rol real del aviso) ve la evidencia ANTES de pagar y convierte ══
+OK    R la solicitud de contrato queda registrada (un evento)
+OK    R solicitar no tocó la evidencia ni los pasajeros ya preparados
+OK    R la campana de administración@ avisa de la solicitud
+OK    R administración ve «Evidencia previa del aliado (1 vigente)» y que NO es un pago, ANTES de cualquier pago
+OK    R la evidencia aparece ARRIBA del botón de generar contrato (se ve antes de confirmar)
+OK    R «Abrir» entrega el archivo exacto que subió la aliada (URL firmada de 2 min; misma huella)
+OK    R mirar y abrir la evidencia no registra nada: dinero idéntico
+OK    U cotización — evidencia previa (personal) · escritorio (1366px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U cotización — evidencia previa (personal) · intermedio (820px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U cotización — evidencia previa (personal) · movil (390px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    R administración@ ve el selector OBLIGATORIO con 1 asesor(es) venta de SU agencia y activos (antes: vacío; el de la otra agencia y el inactivo NO salen): Rev Venta
+OK    R la fila 1 es la titular (Laura Vega Demo · CE 1234567) — 2 filas
+OK    Q la fila 2 llega con lo que la aliada escribió (Marco Vega Demo · CE 7654321), SIN retipear
+OK    Q la fecha de nacimiento del pasajero adicional también llegó
+OK    R sin asesor la conversión sigue exigiéndolo (administración no es superadmin) y no crea nada
+OK    S.2 al convertir, un CE con letras se rechaza ANTES de enviar con la misma regla de la captura
+OK    R administración@ (no superadmin) generó el contrato DTM-0006
+OK    Q el contrato conservó a los dos pasajeros tal como los escribieron la aliada y el personal (Laura Vega Demo:CE:1234567:1985-01-01 | Marco Vega Demo:CE:7654321:1987-02-02)
+OK    R el asesor elegido quedó en el contrato
+OK    P/R convertir NO crea abonos: el comprobante sigue siendo evidencia, no dinero
+OK    P en la ficha del CONTRATO la evidencia sigue visible antes de registrar el abono
+OK    U contrato — evidencia previa (personal) · escritorio (1366px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U contrato — evidencia previa (personal) · intermedio (820px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U contrato — evidencia previa (personal) · movil (390px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    R reintento: la cotización dice «Convertida en…», sin botón, y hay UN solo contrato
+OK    P la cotización convertida conserva visible su evidencia
+OK    P el pago existe SOLO porque el personal lo registró; la evidencia sigue igual (vigente, sin vincularse sola)
+
+══ R · aislamiento de agencia y de roles ══
+OK    R el administrador de la OTRA agencia (minorista) no ve la cotización, ni su evidencia, ni sus pasajeros
+OK    R por la API con gerencia@revision.test: evidencia visible, pasajeros del aliado visibles (obtenido 2/1)
+OK    R por la API con operaciones@revision.test: evidencia visible, pasajeros del aliado visibles (obtenido 2/1)
+OK    R por la API con venta@revision.test: evidencia NO visible, pasajeros del aliado visibles (obtenido 0/1)
+OK    R por la API con minorista@revision.test: evidencia NO visible, pasajeros del aliado NO visibles (obtenido 0/0)
+OK    R la solución NO abrió `usuarios`: por la API administración@ sigue sin poder listar asesores (la lista sale solo en esta pantalla, con nombre y correo)
+
+══ T · modal «Cotizar» del hotel por unidad (CARTAGENA U1) en la app compilada ══
+OK    T visitante · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): se abre el modal «Cotizar» del hotel por unidad
+OK    T visitante · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): el modal cotiza 750.000 (calculado a mano: 2 adultos × 3 noches × 100.000 + cargos propios); obtenido 750000
+OK    T visitante · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): base 600000 + cargos propios 150000 = total 750000 (nada contado dos veces)
+OK    T visitante · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): base 600000 y cargos 150000 como en el cálculo a mano
+OK    T visitante · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): equivalente informativo ≈ 300000 c/u, marcado como informativo
+OK    T modal · 8+2 años · escritorio (1366px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T modal · 8+2 años · intermedio (820px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T modal · 8+2 años · movil (390px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T visitante · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): recotizar devuelve el mismo total
+OK    T el total GUARDADO de la cotización (C-0008) es 750.000, el mismo del modal: el equivalente informativo no lo cambió
+OK    T visitante · solo un menor INCLUIDO (infante de 2): se abre el modal «Cotizar» del hotel por unidad
+OK    T visitante · solo un menor INCLUIDO (infante de 2): el modal cotiza 600.000 (calculado a mano: 2 adultos × 3 noches × 100.000 + cargos propios); obtenido 600000
+OK    T visitante · solo un menor INCLUIDO (infante de 2): base 600000 + cargos propios 0 = total 600000 (nada contado dos veces)
+OK    T visitante · solo un menor INCLUIDO (infante de 2): base 600000 y cargos 0 como en el cálculo a mano
+OK    T visitante · solo un menor INCLUIDO (infante de 2): equivalente informativo ≈ 300000 c/u, marcado como informativo
+OK    T modal · 2 años · escritorio (1366px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T modal · 2 años · intermedio (820px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T modal · 2 años · movil (390px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T visitante · solo un menor INCLUIDO (infante de 2): recotizar devuelve el mismo total
+OK    T visitante · un menor que PAGA COMO ADULTO (14 años): se abre el modal «Cotizar» del hotel por unidad
+OK    T visitante · un menor que PAGA COMO ADULTO (14 años): el modal cotiza 900.000 (calculado a mano: 2 adultos 600.000 + menor como adulto 300.000); obtenido 900000
+OK    T visitante · un menor que PAGA COMO ADULTO (14 años): base 900000 + cargos propios 0 = total 900000 (nada contado dos veces)
+OK    T visitante · un menor que PAGA COMO ADULTO (14 años): NO se ofrece equivalente por adulto y se dice que paga como adulto
+OK    T modal · 14 años · escritorio (1366px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T modal · 14 años · intermedio (820px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T modal · 14 años · movil (390px): el desglose cabe en el ancho de la ventana, sin desborde horizontal
+OK    T visitante · un menor que PAGA COMO ADULTO (14 años): recotizar devuelve el mismo total
+OK    T administracion@ (personal) · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): se abre el modal «Cotizar» del hotel por unidad
+OK    T administracion@ (personal) · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): el modal cotiza 750.000 (calculado a mano: 2 adultos × 3 noches × 100.000 + cargos propios); obtenido 750000
+OK    T administracion@ (personal) · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): base 600000 + cargos propios 150000 = total 750000 (nada contado dos veces)
+OK    T administracion@ (personal) · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): base 600000 y cargos 150000 como en el cálculo a mano
+OK    T administracion@ (personal) · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): equivalente informativo ≈ 300000 c/u, marcado como informativo
+OK    T administracion@ (personal) · ejemplo del dueño: niño de 8 (cargo propio) + infante de 2 (incluido): recotizar devuelve el mismo total
+OK    T administracion@ (personal) · solo un menor INCLUIDO (infante de 2): se abre el modal «Cotizar» del hotel por unidad
+OK    T administracion@ (personal) · solo un menor INCLUIDO (infante de 2): el modal cotiza 600.000 (calculado a mano: 2 adultos × 3 noches × 100.000 + cargos propios); obtenido 600000
+OK    T administracion@ (personal) · solo un menor INCLUIDO (infante de 2): base 600000 + cargos propios 0 = total 600000 (nada contado dos veces)
+OK    T administracion@ (personal) · solo un menor INCLUIDO (infante de 2): base 600000 y cargos 0 como en el cálculo a mano
+OK    T administracion@ (personal) · solo un menor INCLUIDO (infante de 2): equivalente informativo ≈ 300000 c/u, marcado como informativo
+OK    T administracion@ (personal) · solo un menor INCLUIDO (infante de 2): recotizar devuelve el mismo total
+OK    T administracion@ (personal) · un menor que PAGA COMO ADULTO (14 años): se abre el modal «Cotizar» del hotel por unidad
+OK    T administracion@ (personal) · un menor que PAGA COMO ADULTO (14 años): el modal cotiza 900.000 (calculado a mano: 2 adultos 600.000 + menor como adulto 300.000); obtenido 900000
+OK    T administracion@ (personal) · un menor que PAGA COMO ADULTO (14 años): base 900000 + cargos propios 0 = total 900000 (nada contado dos veces)
+OK    T administracion@ (personal) · un menor que PAGA COMO ADULTO (14 años): NO se ofrece equivalente por adulto y se dice que paga como adulto
+OK    T administracion@ (personal) · un menor que PAGA COMO ADULTO (14 años): recotizar devuelve el mismo total
+
+══ V · carreras REALES de subida (acción de servidor + Storage + base) sobre UNA cotización ══
+OK    V cotización de prueba C-0009 (id 10)
+OK    V identico #1: 4 solicitudes simultáneas con el MISMO archivo → exactamente 1 fila y 1 objeto nuevos; 3 rechazada(s) por la base con compensación y 0 resuelta(s) por idempotencia; fila⇄objeto coherentes
+OK    V identico #2: 4 solicitudes simultáneas con el MISMO archivo → exactamente 1 fila y 1 objeto nuevos; 3 rechazada(s) por la base con compensación y 0 resuelta(s) por idempotencia; fila⇄objeto coherentes
+OK    V identico #3: 4 solicitudes simultáneas con el MISMO archivo → exactamente 1 fila y 1 objeto nuevos; 3 rechazada(s) por la base con compensación y 0 resuelta(s) por idempotencia; fila⇄objeto coherentes
+OK    V tras las carreras de contenido idéntico, abonos/pagos previos/contratos/soportes de contrato siguen idénticos
+OK    V preparación del último cupo: 4 vigentes (queda 1 libre), fila⇄objeto coherentes
+OK    V último cupo: 4 archivos DISTINTOS simultáneos → exactamente 1 gana (5 vigentes), 3 rechazados por el límite con su objeto COMPENSADO (borrado): objetos 4→5, filas 4→5
+OK    V los 3 perdedores recibieron el aviso de límite en pantalla (3/3)
+OK    V el archivo ganador es uno de los 4 enviados y su huella coincide con la guardada
+OK    V el último cupo tampoco tocó dinero: abonos/pagos previos/contratos/soportes de contrato idénticos
+       [carreras] compensaciones por contenido idéntico: 9, resueltas por idempotencia: 0 (de 9 solicitudes perdedoras en 3 rondas)
+
+══ X · pasajeros del aliado con un menor y un infante: conversión del carrito y vínculo con el adulto responsable ══
+OK    X cotización C-0010 con 2 adultos + menor de 8 + infante de 1 (4 viajeros)
+OK    X el aliado guardó 3 pasajeros: adulto, menor (TI) e infante (RC), con sus fechas de nacimiento
+OK    X las 4 filas llegan precargadas sin retipear (4)
+OK    X tipo y número de documento del menor (TI) y del infante (RC) llegan tal como los escribió el aliado
+OK    X la pantalla clasifica a Sol por su fecha de nacimiento (8 años)
+OK    X la pantalla clasifica a Bebé como infante y EXIGE su adulto responsable (regla existente; el aliado no lo inventó)
+OK    X el responsable llega SIN elegir: ni el aliado ni el sistema lo deciden
+OK    X sin adulto responsable la conversión se rechaza con la regla existente y no crea contrato
+OK    X con el adulto responsable elegido por el personal se generó DTM-0007
+OK    X adulto persistido tal como lo escribió la aliada (Marco Prueba Menores:CE:7654321:1987-02-02:false:-)
+OK    X menor de 8 años persistido con TI, su documento y su fecha, sin ser infante ni llevar responsable
+OK    X infante persistido como infante, con RC y su fecha, vinculado al adulto responsable que eligió el personal (id 16)
+OK    X convertir no creó abonos
+
+══ W · cotización de tarifario (no carrito) de una aliada: pasajeros guardados → pantalla de conversión → contrato ══
+OK    W una cotización dinámica (manual): el panel DICE que no admite pasajeros adicionales y no ofrece escribirlos (no promete un traspaso que no ocurre)
+OK    W una cotización que ya trae pasajeros capturados por D'spacios: el panel DICE que no admite pasajeros adicionales y no ofrece escribirlos (no promete un traspaso que no ocurre)
+OK    W C-9005 (tarifario sin pasajeros) SÍ ofrece escribir pasajeros
+OK    W la aliada guardó 3 pasajeros de la cotización de 2 adultos + 2 menores: un adulto, un menor de 8 (TI) y un menor de 5 (RC)
+OK    W en la dinámica y en la que ya trae pasajeros NO quedó guardado nada
+OK    W la pantalla de conversión NO-carrito muestra 4 filas (titular + 3)
+OK    W las filas 2-4 llegan precargadas con lo que escribió la aliada (nombres, tipo y número de documento), sin retipear
+OK    W las fechas de nacimiento también llegan
+OK    W administración@ generó el contrato DTM-0008 desde la cotización NO-carrito
+OK    W el contrato guarda a los 3 pasajeros de la aliada (adulto y dos menores) exactamente como los escribió (Sofía Ejemplo 125 abierta:CC:125000003:1975-05-05:false:- | Ana Uno:CC:1010101010:1985-03-04:false:- | Tomas Dos:TI:2020202020:2018-01-01:false:- | Lucia Tres:RC:3030303030:2021-01-01:false:-)
+OK    W convertir no crea abonos
+OK    W (composición distinta) las filas llegan precargadas también aquí
+OK    W (composición distinta) la regla EXISTENTE pasajeros↔acomodación rechaza la conversión con su mensaje y no se crea contrato (el sistema no ajusta ni inventa nada)
+OK    W (composición distinta) lo que la aliada guardó se conserva tras el rechazo (la conversión no lo borra ni lo altera)
+OK    W ninguna conversión creó abonos ni soportes
+
+══ U · consumo: solicitudes en reposo (30 s) con el panel nuevo frente a pantallas equivalentes sin él ══
+       reposo 31 s · portal SIN panel (inicio del aliado): acciones 1, lecturas REST del navegador 0, otras 0
+OK    U portal SIN panel (inicio del aliado): en reposo, cero lecturas del navegador a la base y cero navegaciones/recargas
+       reposo 31 s · portal CON panel (cotizaciones asistidas, panel abierto): acciones 1, lecturas REST del navegador 0, otras 0
+OK    U portal CON panel (cotizaciones asistidas, panel abierto): en reposo, cero lecturas del navegador a la base y cero navegaciones/recargas
+       reposo 31 s · personal SIN evidencia (panel principal): acciones 1, lecturas REST del navegador 0, otras 0
+OK    U personal SIN evidencia (panel principal): en reposo, cero lecturas del navegador a la base y cero navegaciones/recargas
+       reposo 31 s · personal CON evidencia (cotización del aliado): acciones 1, lecturas REST del navegador 0, otras 0
+OK    U personal CON evidencia (cotización del aliado): en reposo, cero lecturas del navegador a la base y cero navegaciones/recargas
+OK    U el panel nuevo no suma solicitudes en reposo: portal 1 = 1 sin panel; personal 1 = 1 sin evidencia (el sondeo de 30 s de la campana, ya existente)
+OK    U el reposo equivale a ≤ 1 sondeo de la campana por 30 s y pestaña (31 s de espera → 1; no crece)
+       [consumo por paso] [["checkout hasta aquí",7,0,4],["portal: guardar pasajeros + 7 operaciones de comprobante",9,0,121],["personal: abrir cotización + evidencia + convertir",4,0,22],["reposo 31 s · portal SIN panel (inicio del aliado)",1,0,0],["reposo 31 s · portal CON panel (cotizaciones asistidas, panel abierto)",1,0,0],["reposo 31 s · personal SIN evidencia (panel principal)",1,0,0],["reposo 31 s · personal CON evidencia (cotización del aliado)",1,0,0]]
+
+=== O-3/O-2: 150 OK, 0 FALLO

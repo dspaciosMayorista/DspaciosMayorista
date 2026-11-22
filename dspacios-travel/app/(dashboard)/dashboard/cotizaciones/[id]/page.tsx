@@ -38,6 +38,9 @@ import PagosPreviosPanel, { type PagoPrevioUI } from "@/components/cotizacion/Pa
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ReintentarPersonasBtn } from "./ReintentarPersonasBtn";
+import { EvidenciaAliadoPanel } from "@/components/cotizacion/EvidenciaAliadoPanel";
+import { cargarEvidenciaAliado } from "@/lib/cotizacion/evidenciaAliadoServidor";
+import { asesoresDeAgencia, puedeListarAsesores } from "@/lib/cotizacion/asesoresConversion";
 import {
   mensajePersonas, participantesDesdeCotizacion, personasPendientes, versionTitular, type PuestoRegistrado,
 } from "@/lib/personas/cotizacion";
@@ -179,7 +182,7 @@ export default async function CotizacionDetallePage({
   const condicionesUI = condicionesParaUI((condRows ?? []) as FilaCondicionRowUI[]);
 
   const { data: { user } } = await sb.auth.getUser();
-  const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre, activo").eq("id", user.id).single() : { data: null };
+  const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre, activo, tenant").eq("id", user.id).single() : { data: null };
   const esSuperadmin = perfil?.rol === "superadmin";
   // El panel de pagos previos (migración 164) lo ve/opera solo el rol
   // autorizado — la MISMA lista que `_autorizado_pago_previo` en SQL.
@@ -216,7 +219,12 @@ export default async function CotizacionDetallePage({
   // Composición privada del precio (netas y markup): solo roles con acceso a costos y DESPUÉS de la comprobación de tenant de arriba. null = no se conservó.
   const composicionGuardada = esPagoAutorizado && !esManual && process.env.SUPABASE_SERVICE_ROLE_KEY ? await leerComposicionGuardada(createAdminClient(), cotizacionId) : null;
   // Los asesores internos son los usuarios con rol 'venta'.
-  const { data: asesores } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
+  const { data: asesoresRls } = await sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre");
+  // O-3: administración/gerencia/operaciones NO leen `usuarios` por RLS (solo su perfil) y el asesor es obligatorio para ellas: reciben una lista ESTRECHA (nombre y correo de los `venta` activos de la MISMA agencia de la cotización).
+  const asesores = puedeListarAsesores(perfil ?? null, c.tenant ?? null) ? await asesoresDeAgencia(c.tenant as string) : asesoresRls;
+  // O-3: evidencia previa que el aliado adjuntó a esta cotización (RLS decide qué rol la ve) y pasajeros adicionales que escribió (los precarga la conversión).
+  const evidenciaAliado = esPagoAutorizado ? await cargarEvidenciaAliado(sb, [c.id]) : { evidencias: [], codigos: {} };
+  const { data: pasAliadoFila } = (esCarrito || c.tipo === "tarifario") ? await (sb as unknown as { from: (t: string) => { select: (c: string) => { eq: (a: string, b: number) => { maybeSingle: () => PromiseLike<{ data: { pasajeros: { nombres: string; apellidos: string; tipoDoc: string; numeroDoc: string; fechaNacimiento: string; nacionalidad: string }[] } | null }> } } } }).from("cotizacion_pasajeros_aliado").select("pasajeros").eq("cotizacion_id", c.id).maybeSingle() : { data: null };
   // % por defecto del recobro para el aliado en B2B (editor de niños/recobro).
   const { data: paramDist } = await sb.from("parametros_tributarios").select("valor").eq("parametro", "recobro_pct_aliado_b2b").maybeSingle();
   const pctAliadoB2B = Number(paramDist?.valor ?? 0.5);
@@ -244,7 +252,7 @@ export default async function CotizacionDetallePage({
   const payloadCarrito = (c.payload ?? {}) as {
     items?: { destino: string | null; pax: number; fechaIda: string | null; hotelNombre: string; ref?: string; paqueteId?: number; precio?: number }[];
     tours?: { nombre?: string; destino: string | null; pax: number; fechaIda?: string | null; paqueteId?: number; hotelRef?: string | null; precio?: number }[];
-    cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string };
+    cliente?: { nombres?: string; apellidos?: string; numeroDoc?: string; tipoDoc?: string };
     manuales?: { clase?: string; nombre?: string; pax?: number; precio?: number; moneda?: string; hotelRef?: string | null }[];
   };
   const itemsCarrito = payloadCarrito.items ?? [];
@@ -263,6 +271,7 @@ export default async function CotizacionDetallePage({
     nombres: payloadCarrito.cliente?.nombres ?? "",
     apellidos: payloadCarrito.cliente?.apellidos ?? "",
     numeroDoc: payloadCarrito.cliente?.numeroDoc ?? "",
+    tipoDoc: payloadCarrito.cliente?.tipoDoc ?? "",
   };
   const detalleCarrito = (c.detalle ?? {}) as { contratos?: string[]; contratosPorGrupo?: Record<string, string> };
   const contratosCarrito = detalleCarrito.contratos ?? (c.numero_contrato ? [c.numero_contrato] : []);
@@ -299,8 +308,9 @@ export default async function CotizacionDetallePage({
     // Solo los roles de pago leen los pagos (RLS); para el resto basta el congelado
     // (el primer pago siempre congela) y la base vuelve a comprobarlo.
     tienePagos: (pagosPrevios ?? []).length > 0,
+    netoFijado: esNeto, // #48: una cotización con NETO fijado no se edita (el sello quedaría desactualizado)
   });
-  const avisoEdicion = !elegibilidad.ok && ["VENCIDA", "CON_PAGOS", "CONGELADA", "AUTOR"].includes(elegibilidad.codigo)
+  const avisoEdicion = !elegibilidad.ok && ["VENCIDA", "CON_PAGOS", "CONGELADA", "AUTOR", "NETO_FIJADO"].includes(elegibilidad.codigo)
     ? elegibilidad.mensaje
     : null;
   // #82: paquete 100 % dinámico → panel propio (valores con versión, costos reales, versiones mostradas).
@@ -493,6 +503,8 @@ export default async function CotizacionDetallePage({
         </div>
       )}
 
+      <EvidenciaAliadoPanel evidencias={evidenciaAliado.evidencias} codigos={evidenciaAliado.codigos} antesDe="registrar un pago" />
+
       {/* Pagos previos + congelado de condiciones (migración 164, Commit 4).
           Solo cotización manual ABIERTA y rol autorizado; las demás tipos
           (single/carrito) llegan con la conversión a contrato único. */}
@@ -571,6 +583,7 @@ export default async function CotizacionDetallePage({
                 asesores={asesores ?? []}
                 miNombre={perfil?.nombre ?? ""}
                 miRolVenta={perfil?.rol === "venta"}
+                pasajerosAliado={pasAliadoFila?.pasajeros ?? []}
               />
             </div>
           ) : c.estado === "convertida" && contratosCarrito.length ? (
@@ -611,6 +624,10 @@ export default async function CotizacionDetallePage({
             permiteMonedaCobro={oferta63Cot != null}
             monedaOferta={c.moneda ?? "COP"}
             totalOferta={Number(c.precio_venta ?? 0)}
+            // O-3: solo si la cotización aún no trae pasajeros (si los trae, la conversión es directa y la lista del aliado no se usa: la base ya lo rechaza al guardar).
+            pasajerosAliado={tienePasajeros ? [] : (pasAliadoFila?.pasajeros ?? [])}
+            // Fecha con la que el servidor y la base clasifican infantes y adultos responsables.
+            fechaReferencia={c.fecha_salida ?? (c.payload as { fechaIda?: string } | null)?.fechaIda ?? null}
           />
         ) : c.estado === "convertida" && c.numero_contrato ? (
           <div className="flex flex-wrap items-center justify-between gap-3">

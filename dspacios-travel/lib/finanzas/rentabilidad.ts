@@ -3,6 +3,8 @@ import { calcRentabilidad, fiscalFromParams } from "@/lib/calc/finanzas";
 import { comisionParaRentabilidad, type FilaComisionB2B } from "@/lib/finanzas/comisionB2B";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
 import { getTenant } from "@/lib/tenant.server";
+import { contratosUsdProvisionales } from "@/lib/finanzas/cobroUsdReporte";
+import { cargarAbonosParaReporte } from "@/lib/finanzas/abonosReporte";
 
 // Fila de rentabilidad por contrato (ya en COP). Fuente ÚNICA usada por el módulo
 // Rentabilidad y por Punto de equilibrio, para que el margen neto sea idéntico.
@@ -34,6 +36,8 @@ export type RentabilidadFila = {
   moneda?: string;
   pvpUsd?: number;
   trm?: number;
+  /** #126-A: contrato en USD con saldo por cobrar: su total en COP es provisional (parte cobrada + estimación). */
+  copProvisional?: boolean;
   facturacion?: { irt: number; ingresoPropio: number; exento: number };
 };
 
@@ -49,13 +53,14 @@ export async function calcularRentabilidad(): Promise<{
   const sb = await createClient();
   const tenant = await getTenant();
   const [{ data: ventas }, { data: b2b }, { data: facturas }, { data: cxp }, { data: asesores }, { data: facturacionCfg }] = await Promise.all([
-    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato, comision_estado").eq("tenant", tenant).order("fecha_venta", { ascending: false }),
+    sb.from("ventas").select("numero_contrato, cliente, asesor, asesor_firma_nombre, destino, canal, fecha_venta, precio_venta, costo_hotel, costo_aereo, costo_receptivo, costo_asistencia, otros_costos, moneda, trm_contrato, comision_estado, moneda_cobro").eq("tenant", tenant).order("fecha_venta", { ascending: false }),
     sb.from("aliados_b2b").select("id, numero_contrato, precio_venta, base_comision, base_explicita, comision_valor, pct_comision, recobro_total, pct_recobro_aliado, aplica_retencion, pct_retencion, estado, descontada_en_precio"),
     sb.from("facturacion").select("numero_contrato, base_gravable, iva_descontable"),
     sb.from("cuentas_por_pagar").select("numero_contrato, iva_proveedor, clasificacion, valor_total"),
     sb.from("asesores").select("nombre, email, pct_comision_base"),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento"),
   ]);
+  const provisionales = contratosUsdProvisionales(ventas ?? [], await cargarAbonosParaReporte(sb, tenant));
 
   const { data: paramsRows } = await sb.from("parametros_tributarios").select("parametro, valor");
   const fiscal = fiscalFromParams(paramsRows ?? []);
@@ -136,6 +141,7 @@ export async function calcularRentabilidad(): Promise<{
       moneda: (v.moneda as string) ?? "COP",
       pvpUsd: (v.moneda ?? "COP") === "USD" ? (v.precio_venta ?? 0) : undefined,
       trm: (v.moneda ?? "COP") === "USD" ? f : undefined,
+      copProvisional: provisionales.has(v.numero_contrato) || undefined,
       facturacion: liq ? { irt: liq.irt, ingresoPropio: liq.ingresoPropio, exento: liq.ingresoExento } : undefined,
     };
   });

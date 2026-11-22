@@ -934,7 +934,8 @@ describe("busquedaUnidadActions.ts — frontera pública (requisitos C y D)", ()
   test("un hotel inconcluyente marca la búsqueda como INCOMPLETA y registra el motivo real — nunca desaparece en silencio (el defecto original)", () => {
     assert.match(codigoAction, /incompleto = true;/);
     assert.match(codigoAction, /console\.error\(`\[buscarAlojamientosUnidadPorFechas\] etapa=evaluacion hotelId=\$\{v\.hotelId\} motivo=\$\{v\.motivo\}`\);/);
-    assert.match(codigoAction, /return \{ ok: true, disponibilidad, incompleto, enRevision \};/);
+    // O-1: el motivo de configuración (campos de edades, ruta de Producto) solo sale para personal interno; el resto recibe la lista vacía.
+    assert.match(codigoAction, /return \{ ok: true, disponibilidad, incompleto, enRevision: interno \? enRevision : \[\] \};/);
   });
 
   test("no escribe nada (solo lectura): ninguna mutación en la acción", () => {

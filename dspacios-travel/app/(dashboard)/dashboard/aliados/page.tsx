@@ -31,6 +31,7 @@ export default async function AliadosPage() {
         aliados={aliados ?? []}
         defAgencia={pmap.get("COMISION_AGENCIA") ?? 0.12}
         defFreelance={pmap.get("COMISION_FREELANCE") ?? 0.11}
+        puedeLogo={["superadmin", "gerencia"].includes(perfil?.rol ?? "")}
       />
     </div>
   );

@@ -50,7 +50,8 @@ describe("archivos que NO se tocan (decisión del Coordinador)", () => {
     // base que gana cada noche; infante conserva su base solo en ese modo; empate de bases con precio = noche no vendida solo para ese modo), los campos de «un niño gratis por
     // habitación» y la salida aditiva `ninoGratisNoches`. Sin esos campos el motor da exactamente lo de antes (lo fijan promoMultibase125.baseline/motor.test.ts).
     // Cualquier otro cambio debe volver a actualizar esta huella con su motivo.
-    assert.equal(huella("lib/calc/paquetes.ts"), "db769a69692d1b35");
+    // #126-D (F2 de Codex, ronda 1): `liquidarHotelNochesConTemporadas` agrega la salida ADITIVA `nochesPorGanadora` (noches que ganó cada vigencia, para rotular el alcance de CADA promoción); ninguna fórmula ni importe cambia (6 líneas, solo salida).
+    assert.equal(huella("lib/calc/paquetes.ts"), "61f9c34d32185876");
   });
   test("origen.ts y salidaDinamicaVigente.ts (#62) quedan intactos", () => {
     assert.equal(huella("lib/reservar/origen.ts"), "346a364394e5a31b");

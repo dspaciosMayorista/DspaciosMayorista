@@ -1,0 +1,80 @@
+
+══ Z.1 · origen REAL de la cotización: la aliada cotiza sola (NETO y comisión) y el personal arma una para ella ══
+OK    Z.1 se creó la cotización NETO de la aliada: C-0019 (id 25)
+OK    Z.1 se creó la cotización comisionable de la aliada: C-0020 (id 26)
+OK    Z.1 se creó la cotización asistida NETO: C-0021 (id 27)
+OK    Z.1 se creó la cotización asistida comisionable: C-0022 (id 28)
+OK    Z.1 C-0019: el servidor selló origen=aliado_directo, modo=neta, autor=la aliada
+OK    Z.1 C-0020: origen=aliado_directo, modo=comisionable
+OK    Z.1 C-0021: origen=asistida, modo=neta, autor=el personal
+OK    Z.1 C-0022: origen=asistida, modo=comisionable
+OK    Z.1 cada cotización conserva congelados sus términos financieros (total exigible > 0)
+OK    Z.1 la pestaña DIRECTAS trae la NETO y la comisionable de la aliada (C-0019, C-0020)
+OK    Z.1 ninguna de las dos aparece en ASISTIDAS (la modalidad NETO ya no la manda ahí)
+OK    Z.1 las dos que armó el personal para ella siguen en ASISTIDAS y no en Directas (C-0021, C-0022)
+OK    Z.1 los conteos de las pestañas son las filas visibles (Directas 17=17; Asistidas 4=4)
+OK    Z.1 una cotización aparece en UNA sola lista (sin duplicados entre pestañas)
+OK    Z.1 la cotización NETO ya existente de la aliada (C-0007, convertida, con plan congelado) también pasa a Directas: la corrección alcanza lo ya guardado
+OK    Z.1 otra aliada (Beto) no ve ninguna de las cuatro, ni en Directas ni en Asistidas
+OK    Z.1 crear cotizaciones no tocó dinero: abonos, pagos previos, contratos y soportes idénticos
+OK    U pestañas de cotizaciones (directas) · escritorio (1366px): 2 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U pestañas de cotizaciones (directas) · intermedio (820px): 2 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U pestañas de cotizaciones (directas) · movil (390px): 2 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+
+══ Z.2 · panel de pasajeros del aliado: compacto, sin botón al completar el universo, vuelve al quitar una fila ══
+OK    Z.2 cotización C-0023 con 6 viajeros (4 adultos + menor de 8 + infante de 1) ⇒ 5 adicionales además del titular
+OK    Z.2 sin pasajeros adicionales todavía caben 5: «Agregar pasajero» se ofrece
+OK    Z.2 el aliado guardó sus 5 pasajeros adicionales (la base los aceptó)
+OK    Z.2 tras guardar, los 5 pasajeros quedan COMPACTOS (5 resúmenes, ningún formulario expandido)
+OK    Z.2 universo completo (titular + 5 = 6): «Agregar pasajero» NO se ofrece y el panel explica por qué
+OK    Z.2 cada resumen es legible: «Pasajero 6 Bebe Infante · RC 1111222234 · nac. 2025-03-10 Editar Quitar»
+OK    Z.2 la vista compacta ocupa 378 px frente a 1345 px con los 5 formularios expandidos (< 60 %)
+OK    Z.2 «Editar» reabre cada pasajero con sus datos intactos
+OK    Z.2 compactar OTRA fila no pierde lo escrito (sin guardar) en la que sigue abierta
+OK    Z.2 un documento inválido se rechaza en pantalla con su mensaje y la fila sigue abierta (lo inválido no se esconde)
+OK    U panel de pasajeros del aliado (5 adicionales, mixto) · escritorio (1366px): 37 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 adicionales, mixto) · intermedio (820px): 37 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 adicionales, mixto) · movil (390px): 37 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Z.2 al guardar, todo vuelve a compactarse y el cambio quedó guardado
+OK    U panel de pasajeros del aliado (5 compactos) · escritorio (1366px): 13 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 compactos) · intermedio (820px): 13 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 compactos) · movil (390px): 13 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Z.2 quitar un pasajero (4 adicionales) libera un lugar: «Agregar pasajero» VUELVE a mostrarse
+OK    Z.2 al agregar de nuevo el universo se completa y el botón desaparece otra vez (la fila nueva queda abierta)
+OK    Z.2 las altas/bajas sin guardar no tocaron la base (siguen 5 guardados)
+
+══ Z.3 · conversión del personal sobre esa cotización: filas compactas, infante con responsable, sin botón de agregar ══
+OK    Z.3 6 filas: 5 compactas (titular + 3 adultos + menor) y 1 ABIERTA (el infante, que aún no tiene responsable) — compactas 5, abiertas 1
+OK    Z.3 la fila abierta es la del infante y trae su selector de adulto responsable
+OK    Z.3 universo declarado completo (6 filas = 6 viajeros): «+ Agregar pasajero» no se ofrece
+OK    Z.3 el titular (sin fecha de nacimiento) se ve compacto pero con «Faltan: nacimiento»
+OK    U conversión del personal — 5 compactas + infante abierto · escritorio (1366px): 27 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión del personal — 5 compactas + infante abierto · intermedio (820px): 27 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión del personal — 5 compactas + infante abierto · movil (390px): 27 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Z.3 el infante se compacta mostrando SU responsable elegido: «Pasajero 6 Bebe Infante · RC 1111222234 · nac. 2025-03-10 · Infante · 1a · responsable: Adulto Editado Dos Editar Quitar»
+OK    Z.3 con las filas compactas y el responsable elegido se generó DTM-0013
+OK    Z.3 el infante quedó persistido como infante con responsable_id = el adulto que eligió el personal (id 36)
+OK    Z.3 se persistieron los 6 pasajeros (titular + 5 adicionales) tal como estaban en las filas compactas
+OK    Z.3 convertir no creó abonos
+
+══ Z.3b · «Agregar pasajero» en la conversión: se oculta al completar el universo y vuelve al quitar una fila ══
+OK    Z.3b C-0024: 2 viajeros = 2 filas ⇒ no hay «+ Agregar pasajero»
+OK    Z.3b quitar una fila libera un lugar: el botón VUELVE
+OK    Z.3b agregar de nuevo completa el universo y el botón desaparece
+
+══ Z.3c · cotización de carrito con DOS hoteles (universo ambiguo): el botón NO se oculta por el máximo ══
+OK    Z.3c con dos hoteles de 2 viajeros hay 2 filas pero el botón SIGUE: el universo no se calcula como el máximo; la nota explica que el personal confirma el número real
+OK    Z.3c solo la cota de seguridad (suma de los dos hoteles = 4) detiene el botón
+
+══ Z.4 · tarjeta de tarifa (Vista Booking): importe regular y a pagar dentro del bloque del niño ══
+       tarjetas con desglose: 4; bloques de niño con beneficio: 2
+OK    Z.4 la nota nombra al niño y junta tarifa regular y a pagar: «Niño 1 · 8 años: tarifa regular $ 197.000 · a pagar $ 0 c/u · Niño gratis · PRE BF»
+OK    Z.4 una sola tarifa regular tachada y dentro del bloque del niño
+OK    Z.4 el infante y los adultos no llevan nota de beneficio
+OK    Z.4 la nota está geométricamente DENTRO del bloque del niño (no suelta debajo de la tarjeta)
+OK    Z.4 tarjeta · escritorio (1366px): sin desborde horizontal
+OK    Z.4 tarjeta · intermedio (820px): sin desborde horizontal
+OK    Z.4 tarjeta · movil (390px): sin desborde horizontal
+
+=== O-3/O-2: 64 OK, 0 FALLO
+GUION_EXIT=0

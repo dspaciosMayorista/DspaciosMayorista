@@ -9,6 +9,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { descuentoMostrado, type DescuentoMostrado } from "@/lib/calc/precedenciaPromociones";
+import { promocionMostrada, type PromocionMostrada } from "@/lib/calc/promoMostrada";
 import { soloAutorizadas } from "@/lib/reservar/reglasDescuentoHotel";
 import {
   noches,
@@ -281,6 +282,8 @@ export type CotizarResult =
       // #90: regla EBB / Long Stay que usó este cálculo (null = sin descuento). Solo se muestra. Entrega 5: si algún combo decidió
       // otro por acomodación, cada combo trae el suyo (`combos[i].descuentoHotel`) y este es el del primero.
       descuentoHotel?: DescuentoMostrado | null;
+      // #126-D: promoción ganadora del primer combo (cada combo trae la suya en `combos[i].promocionHotel`).
+      promocionHotel?: PromocionMostrada | null;
     }
   | { ok: false; error: string; sugerencias: SugerenciaFecha[] };
 
@@ -383,12 +386,14 @@ export async function cotizarPorFechas(inputRaw: unknown): Promise<CotizarResult
     // y lo que se muestra de él, por acomodación si difiere (nunca el de una como si fuera de todas).
     ...(c.descuentoPorAcom ? { descuentoPorAcom: c.descuentoPorAcom, descuentoHotel: descuentoMostrado(res.descuentoHotel, c.descuentoPorAcom, Object.keys(c.precios)) } : {}),
     preciosMenor2: c.preciosMenor2, preciosSinFijo: c.preciosSinFijo, preciosMenor2SinFijo: c.preciosMenor2SinFijo,
+    promocionHotel: promocionMostrada(c.promosPorAcom, Object.keys(c.precios).filter((a) => a !== "nino" && a !== "nino2" && a !== "infante")),
   }));
   const condicion = condicionHotelFechas(datos.temporadas, { fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso });
   return {
     ok: true, combos: combosPublicos, noches: numNoches, moneda: res.moneda, condicion,
     // #90: regla EBB / Long Stay que usó ESTE cálculo (null = no se aplicó descuento): solo para mostrarla, no cambia ningún importe.
     descuentoHotel: combosPublicos[0] && "descuentoHotel" in combosPublicos[0] ? combosPublicos[0].descuentoHotel ?? null : descuentoMostrado(res.descuentoHotel, undefined, []),
+    promocionHotel: combosPublicos[0]?.promocionHotel ?? null,
     // Marca honesta (decisión del dueño): esta tabla es POR PERSONA y no
     // conoce el tamaño del grupo, así que un servicio incluido con cobro por
     // grupo no puede estar en `precios`. Se nombra para que la UI advierta
@@ -444,7 +449,7 @@ export type NocheAdicional =
 // Lo de siempre (categoría/régimen/total/pax/menores) + el detalle de ocupación de #102. Los campos nuevos son
 // opcionales para no invalidar carritos/fixtures anteriores; `buscarHoteles` los llena siempre.
 export type ComboBusqueda = Pick<ComboEvaluado, "categoria" | "regimen" | "total" | "pax" | "menores"> &
-  Partial<Pick<ComboEvaluado, "habitaciones" | "edadesMenores" | "edadesComoAdulto" | "asignacion" | "resumenHabitaciones" | "desglose" | "descuento" | "beneficioNinoGratis">> &
+  Partial<Pick<ComboEvaluado, "habitaciones" | "edadesMenores" | "edadesComoAdulto" | "asignacion" | "resumenHabitaciones" | "desglose" | "descuento" | "promocion" | "beneficioNinoGratis">> &
   { nocheAdicional?: NocheAdicional };
 /** Un hotel que NO pudo evaluarse por una política de edades ambigua/incompleta: pide revisión, nunca un precio inventado. */
 export type HotelEnRevision = {
@@ -487,6 +492,8 @@ export type BusquedaResultado = {
   // #90: regla EBB / Long Stay que aplicó el cálculo de ESTE precio (mismas fechas; null = sin descuento). Solo para mostrarla junto al precio.
   // Entrega 5: mixta (`porAcomodacion`) si la precedencia decidió distinto por acomodación de esta composición.
   descuentoHotel?: DescuentoMostrado | null;
+  // #126-D: promoción que realmente ganó en el combo más barato (cada combo trae la suya en `combos[i].promocion`).
+  promocionHotel?: PromocionMostrada | null;
 };
 
 // Máximo de hoteles/paquetes cuyo `DatosHotelPaquete` (ya cargado durante la
@@ -674,7 +681,7 @@ function calcularNocheAdicional(args: {
 // fechas, destino, adultos, habitaciones, cantidad de menores, edades) antes
 // de tocar la base de datos o el motor de liquidación.
 export async function buscarHoteles(inputRaw: unknown): Promise<
-  { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; sugerenciasFecha?: SugerenciaFecha[]; enRevision?: HotelEnRevision[] } | { ok: false; error: string }
+  { ok: true; resultados: BusquedaResultado[]; diagnostico?: string; diagnosticoConfig?: boolean; sugerenciasFecha?: SugerenciaFecha[]; enRevision?: HotelEnRevision[] } | { ok: false; error: string }
 > {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.error("[buscarHoteles] etapa=arranque detalle=SUPABASE_SERVICE_ROLE_KEY no configurada");
@@ -772,6 +779,9 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
   let evaluados = 0;
   let falloTecnico = false;
   const registrarRechazo = (motivo: string) => rechazos.set(motivo, (rechazos.get(motivo) ?? 0) + 1);
+  // O-1: motivos que describen la CONFIGURACIÓN interna del hotel (no capacidad/fechas/Adults Only). Este motor devuelve el detalle completo;
+  // la acción de servidor que lo expone (`reservar/actions.ts`) lo sanea según la sesión antes de que salga hacia el navegador.
+  const motivosConfig = new Set<string>();
   const enRevision: HotelEnRevision[] = [];
   // Datos crudos de cada hotel/paquete cuya carga tuvo éxito pero NO tenía
   // tarifa para la fecha pedida (o exigía más noches) — se guardan (sin
@@ -843,6 +853,7 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     if (comp.edadesHotelIncompletas) {
       const motivo = mensajeEdadesHotel(res.hotelNombre, comp.edadesHotelIncompletas.faltantes, comp.edadesHotelIncompletas.invalidos);
       registrarRechazo(motivo);
+      motivosConfig.add(motivo);
       if (enRevision.length < 20) enRevision.push({ hotelId: hotel, hotelNombre: res.hotelNombre, paqueteId: paquete, motivo, codigo: "edades_hotel_incompletas" });
       continue;
     }
@@ -860,10 +871,13 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
         habitaciones: mejor.habitaciones, menores: mejor.menores, edadesMenores: mejor.edadesMenores, edadesComoAdulto: mejor.edadesComoAdulto, pax: mejor.pax,
         combos: combosValidos, condicion, incluidosDeLaSalida: incluidosDeLaSalida(res),
         descuentoHotel: mejor.descuento ?? null,
+        promocionHotel: mejor.promocion ?? null,
         ...(mejor.beneficioNinoGratis ? { beneficioNinoGratis: mejor.beneficioNinoGratis } : {}),
       });
     } else if (comp.falloReglaEdad) {
-      registrarRechazo("No se pudo determinar con certeza la regla de edad de niño/infante para ningún combo de este hotel (configuración ambigua o incompleta).");
+      const motivoAmbiguo = "No se pudo determinar con certeza la regla de edad de niño/infante para ningún combo de este hotel (configuración ambigua o incompleta).";
+      registrarRechazo(motivoAmbiguo);
+      motivosConfig.add(motivoAmbiguo);
       if (enRevision.length < 20) enRevision.push({ hotelId: hotel, hotelNombre: res.hotelNombre, paqueteId: paquete });
     } else if (!comp.rechazos.length) {
       // Solo cuando NINGÚN combo dio un motivo concreto (capacidad, edades, tarifa de niño…): el motivo real nunca queda tapado por este genérico.
@@ -900,7 +914,11 @@ export async function buscarHoteles(inputRaw: unknown): Promise<
     // problema de capacidad/edad/Adults Only).
     sugerenciasFecha = await sugerenciasBusquedaGeneral(admin, datosSinTarifaParaFecha, input, numNoches);
   }
-  return { ok: true, resultados, diagnostico, sugerenciasFecha, ...(enRevision.length ? { enRevision } : {}) };
+  return {
+    ok: true, resultados, diagnostico, sugerenciasFecha,
+    ...(diagnostico && motivosConfig.has(diagnostico) ? { diagnosticoConfig: true } : {}),
+    ...(enRevision.length ? { enRevision } : {}),
+  };
 }
 
 // ── Mini-motor de búsqueda de RECEPTIVOS (servicios): liquida EN VIVO cada

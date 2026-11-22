@@ -86,6 +86,12 @@ export default async function EstadosFinancierosPage({ searchParams }: { searchP
         {/* Estado de resultados */}
         <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="mb-3 text-sm font-bold uppercase tracking-wide" style={{ color: "var(--brand-primary)" }}>Estado de Resultados · {ef.mes}</h2>
+          {ef.contratosCopProvisional > 0 && (
+            <p data-testid="aviso-cop-provisional" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {ef.contratosCopProvisional} contrato{ef.contratosCopProvisional === 1 ? "" : "s"} en USD de este mes aún tiene{ef.contratosCopProvisional === 1 ? "" : "n"} saldo por cobrar:
+              su parte en pesos es provisional (lo cobrado a la TRM de cada pago más una estimación del saldo).
+            </p>
+          )}
           <table className="w-full text-sm">
             <tbody>
               <Fila k="Ingresos operacionales (ingreso propio)" v={r.ingresoPropio} bold />

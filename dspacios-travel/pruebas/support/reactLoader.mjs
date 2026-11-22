@@ -217,6 +217,10 @@ export async function resolve(specifier, context, nextResolve) {
       (specifier === "./soportes-actions" && context.parentURL?.endsWith("/SoportesPagoInterno.tsx"))) {
     return { url: pathToFileURL(join(AQUI, "stubs", "soportesActionsStub.mjs")).href, shortCircuit: true };
   }
+  // O-3 (325): el panel de preparación de contrato del portal importa sus Server Actions; renderizado en pruebas no se invocan.
+  if (specifier === "@/app/portal/b2b/cotizaciones/preparacion-actions" && context.parentURL?.endsWith("/components/portal/PanelPreparacionContrato.tsx")) {
+    return { url: pathToFileURL(join(AQUI, "stubs", "preparacionActionsStub.mjs")).href, shortCircuit: true };
+  }
   if (specifier === "@/lib/supabase/client" && context.parentURL?.endsWith("/servicios/ServicioFotoCell.tsx")) {
     return { url: STUB_SUPABASE_CLIENT, shortCircuit: true };
   }
@@ -261,7 +265,11 @@ export async function resolve(specifier, context, nextResolve) {
        context.parentURL?.endsWith("/dashboard/usuarios/actions.ts") ||
        // #107: acciones por lote del armado (setServicios, desvincularSalidasEmpaquetados63).
        context.parentURL?.endsWith("/dashboard/paquetes/actions.ts") ||
-       context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts"))) {
+       context.parentURL?.endsWith("/portal/b2b/agentes/actions.ts") ||
+       // #78: «Solicitar contrato» (botón del portal) importa su acción, que revalida la pestaña.
+       context.parentURL?.endsWith("/portal/b2b/cotizaciones/actions.ts") ||
+       // #32: el editor de logo del catálogo interno (aliados) importa su acción de servidor.
+       context.parentURL?.endsWith("/dashboard/aliados/logo-actions.ts"))) {
     return { url: specifier === "next/cache" ? STUB_NEXT_CACHE : STUB_SUPABASE_SERVER, shortCircuit: true };
   }
   if ((specifier === "../empaquetados-actions" || specifier === "../../empaquetados-actions") &&
@@ -308,6 +316,10 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/login/LoginClient.tsx") ||
       // Edición de Mi perfil (#25, pruebas/portalPerfilEditor25.react.ts).
       context.parentURL?.endsWith("/perfil/PerfilEditor.tsx") ||
+      // Firma del aliado y aceptación de la cuenta de cobro (#98, pruebas/cuentaCobro98.react.ts).
+      context.parentURL?.endsWith("/components/portal/AceptarCuenta.tsx") || context.parentURL?.endsWith("/components/portal/FirmaAliado.tsx") ||
+      // Logo del aliado (#32): lo monta el catálogo interno de Aliados (pruebas/cotizacionAsistidaB2B102.documentos.react.ts) y el perfil del portal.
+      context.parentURL?.endsWith("/components/portal/LogoAliado.tsx") ||
       // Aviso de contrato eliminado/reemplazado (#75, pruebas/avisoContratoCambio75.react.ts).
       context.parentURL?.endsWith("/AvisoContratoCambio.tsx") ||
       // Botón de salir que importa el portal B2B (pruebas/comisionPortalB2B.react.ts).

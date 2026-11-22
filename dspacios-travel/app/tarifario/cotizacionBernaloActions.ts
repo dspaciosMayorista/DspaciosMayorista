@@ -104,6 +104,9 @@ export type ResultadoCotizarAlojamientoBernaloPublicoOk = {
   // netos/comisión/proveedor/snapshot/payload. Ver
   // `lib/reservar/composicionHabitacionBernalo.ts`.
   composicionHabitaciones: ComposicionHabitacionPublica[];
+  // O-2: cargo explícito de cada menor (edad/clase, incluido | por noche | por estadía | paga como adulto, y su importe de VENTA ya incluido en `pvp`) para
+  // explicar el total en el modal. Campo a campo desde `cargosMenoresUnidad`: sin netos, brutos, comisión ni snapshot.
+  menores: CargoMenorUnidad[];
 };
 
 export type ResultadoCotizarAlojamientoBernaloPublico = ResultadoCotizarAlojamientoBernaloPublicoOk | RechazoCotizacionBernaloPublico;
@@ -121,6 +124,8 @@ export type EntradaCotizarAlojamientoBernaloPublico = {
 // que arma el servicio interno (que puede describir identidades de tarifa/
 // nombres de servicio pensados para diagnóstico interno, no para un
 // visitante público, regla C1.21/22).
+import { MENSAJE_EDADES_HOTEL_PUBLICO } from "@/lib/calc/reglaEdadTarifa";
+import type { CargoMenorUnidad } from "@/lib/reservar/cargosMenoresUnidad";
 const MENSAJES_PUBLICOS: Record<string, string> = {
   error_interno: "No fue posible cotizar con los datos ingresados.",
   ocupacion_invalida: "La ocupación indicada no es válida.",
@@ -128,7 +133,7 @@ const MENSAJES_PUBLICOS: Record<string, string> = {
   hotel_no_vinculado: "Este hotel no está disponible para cotización en este momento.",
   clasificacion_no_vinculada: "La categoría o alimentación seleccionada no está disponible para este hotel.",
   configuracion_incompleta: "Este hotel todavía no tiene su configuración completa para cotizar en línea.",
-  edades_hotel_incompletas: "Este hotel no se puede cotizar con menores en este momento (falta completar su configuración de edades). Cotiza solo con adultos o contacta a un asesor.",
+  edades_hotel_incompletas: MENSAJE_EDADES_HOTEL_PUBLICO,
   hotel_solo_adultos: "Este hotel es solo para adultos y no admite menores.",
   salida_no_vinculada: "La salida seleccionada no es válida para este paquete.",
   salidas_no_disponibles: "No hay salidas disponibles para este paquete en este momento.",
@@ -228,5 +233,6 @@ export async function cotizarAlojamientoBernaloPublico(
     paxTotal: resultado.paxTotal,
     promedioPorViajero: resultado.paxTotal > 0 ? Math.round(resultado.precioVenta / resultado.paxTotal) : resultado.precioVenta,
     composicionHabitaciones: construirComposicionHabitacionesPublica(resultado.habitaciones),
+    menores: (resultado.menores ?? []).map((m) => ({ habitacion: m.habitacion, edad: m.edad, clase: m.clase, cobro: m.cobro, cargoVenta: m.cargoVenta, noches: m.noches })),
   };
 }

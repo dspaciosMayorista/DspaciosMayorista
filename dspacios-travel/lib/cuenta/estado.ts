@@ -11,7 +11,14 @@ export type AbonoCuenta = {
   forma_pago: string | null;
   referencia: string | null;
   recibido_por: string | null;
+  /** #126-A: pesos realmente recibidos y TRM de ESTE pago (solo contratos cobrados en USD; null en COP o si el pago no los registró). */
+  monto_cop: number | null;
+  trm: number | null;
+  /** 'USD' = dólares RECIBIDOS (monto_cop es su equivalente contable a trm, no pesos recibidos); 'COP' o null = pesos recibidos. */
+  moneda_pago: "COP" | "USD" | null;
   saldoTras: number; // saldo del contrato JUSTO DESPUÉS de este abono
+  /** Total abonado JUSTO DESPUÉS de este abono (acumulado hasta este recibo; no el total de hoy). */
+  pagadoTras: number;
 };
 
 export type EstadoCuenta = {
@@ -26,6 +33,11 @@ export type EstadoCuenta = {
   pagado: number;
   saldo: number;
   abonos: AbonoCuenta[];
+  /** #126-A: pesos realmente RECIBIDOS (suma de monto_cop de los pagos en pesos) cuando el contrato se cobra en USD; null en COP. Es un hecho, no una estimación; no incluye dólares recibidos. */
+  cobradoCop: number | null;
+  /** #126-A: dólares recibidos como dólares y su equivalente CONTABLE en pesos (a la TRM de cada pago); null si el contrato no se cobra en USD. */
+  recibidoUsd: number | null;
+  equivalenteContableCop: number | null;
   esInterno: boolean;
 };
 
@@ -91,7 +103,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
 
   const { data: abs } = await admin
     .from("abonos")
-    .select("id, fecha_abono, valor_abono, forma_pago, referencia, recibido_por")
+    .select("id, fecha_abono, valor_abono, forma_pago, referencia, recibido_por, monto_cop, trm, moneda_pago")
     .eq("numero_contrato", numero)
     .order("fecha_abono", { ascending: true })
     .order("id", { ascending: true });
@@ -109,7 +121,11 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
       forma_pago: a.forma_pago as string | null,
       referencia: a.referencia as string | null,
       recibido_por: a.recibido_por as string | null,
+      monto_cop: cobro.moneda === "USD" && a.monto_cop != null ? Number(a.monto_cop) : null,
+      trm: cobro.moneda === "USD" && a.trm != null ? Number(a.trm) : null,
+      moneda_pago: cobro.moneda === "USD" && a.moneda_pago === "USD" ? "USD" : cobro.moneda === "USD" && a.moneda_pago === "COP" ? "COP" : null,
       saldoTras: Math.max(precio - acum, 0),
+      pagadoTras: acum,
     };
   });
 
@@ -125,6 +141,9 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
     pagado: acum,
     saldo: Math.max(precio - acum, 0),
     abonos,
+    cobradoCop: cobro.moneda === "USD" ? abonos.filter((a) => a.moneda_pago !== "USD").reduce((s, a) => s + (a.monto_cop ?? 0), 0) : null,
+    recibidoUsd: cobro.moneda === "USD" ? abonos.filter((a) => a.moneda_pago === "USD").reduce((s, a) => s + a.valor_abono, 0) : null,
+    equivalenteContableCop: cobro.moneda === "USD" ? abonos.filter((a) => a.moneda_pago === "USD").reduce((s, a) => s + (a.monto_cop ?? 0), 0) : null,
     esInterno,
   };
 }

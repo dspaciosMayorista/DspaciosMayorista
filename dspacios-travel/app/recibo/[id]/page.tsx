@@ -4,7 +4,7 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { cargarRecibo, numeroRecibo } from "@/lib/cuenta/estado";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda, formatFechaLarga, formatCOP } from "@/lib/utils";
 import { enLetras } from "@/lib/numeroLetras";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 
@@ -71,6 +71,18 @@ export default async function ReciboCajaPage({ params }: { params: Promise<{ id:
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Recibido de</td><td className="py-2 text-right">{ec.cliente ?? "—"}</td></tr>
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Por concepto de</td><td className="py-2 text-right">Abono al contrato {ec.numero_contrato}{ec.destino ? ` · ${ec.destino}` : ""}</td></tr>
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Forma de pago</td><td className="py-2 text-right">{abono.forma_pago ?? "—"}</td></tr>
+              {abono.moneda_pago === "USD" && abono.monto_cop != null && abono.trm != null && (
+                <tr className="border-b border-gray-100" data-testid="recibo-usd-recibido">
+                  <td className="py-2 text-gray-500">Pago recibido en dólares</td>
+                  <td className="py-2 text-right tabular-nums">{formatMoneda(abono.valor_abono, ec.moneda)} recibidos · equivalente contable {formatCOP(abono.monto_cop)} a TRM {formatCOP(abono.trm)} <span className="block text-[11px] text-gray-400">(el equivalente es solo contable: no se recibieron pesos)</span></td>
+                </tr>
+              )}
+              {abono.moneda_pago !== "USD" && abono.monto_cop != null && abono.trm != null && (
+                <tr className="border-b border-gray-100" data-testid="recibo-conversion">
+                  <td className="py-2 text-gray-500">Pago recibido en pesos</td>
+                  <td className="py-2 text-right tabular-nums">{formatCOP(abono.monto_cop)} a TRM {formatCOP(abono.trm)} = {formatMoneda(abono.valor_abono, ec.moneda)}</td>
+                </tr>
+              )}
               {abono.referencia && (
                 <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Referencia</td><td className="py-2 text-right">{abono.referencia}</td></tr>
               )}
@@ -80,7 +92,7 @@ export default async function ReciboCajaPage({ params }: { params: Promise<{ id:
           {/* Resumen del contrato tras el pago */}
           <div className="mt-5 grid grid-cols-3 gap-3 text-center">
             <Resumen label="Valor contrato" valor={formatMoneda(ec.precio_venta, ec.moneda)} />
-            <Resumen label="Pagado a la fecha" valor={formatMoneda(ec.pagado, ec.moneda)} />
+            <Resumen label="Pagado hasta este recibo" valor={formatMoneda(abono.pagadoTras, ec.moneda)} />
             <Resumen label="Saldo" valor={formatMoneda(abono.saldoTras, ec.moneda)} resaltar={abono.saldoTras > 0} />
           </div>
 

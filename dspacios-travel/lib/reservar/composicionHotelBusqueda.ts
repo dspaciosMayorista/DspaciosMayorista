@@ -25,6 +25,7 @@ import { calcularBeneficioNinoGratis, type NinoGratisConcedido } from "../hotele
 import { aplicarNinoGratisADesglose, sumaDesglose } from "./ninoGratisDesglose.ts";
 import { ventaNinoCondonada } from "./ninoGratisPrecio.ts";
 import { descuentoMostrado, type DescuentoMostrado } from "../calc/precedenciaPromociones.ts";
+import { promocionMostrada, type PromocionMostrada } from "../calc/promoMostrada.ts";
 import { cargoGrupoIncluido } from "./serviciosPaquete.ts";
 import {
   asignarHabitacionesHotel, clasificarMenoresDeHotel, construirDesglose, edadesPorClase, resumenHabitaciones,
@@ -37,6 +38,8 @@ export type ComboEvaluado = {
   habitaciones: Record<string, number>;
   /** Etiqueta EBB / Long Stay de ESTE combo (la precedencia con una promoción puede decidir otra distinta de la de la estadía; viene de main #436/#438). */
   descuento?: DescuentoMostrado | null;
+  /** #126-D: promoción que realmente ganó en ESTE combo y ocupación (null = ninguna); el alcance dice si cubre toda la estadía. Solo informativa. */
+  promocion?: PromocionMostrada | null;
   /** Solo quienes pagan tarifa de menor (infante/niño). */
   edadesMenores: number[];
   /** Edades reales de menores que ESTE hotel cobra como adulto (no se reescribe al pasajero). */
@@ -215,6 +218,7 @@ export function evaluarComposicionHotel(e: EntradaComposicion): ResultadoComposi
           ...Object.entries(porAcom).filter(([, n]) => (n ?? 0) > 0).map(([a]) => a),
           ...(menores.nino ? ["nino"] : []), ...(menores.nino2 ? ["nino2"] : []), ...(menores.infantes ? ["infante"] : []),
         ]),
+        promocion: promocionMostrada(combo.promosPorAcom, Object.entries(porAcom).filter(([, n]) => (n ?? 0) > 0).map(([a]) => a)),
         habitaciones: Object.fromEntries(Object.entries(porAcom).filter(([, n]) => (n ?? 0) > 0)) as Record<string, number>,
         ...(beneficioNG ? { beneficioNinoGratis: beneficioNG } : {}),
         edadesMenores: cl.menores, edadesComoAdulto: cl.comoAdulto, asignacion: habitaciones,

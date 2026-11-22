@@ -392,7 +392,8 @@ describe("Hallazgo 1 corregido — paquetes/actions.ts (filasHoteles) persiste l
 
   test("costoHotel sale de `resultado.total` — resultado viene de la MISMA búsqueda que produce la identidad, nunca de un cálculo aparte por fecha_ida", () => {
     // #43/#60 entrega 6: con grupos, el «desde» de porción sale de desdeEstadiaReal (total y procedencia de la MISMA estadía); sin grupos, como antes.
-    assert.match(paquetesActions, /const resultado = desdeReal\s*\n\s*\? \(desdeReal\.desde \? \{ total: desdeReal\.desde\.total, procedencia: desdeReal\.desde\.procedencia \} : null\)\s*\n\s*: masBarato\s*\n\s*\? liquidarHotelMasBaratoConTemporada\(/);
+    // #127: la ventana «desde» se evalúa por tramos de entradas vendibles (sin cierre general = UN solo tramo, la ventana de siempre); el resultado y su identidad siguen saliendo de la MISMA búsqueda.
+    assert.match(paquetesActions, /const resultado = desdeReal\s*\n\s*\? \(desdeReal\.desde \? \{ total: desdeReal\.desde\.total, procedencia: desdeReal\.desde\.procedencia \} : null\)\s*\n\s*: masBarato\s*\n\s*\? tramos\(hastaVentana\)\.map\(\(\[d, h\]\) => liquidarHotelMasBaratoConTemporada\(/);
     assert.match(paquetesActions, /: liquidarHotelNochesConTemporadas\(/);
     assert.match(paquetesActions, /const costoHotel = resultado\?\.total \?\? null;/);
   });
@@ -832,8 +833,8 @@ describe("HOTFIX — filas de servicio en generarTarifario declaran las 5 column
     // 226: la fila de hotel se publica desde `publicarFila(acom, costoHotel, procedencia)` (la comparten la fila normal
     // y la fila de infante con hotel $0); su `procedencia` sigue saliendo de `columnasProcedencia(resultado?.procedencia)`.
     assert.match(paquetesActions, /const procedencia = columnasProcedencia\(resultado\?\.procedencia\);/);
-    // Entrega 6: quinto argumento = entrada que justifica el «desde» (solo porción con grupos).
-    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel, desdeReal\?\.desde\?\.justificacion\.entrada \?\? null\);/);
+    // Entrega 6: quinto argumento = entrada que justifica el «desde» (porción con grupos). #127 G1: o el testigo vendible de un «desde» cuya ventana toca un cierre general.
+    assert.match(paquetesActions, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel, desdeReal\?\.desde\?\.justificacion\.entrada \?\? testigo\);/);
     const posPushHotel = paquetesActions.indexOf("filas.push({", paquetesActions.indexOf("const publicarFila = "));
     assert.notEqual(posPushHotel, -1, "no se encontró el push de la fila de hotel");
     const posCierre = paquetesActions.indexOf("});", posPushHotel);

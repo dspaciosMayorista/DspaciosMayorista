@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import { trmNormalizada, validarTrmPago } from "@/lib/finanzas/pagoUsd";
 import type { DatosExcedente } from "@/lib/finanzas/excedenteAbono";
 
 // Registro de un abono desde un formulario (ficha del contrato y Cartera comparten esto):
@@ -9,8 +10,8 @@ import type { DatosExcedente } from "@/lib/finanzas/excedenteAbono";
 //    respuesta —, así lo confirmado es exactamente el abono que se le mostró a quien confirma.
 //  · Cada envío lleva su clave de operación; una doble pulsación no sale mientras hay uno en curso y, si saliera, la
 //    base devuelve el mismo abono. Tras registrar, el formulario solo se limpia si NO cambió desde el envío.
-export type EnvioAbono = { valor: number; forma: string; ref: string; trm?: number; fecha: string; operacion: string };
-export type CamposAbono = { valor: string; forma: string; ref: string; trm: string; fecha: string };
+export type EnvioAbono = { valor: number; forma: string; ref: string; trm?: number; fecha: string; operacion: string; monedaPago?: "COP" | "USD" };
+export type CamposAbono = { valor: string; forma: string; ref: string; trm: string; fecha: string; monedaPago?: "COP" | "USD" };
 type Respuesta = { ok: boolean; error?: string; confirmacion?: DatosExcedente; confirmacionPendiente?: boolean };
 
 export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
@@ -32,7 +33,7 @@ export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
 
   const sinCambios = (e: EnvioAbono) => {
     const c = vivo.current;
-    return Number(c.valor) === e.valor && c.forma === e.forma && c.ref === e.ref && c.fecha === e.fecha && (!esUSD || Number(c.trm) === e.trm);
+    return Number(c.valor) === e.valor && c.forma === e.forma && c.ref === e.ref && c.fecha === e.fecha && (!esUSD || (trmNormalizada(c.trm) === e.trm && c.monedaPago === e.monedaPago));   // misma TRM normalizada que la del envío (F1 de Codex)
   };
   function registrado(e: EnvioAbono) {
     operacion.current = crypto.randomUUID(); // la operación quedó consumida: lo que se escriba ahora es otro abono
@@ -42,12 +43,14 @@ export function useRegistroAbono({ campos, esUSD, registrar, reiniciar }: {
   function enviar() {
     setError(null);
     if (sinConfirmar) { setError("El abono ya quedó registrado; reintenta la confirmación en lugar de registrarlo otra vez."); return; }
+    // #126-A: primero la TRM de ESTE pago (en modo USD el valor enviado depende de ella), después el valor.
+    const trmEnvio = esUSD ? validarTrmPago(campos.trm) : null;
+    if (trmEnvio && !trmEnvio.ok) { setError(trmEnvio.error); return; }
     const v = Number(campos.valor);
     if (!v || v <= 0) { setError("Ingresa un valor mayor a 0."); return; }
-    if (esUSD && !(Number(campos.trm) > 0)) { setError("Indica la TRM del día (contrato en USD)."); return; }
     if (enVuelo.current) return;
     enVuelo.current = true;
-    const envio: EnvioAbono = { valor: v, forma: campos.forma, ref: campos.ref, trm: esUSD ? Number(campos.trm) : undefined, fecha: campos.fecha, operacion: operacion.current };
+    const envio: EnvioAbono = { valor: v, forma: campos.forma, ref: campos.ref, trm: trmEnvio?.ok ? trmEnvio.trm : undefined, fecha: campos.fecha, operacion: operacion.current, ...(esUSD && campos.monedaPago ? { monedaPago: campos.monedaPago } : {}) };
     start(async () => {
       try {
         const r = await registrar(envio, false);
