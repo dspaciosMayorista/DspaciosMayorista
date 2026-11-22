@@ -10,7 +10,7 @@ import { createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import nodeModule from "node:module";
 import { createClient as crearClienteSupabase } from "@supabase/supabase-js";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream } from "react-dom/server";
 
 const CT = process.env.PG65_CONTENEDOR ?? "pg65portal";
 const DB = process.env.PG65_BASE ?? "";
@@ -101,6 +101,7 @@ const { default: PaginaCotizaciones } = await import("../app/portal/b2b/cotizaci
 const { default: PaginaVentas } = await import("../app/portal/b2b/ventas/page.tsx");
 const { default: PaginaCartera } = await import("../app/portal/b2b/cartera/page.tsx");
 const { default: PaginaDocumentos } = await import("../app/portal/b2b/documentos/page.tsx");
+const { default: PaginaPerfil } = await import("../app/portal/b2b/perfil/page.tsx");
 
 type Ok = Extract<Awaited<ReturnType<typeof srv.resolverContextoPortal>>, { estado: "ok" }>;
 async function ctxDe(uid: string): Promise<Ok> {
@@ -113,7 +114,9 @@ const plano = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, 
 async function pagina(Pag: (a: never) => Promise<unknown>, uid: string, vista?: string) {
   uidSesion = uid;
   const el = await (Pag as (a: unknown) => Promise<unknown>)({ searchParams: Promise.resolve(vista ? { vista } : {}) });
-  const html = renderToStaticMarkup(el as never);
+  const flujo = await renderToReadableStream(el as never);
+  await flujo.allReady;
+  const html = await new Response(flujo).text();
   return { html, texto: plano(html) };
 }
 const cop = (n: number) => formatMoneda(n, "COP").replace(/\s+/g, " ");
@@ -439,5 +442,152 @@ describe("P65-5 · paginación real (PostgREST con max-rows=1000) y lecturas fal
     const t = (await pagina(PaginaVentas, U.A, "asistidas")).texto;
     assert.match(t, /No pudimos verificar parte de tu histórico/);
     assert.match(t, /DTM-6502/); assert.doesNotMatch(t, /DTM-6504/);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Bloque Portal B2B (2026-11-19) · #84 cambios internos reflejados / #31 identidad por id
+// Los esperados son aritmética a mano sobre los datos sembrados arriba (no salen de las funciones bajo prueba).
+// ════════════════════════════════════════════════════════════════════════════
+describe("P84 · lo que el personal cambia internamente se refleja en la siguiente carga del aliado, sin filtrar costos ni mover lo congelado", () => {
+  // Estos casos parten SIEMPRE de la siembra (DTM-6501 con un solo abono de 400.000): P65-4 inserta un abono extra de 600.000 y, si falla a mitad, lo deja puesto.
+  before(() => { sql(`delete from public.abonos where numero_contrato = 'DTM-6501' and valor_abono <> 400000`); });
+  test("precio, abonos y estado: DTM-6501 pasa de saldo 600.000 a 700.000 (1.250.000 − 550.000) en Cartera e Inicio; B no cambia", async () => {
+    const antes = (await pagina(PaginaCartera, U.A, "saldo")).texto;
+    assert.ok(antes.includes(cop(600000)), "punto de partida: 1.000.000 − 400.000");
+    const deBAntes = (await pagina(PaginaCartera, U.B, "saldo")).texto;
+    try {
+      sql(`update public.ventas set precio_venta = 1250000 where numero_contrato = 'DTM-6501';
+           insert into public.abonos (numero_contrato, valor_abono, forma_pago, tenant) values ('DTM-6501', 150000, 'Transferencia', 'mayorista');`);
+      const saldo = (await pagina(PaginaCartera, U.A, "saldo")).texto;
+      assert.ok(saldo.includes(cop(700000)), "1.250.000 − (400.000 + 150.000) = 700.000");
+      assert.ok(!saldo.includes(cop(600000)), "ya no muestra el saldo anterior");
+      assert.ok(saldo.includes(cop(500000)), "el otro contrato (MIN-65-A-MIN, 500.000 sin pagos) no cambia");
+      const inicio = (await pagina(PaginaInicio, U.A)).texto;
+      assert.ok(inicio.includes(cop(1200000)), "700.000 + 500.000 en los indicadores de Inicio");
+      // Mis ventas no muestra precios (los saldos y pagos viven en Cartera): el valor y lo abonado nuevos se leen en la tabla de Cartera.
+      assert.ok(saldo.includes(cop(1250000)) && saldo.includes(cop(550000)), "Cartera: valor 1.250.000 y abonado 400.000 + 150.000 = 550.000");
+      assert.equal((await pagina(PaginaCartera, U.B, "saldo")).texto, deBAntes, "los contratos de B no se alteran por cambios sobre A");
+    } finally {
+      sql(`update public.ventas set precio_venta = 1000000 where numero_contrato = 'DTM-6501';
+           delete from public.abonos where id = (select max(id) from public.abonos where numero_contrato = 'DTM-6501' and valor_abono = 150000);`);
+    }
+    assert.ok((await pagina(PaginaCartera, U.A, "saldo")).texto.includes(cop(600000)), "revertido: vuelve a 600.000");
+  });
+
+  test("porcentaje de comisión de la participación: 5 % → 6 % de 1.800.000 pasa de 90.000 a 108.000 para A; el dueño B sigue viendo 198.000", async () => {
+    // MIN-65-A-HIST (10 % de 900.000) también le muestra 90.000 a A: se cuentan ocurrencias, no presencia.
+    const veces = (t: string, x: string) => t.split(x).length - 1;
+    const a0 = veces((await pagina(PaginaVentas, U.A, "asistidas")).texto, cop(90000));
+    assert.equal(a0, 2, "punto de partida: DTM-6504 (5 % de 1.800.000) y MIN-65-A-HIST (10 % de 900.000)");
+    try {
+      sql(`update public.aliados_b2b set pct_comision = 0.06 where numero_contrato = 'DTM-6504' and aliado_id = 6501`);
+      const a = (await pagina(PaginaVentas, U.A, "asistidas")).texto;
+      assert.ok(a.includes(cop(108000)), "A ve la comisión nueva de DTM-6504");
+      assert.equal(veces(a, cop(90000)), a0 - 1, "el 90.000 de DTM-6504 desapareció; el de MIN-65-A-HIST se conserva");
+      assert.ok(!a.includes(cop(198000)), "A sigue sin ver la del otro aliado");
+      const b = (await pagina(PaginaVentas, U.B, "asistidas")).texto;
+      assert.ok(b.includes(cop(198000)) && !b.includes(cop(108000)), "B no ve la de A");
+    } finally {
+      sql(`update public.aliados_b2b set pct_comision = 0.05 where numero_contrato = 'DTM-6504' and aliado_id = 6501`);
+    }
+  });
+
+  test("datos de la ficha editados por personal interno (teléfono) aparecen en Mi perfil de ESE aliado y en ningún otro", async () => {
+    try {
+      sql(`update public.aliados set telefono = '3100650001' where id = 6501`);
+      assert.match((await pagina(PaginaPerfil, U.A)).texto, /3100650001/);
+      assert.doesNotMatch((await pagina(PaginaPerfil, U.B)).texto, /3100650001/);
+    } finally {
+      sql(`update public.aliados set telefono = null where id = 6501`);
+    }
+    // INTEGRACIÓN: tras restablecer, el valor ya no es un dato vigente; el «Historial de tus datos» (#25) lo conserva a propósito como «antes → —».
+    const despues = await pagina(PaginaPerfil, U.A);
+    assert.doesNotMatch(plano(despues.html.replace(/<section[^>]*aria-labelledby="historial-datos"[\s\S]*?<\/section>/, "")), /3100650001/);
+    assert.match(despues.texto, /3100650001 → —/, "el historial registra el cambio y el restablecimiento");
+  });
+
+  test("congelado: cambiar el precio vivo de una cotización asistida NO mueve el total exigible acordado (900)", async () => {
+    const antes = (await pagina(PaginaCotizaciones, U.A, "asistidas")).texto;
+    assert.ok(antes.includes(cop(900)), "total exigible congelado en el payload");
+    try {
+      sql(`update public.cotizaciones set precio_venta = 5000 where codigo = 'Q65-A-ASI-M'`);
+      const despues = (await pagina(PaginaCotizaciones, U.A, "asistidas")).texto;
+      assert.ok(despues.includes(cop(900)), "el acuerdo congelado se conserva");
+      assert.ok(!despues.includes(cop(5000)), "el precio vivo interno no se presenta como el acordado");
+    } finally {
+      sql(`update public.cotizaciones set precio_venta = 1000 where codigo = 'Q65-A-ASI-M'`);
+    }
+  });
+
+  test("ningún cargador ni página del portal expone costos, aunque el contrato tenga costos cargados", async () => {
+    try {
+      sql(`update public.ventas set costo_hotel = 700000, costo_aereo = 300000, costo_receptivo = 50000, costo_asistencia = 20000, otros_costos = 10000 where numero_contrato in ('DTM-6501', 'DTM-6504')`);
+      const conj = await srv.cargarConjuntoPortal(await ctxDe(U.A), { abonos: true, vouchers: true });
+      assert.doesNotMatch(JSON.stringify(conj), /costo_|otros_costos|util_|margen|neto_proveedor/i, "ninguna columna de costo en el conjunto");
+      for (const [Pag, vista] of [[PaginaInicio, undefined], [PaginaVentas, "directas"], [PaginaVentas, "asistidas"], [PaginaCartera, "saldo"], [PaginaCartera, "pagos"], [PaginaDocumentos, undefined], [PaginaPerfil, undefined]] as const) {
+        const { html } = await pagina(Pag as never, U.A, vista);
+        assert.doesNotMatch(html, /costo_|otros_costos|Costo (neto|hotel|aéreo)/i, `${Pag.name}${vista ? ` (${vista})` : ""}`);
+      }
+    } finally {
+      sql(`update public.ventas set costo_hotel = 0, costo_aereo = 0, costo_receptivo = 0, costo_asistencia = 0, otros_costos = 0 where numero_contrato in ('DTM-6501', 'DTM-6504')`);
+    }
+  });
+});
+
+describe("P31 · identidad B2B por id en comparativas manuales: la frontera real de la base", () => {
+  const cabecera = (tipoAsesor: string) => ({
+    tipo: "comparativa_manual", tenant: "mayorista", moneda: "COP", vigencia_hasta: dia(30), cliente: "Cliente P31", destino: "CARTAGENA", plan_nombre: "Cotización comparativa",
+    pax: 2, asesor: "Asesor Interno 65", creado_por: PERFIL[U.VENTA].email, fecha_salida: dia(40), fecha_regreso: dia(44), payload: { comparativa: true, tipoAsesor }, detalle: { comparativa: true },
+  });
+  const opciones = [
+    { opcion_ref: "A", acomodacion_ref: "doble", orden: 0, etiqueta: "Hotel A", moneda: "COP", tarifa_persona: 500000, total: 1000000, resumen_publico: { hotel: "Hotel A" }, plantilla_hija: {} },
+    { opcion_ref: "B", acomodacion_ref: "doble", orden: 1, etiqueta: "Hotel B", moneda: "COP", tarifa_persona: 600000, total: 1200000, resumen_publico: { hotel: "Hotel B" }, plantilla_hija: {} },
+  ];
+  const crear = (tipoAsesor: string, aliado: number | null) =>
+    clienteLocal(TOKEN_SERVICIO).rpc("crear_cotizacion_comparativa", { p_usuario_id: U.VENTA, p_cabecera: cabecera(tipoAsesor), p_servicios: [], p_opciones: opciones, p_aliado_id: aliado });
+  const total = () => Number(sql("select count(*) from public.cotizaciones where tipo = 'comparativa_manual'"));
+
+  test("B2B (agencia o freelance) SIN aliado del catálogo: la RPC real lo rechaza y no deja ninguna fila", async () => {
+    const antes = total();
+    for (const tipo of ["agencia", "freelance"]) {
+      const r = await crear(tipo, null);
+      assert.ok(r.error, `${tipo}: debía fallar`);
+      assert.match(r.error!.message, /COMPARATIVA_DATOS.*aliado del catálogo/);
+    }
+    assert.equal(total(), antes, "ninguna comparativa creada");
+  });
+  test("aliado de OTRO tipo que la venta (freelance 6502 como agencia) y aliado inexistente: rechazados", async () => {
+    const antes = total();
+    assert.match((await crear("agencia", 6502)).error?.message ?? "", /otro tipo/);
+    assert.match((await crear("agencia", 999999)).error?.message ?? "", /no existe/);
+    assert.equal(total(), antes);
+  });
+  test("con aliado verificable (6501): se crea con aliado_id; A la ve como Asistida, B y C no la ven", async () => {
+    const a0 = (await srv.cargarComparativasPortal(await ctxDe(U.A))).asistidas.length;
+    const b0 = (await srv.cargarComparativasPortal(await ctxDe(U.B))).asistidas.length;
+    const r = await crear("agencia", 6501);
+    assert.equal(r.error, null, r.error?.message);
+    assert.equal(sql(`select aliado_id from public.cotizaciones where id = ${r.data}`), "6501");
+    const a1 = await srv.cargarComparativasPortal(await ctxDe(U.A));
+    assert.equal(a1.asistidas.length, a0 + 1, "A gana exactamente una asistida");
+    assert.ok(a1.asistidas.some((c) => c.id === r.data));
+    const b1 = await srv.cargarComparativasPortal(await ctxDe(U.B));
+    assert.equal(b1.asistidas.length, b0, "B no ve la de A");
+    assert.ok(![...b1.asistidas, ...b1.directas].some((c) => c.id === r.data));
+    const c1 = await srv.cargarComparativasPortal(await ctxDe(U.C));
+    assert.equal(c1.asistidas.length + c1.directas.length, 0, "C (otra agencia) tampoco");
+  });
+  test("histórico compatible: una comparativa B2B sin aliado ya existente (creada ANTES de la guarda) no se asigna a nadie por nombre", async () => {
+    // La forma de la fila la valida un CHECK: se crea por la RPC real (con aliado) y se deja sin aliado, como quedaban las comparativas B2B anteriores a la guarda.
+    const creada = await crear("agencia", 6501);
+    assert.equal(creada.error, null, creada.error?.message);
+    const id = Number(creada.data);
+    sql(`set session_replication_role = replica; update public.cotizaciones set aliado_id = null, payload = jsonb_set(payload, '{agenciaNombre}', '"Agencia Alfa 65"') where id = ${id};`);
+    const a = await srv.cargarComparativasPortal(await ctxDe(U.A));
+    assert.ok(![...a.asistidas, ...a.directas].some((c) => c.id === id), "el nombre «Agencia Alfa 65» del payload NO la asigna a A");
+    const b = await srv.cargarComparativasPortal(await ctxDe(U.B));
+    assert.ok(![...b.asistidas, ...b.directas].some((c) => c.id === id));
+    assert.equal(sql(`select aliado_id is null from public.cotizaciones where id = ${id}`), "t", "queda tal cual, sin asignación");
   });
 });

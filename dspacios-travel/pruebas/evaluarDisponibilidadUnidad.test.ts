@@ -237,7 +237,7 @@ describe("evaluarDisponibilidadHotelUnidad — comportamiento REAL (ejecutable, 
     const claves = Object.keys(veredicto.valor.opciones[0]).sort();
     assert.deepEqual(claves, [
       "alimentacion", "categoria", "destinoNombre", "fechaIda", "fechaRegreso",
-      "hotelId", "hotelNombre", "moneda", "ocupacion", "paqueteId", "paqueteNombre", "paxTotal", "precioVenta",
+      "hotelId", "hotelNombre", "menores", "moneda", "ocupacion", "paqueteId", "paqueteNombre", "paxTotal", "precioVenta",
     ]);
     for (const prohibido of ["costoNeto", "costo", "proveedor", "comision", "snapshot", "habitaciones", "aportePvpHotel"]) {
       assert.ok(!(prohibido in veredicto.valor.opciones[0]), `campo privado filtrado: ${prohibido}`);

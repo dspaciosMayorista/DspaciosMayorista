@@ -6,6 +6,9 @@ import type { AcomConfig } from "@/lib/acomodaciones";
 import { tramosDeJson } from "@/lib/tarifario/disponibilidadServicios";
 import { trasladosPorAlcance } from "@/lib/servicios/alcanceContexto";
 import { mensajePaqueteNoDisponibleOperador, tarifarioFallido } from "@/lib/reservar/tarifarioNoVendible";
+import { cargarCierresHoteles, MENSAJE_HOTEL_CERRADO } from "@/lib/tarifario/cierresHotel";
+import { filaCerradaPorCierre } from "@/lib/tarifario/vigencia";
+import { hoyISO } from "@/lib/calc/paquetes";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +62,29 @@ export default async function NuevaReservaPage({
           </p>
         </div>
       );
+    }
+    // #127: un enlace/carrito abierto ANTES de un cierre general del hotel no debe ofrecer esa estadía. La fila publicada es una caché: se comprueba contra la base (una lectura por página).
+    // Un fallo de lectura no equivale a «sin cierres»: se muestra no disponible.
+    {
+      const rc = await cargarCierresHoteles(createAdminClient(), [hotelId], hoyISO());
+      if (!rc.error) {
+        const cierres = rc.porHotel.get(hotelId);
+        for (let i = filas.length - 1; i >= 0; i--) {
+          const f = filas[i];
+          // Estadía fija (bloqueo/dinámico) o ventana «desde» (porción: ahí la fecha real se re-liquida en vivo): misma regla que la vitrina.
+          if (filaCerradaPorCierre({ modulo, categoria: f.categoria, acomodacion: f.acomodacion, fecha_ida: f.fecha_ida, fecha_regreso: f.fecha_regreso, noches: f.noches }, cierres)) filas.splice(i, 1);
+        }
+      }
+      if (rc.error || !filas.length) {
+        return (
+          <div className="mx-auto max-w-3xl p-8">
+            <Link href="/tarifario" className="text-sm text-gray-400 hover:text-gray-600">← Tarifario</Link>
+            <p role="alert" data-testid="hotel-cerrado" className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              {rc.error ? "No se pudo validar la disponibilidad del hotel. Intenta de nuevo." : MENSAJE_HOTEL_CERRADO}
+            </p>
+          </div>
+        );
+      }
     }
     // Edades y pax del hotel (para validar pasajeros ↔ acomodación).
     const { data: hotelRow } = await sb

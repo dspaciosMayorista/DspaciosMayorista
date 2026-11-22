@@ -48,6 +48,7 @@ function tablas(diasAnticipo: number, noches: number, reglas: FilaFalsa[] = REGL
     empaquetados: [{ id: EMPAQUETADO_ID, activo: true, record: null, compra_inicio: null, compra_fin: null, fecha_ida: IDA, fecha_regreso: REG, ruta: "BOG - CTG - BOG", aerolinea: "JetSMART", destino_id: 1, moneda: "COP", tarifa_proveedor: 1_000_000, tarifa_para_empaquetar: R, fee_infante: F }],
     destinos: [{ id: 1, nombre: "CARTAGENA", codigo_iata: "CTG", pais: "Colombia", activo: true }],
     armado_paquete_destinos_aereos: [],
+    hotel_blackouts: [], // #127: sin cierres generales en este caso
     hotel_temporadas: [{ id: 1, hotel_id: HOTEL_ID, nombre: "Base", fecha_inicio: "2000-01-01", fecha_fin: "2099-12-31", prioridad: 1, compra_inicio: null, compra_fin: null, tipo: "tarifa", descuento_valor: null, rangos: null, blackouts: null, min_noches: null, regimen_restringido: null }],
     tarifa_hotel: [{ id: 10, hotel_id: HOTEL_ID, tipo_habitacion: CAT, alimentacion: REGIMEN, temporada: "Base", neto_sencilla: null, neto_doble: NETO_USD_NOCHE, neto_triple: null, neto_multiple: null, neto_nino: null, neto_nino2: null, neto_infante: 10, nota_infante: null, notas: null, edad_infante_min: null, edad_infante_max: null, edad_nino_min: null, edad_nino_max: null, precio_final_autoritativo: false }],
     hotel_reglas_descuento: reglas.map((r) => ({ hotel_id: HOTEL_ID, ...r })),

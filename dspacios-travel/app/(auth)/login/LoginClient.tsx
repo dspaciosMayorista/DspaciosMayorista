@@ -65,10 +65,12 @@ export function LoginClient({
   quickLoginEnabled,
   inactivoInicial,
   sinPerfilInicial = false,
+  claveActualizadaInicial = false,
 }: {
   quickLoginEnabled: boolean;
   inactivoInicial: boolean;
   sinPerfilInicial?: boolean;
+  claveActualizadaInicial?: boolean;
 }) {
   const router = useRouter();
   const [portalSeleccionado, setPortalSeleccionado] = useState<PortalSeleccionado>("b2b");
@@ -252,6 +254,12 @@ export function LoginClient({
               </p>
             )}
 
+            {claveActualizadaInicial && (
+              <p role="status" className="mt-5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                Tu contraseña se actualizó. Ingresa con la nueva contraseña.
+              </p>
+            )}
+
             <form onSubmit={handleSubmit} className="mt-6 space-y-4" aria-busy={loading}>
               <div>
                 <label htmlFor="email" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[var(--login-ink-muted)]">
@@ -302,6 +310,11 @@ export function LoginClient({
                     {mostrarPassword ? <EyeOff size={17} aria-hidden /> : <Eye size={17} aria-hidden />}
                   </button>
                 </div>
+                <p className="mt-1.5 text-right text-xs">
+                  <Link href="/recuperar" className="rounded font-semibold text-[var(--login-primary)] underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--login-cyan)]" data-testid="olvide-contrasena">
+                    ¿Olvidaste tu contraseña?
+                  </Link>
+                </p>
               </div>
 
               {error && (

@@ -1,18 +1,24 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { PrintButton } from "@/components/contrato/PrintButton";
-import { formatMonedaDocumento, formatFechaLarga } from "@/lib/utils";
-import { pesosEnLetras } from "@/lib/utils/numeroALetras";
-import { POWERED_BY } from "@/lib/contrato/plantilla";
+import { CuentaCobroDocumento } from "@/components/portal/CuentaCobroDocumento";
+import { AceptarCuenta } from "@/components/portal/AceptarCuenta";
+import { formatFechaLarga } from "@/lib/utils";
+import { fechaNegocio } from "@/lib/fechaNegocio";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { agenciaDe } from "@/lib/tenant.server";
 import { esTenant } from "@/lib/tenant";
 import { resolverComisionB2B } from "@/lib/finanzas/comisionResolver";
+import { cargarContextoEdicion } from "@/lib/portal/perfilEdicionServidor";
+import { construirSnapshot, elegirVersion, hashSnapshot, MENSAJE_NO_FIRMA, puedeFirmar } from "@/lib/cuentaCobro/snapshot";
+import { contextoFirma, firmaDataUri, firmaVigente, leerAceptaciones } from "@/lib/cuentaCobro/servidor";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { ElegirComision, idComisionDeQuery } from "./ElegirComision";
 
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ numero: string }>; searchParams: Promise<{ id?: string | string[] }> };
+type Props = { params: Promise<{ numero: string }>; searchParams: Promise<{ id?: string | string[]; v?: string | string[] }> };
 
 export async function generateMetadata({ params, searchParams }: Props) {
   const { numero } = await params;
@@ -20,9 +26,14 @@ export async function generateMetadata({ params, searchParams }: Props) {
   return { title: { absolute: tituloDocumento("Cuenta de cobro", r?.numeroContrato ?? numero, r?.tipo === "comision" ? r.aliado : undefined) } };
 }
 
+const Aviso = ({ children }: { children: React.ReactNode }) => (
+  <div className="mx-auto mb-3 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 print:hidden" role="status">{children}</div>
+);
+
 export default async function CuentaCobroPage({ params, searchParams }: Props) {
   const { numero } = await params;
-  const r = await resolverComisionB2B(numero, idComisionDeQuery((await searchParams).id));
+  const sp = await searchParams;
+  const r = await resolverComisionB2B(numero, idComisionDeQuery(sp.id));
   if (!r) notFound();
   if (r.tipo === "elegir") return <ElegirComision r={r} />;
 
@@ -39,141 +50,95 @@ export default async function CuentaCobroPage({ params, searchParams }: Props) {
     );
   }
 
-  const { detalle, aliadoInfo, aliado, moneda } = r;
-  const montoComision = detalle.totalPagar;
-  const hoy = new Date().toISOString().slice(0, 10);
   // Membrete: razón/nombre comercial de la agencia dueña del contrato (mayorista
   // o minorista) — antes estaba fijo en "Mayorista", incorrecto para minorista.
   const tenantVenta = esTenant(r.tenant) ? r.tenant : "mayorista";
   const agencia = await agenciaDe(tenantVenta);
-  const nombreAgencia = agencia?.nombre_comercial || agencia?.razon_social || "D'SPACIOS TRAVEL";
-  const nitAgencia = agencia?.nit ?? null;
-  const direccionAgencia = agencia?.direccion ?? null;
+  const vivo = construirSnapshot(r, {
+    nombre: agencia?.nombre_comercial || agencia?.razon_social || "D'SPACIOS TRAVEL",
+    nit: agencia?.nit ?? null,
+    direccion: agencia?.direccion ?? null,
+  }, fechaNegocio());
+  const hashVivo = hashSnapshot(vivo);
+  const admin = createAdminClient(); // identidad:n/a — tablas propias de #98 (sin número de contrato) y Storage; el acceso ya lo decidió resolverComisionB2B
 
-  const concepto = `Comisión por venta — Contrato ${r.numeroContrato} — Cliente ${r.cliente}${r.destino ? ` — Destino ${r.destino}` : ""}`;
+  // ── #98: ¿hay una versión ACEPTADA con exactamente este contenido? ─────────
+  const lectura = vivo.clave ? await leerAceptaciones(admin, vivo.clave) : { ok: true as const, filas: [] };
+  const volver = (
+    <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
+      <Link href="/portal/b2b" className="text-sm text-gray-500 hover:text-gray-800">← Mis contratos</Link>
+      <div className="flex items-center gap-3">
+        {r.aliadoB2bId != null && (
+          <Link href={`/portal/comision/${encodeURIComponent(r.numeroContrato)}/estado-cuenta?id=${r.aliadoB2bId}`} className="text-sm text-gray-500 hover:text-gray-800">
+            Estado de cuenta →
+          </Link>
+        )}
+        <PrintButton />
+      </div>
+    </div>
+  );
+  if (!lectura.ok) {
+    // Sin poder comprobar si ya fue aceptada, no se muestra una versión «sin aceptar» que podría ser falsa.
+    return <div className="min-h-screen bg-gray-100 py-6">{volver}<Aviso>No pudimos comprobar si esta cuenta de cobro ya fue aceptada. Intenta de nuevo en unos minutos.</Aviso></div>;
+  }
+  const filas = lectura.filas;
+  const vParam = Array.isArray(sp.v) ? sp.v[0] : sp.v;
+  const mostrada = elegirVersion(filas, hashVivo, vParam);
+  const base = `/portal/comision/${encodeURIComponent(r.numeroContrato)}`;
+  const qId = r.aliadoB2bId != null ? `?id=${r.aliadoB2bId}` : "";
+
+  let snap = vivo;
+  let firma = null as null | { version: number; aceptadaEn: string; imagen: string | null };
+  let aviso: React.ReactNode = null;
+  let acciones: React.ReactNode = null;
+  if (mostrada) {
+    snap = mostrada.snapshot;
+    firma = {
+      version: mostrada.version,
+      aceptadaEn: mostrada.aceptada_en,
+      imagen: snap.aliado.id != null ? await firmaDataUri(admin, mostrada.firma_id, snap.aliado.id) : null,
+    };
+    if (mostrada.snapshot_hash !== hashVivo) {
+      aviso = <Aviso>Estás viendo la versión {mostrada.version}, aceptada el {formatFechaLarga(fechaNegocio(new Date(mostrada.aceptada_en)))}. Después cambiaron valores o datos del documento: la versión vigente aún no ha sido aceptada. <Link className="underline" href={`${base}${qId}`}>Ver la versión vigente</Link></Aviso>;
+    }
+  } else {
+    if (filas.length > 0) aviso = <Aviso>Los valores o datos de esta cuenta de cobro cambiaron después de la última aceptación (versión {filas[filas.length - 1].version}). Esta versión vigente está sin aceptar; la versión aceptada sigue disponible abajo.</Aviso>;
+    // Solo el aliado freelance dueño puede aceptar; el personal interno ve el documento pero nunca acepta por él.
+    if (!r.esInterno && r.esDueno && r.tipoAsesorEfectivo !== "agencia") {
+      const { data: { user } } = await (await createClient()).auth.getUser();
+      const p = puedeFirmar(r, user ? contextoFirma(await cargarContextoEdicion(admin, user.id)) : null);
+      if (p.ok) {
+        const f = await firmaVigente(admin, p.aliadoId);
+        acciones = !f.ok
+          ? <Aviso>No pudimos leer tu firma ahora. Intenta de nuevo en unos minutos.</Aviso>
+          : f.firma
+            ? <AceptarCuenta numero={r.numeroContrato} comisionId={r.aliadoB2bId} hash={hashVivo} />
+            : <Aviso>Para aceptar esta cuenta de cobro primero sube la imagen de tu firma en <Link className="underline" href="/portal/b2b/perfil">Mi perfil</Link>.</Aviso>;
+      } else if (p.motivo === "ficha_compartida" || p.motivo === "ficha_distinta" || p.motivo === "sin_ficha") {
+        acciones = <Aviso>{MENSAJE_NO_FIRMA[p.motivo]}</Aviso>;
+      }
+    }
+  }
+  const historial = filas.length > 0 && (
+    <nav className="mt-4 rounded-xl border border-gray-200 bg-white p-4 text-xs print:hidden" aria-label="Versiones aceptadas">
+      <p className="font-semibold text-gray-700">Versiones aceptadas</p>
+      <ul className="mt-1 space-y-1">
+        {[...filas].reverse().map((f) => (
+          <li key={f.id}>
+            <Link className={`underline ${mostrada?.id === f.id ? "font-semibold" : ""}`} href={`${base}${qId}${qId ? "&" : "?"}v=${f.version}`}>
+              Versión {f.version} — {formatFechaLarga(fechaNegocio(new Date(f.aceptada_en)))}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-100 py-6">
-      <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
-        <Link href="/portal/b2b" className="text-sm text-gray-500 hover:text-gray-800">← Mis contratos</Link>
-        <div className="flex items-center gap-3">
-          {r.aliadoB2bId != null && (
-            <Link href={`/portal/comision/${encodeURIComponent(r.numeroContrato)}/estado-cuenta?id=${r.aliadoB2bId}`} className="text-sm text-gray-500 hover:text-gray-800">
-              Estado de cuenta →
-            </Link>
-          )}
-          <PrintButton />
-        </div>
-      </div>
-      <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
-        <div className="cuenta-doc rounded-xl bg-white p-6 shadow-sm print:rounded-none print:p-0 print:shadow-none">
-          <h1 className="text-center text-xl font-bold" style={{ color: "var(--brand-primary)" }}>CUENTA DE COBRO</h1>
-          <p className="mt-0.5 text-center text-xs text-gray-500">Fecha de elaboración: {formatFechaLarga(hoy)}</p>
-
-          {/* ── Encabezado: quien cobra / a quién ─────────────────────── */}
-          <div className="mt-3 grid grid-cols-2 gap-4 border-y border-gray-100 py-3 text-xs text-gray-700">
-            <div>
-              <p className="text-gray-400">DE (quien cobra)</p>
-              <p className="text-sm font-semibold text-gray-900">{aliado}</p>
-              {aliadoInfo?.nit && <p>{aliadoInfo.tipo_documento ?? "NIT"}: {aliadoInfo.nit}</p>}
-              {aliadoInfo?.direccion && <p>{aliadoInfo.direccion}</p>}
-              {aliadoInfo?.telefono && <p>Tel: {aliadoInfo.telefono}</p>}
-              {aliadoInfo?.email && <p>{aliadoInfo.email}</p>}
-            </div>
-            <div>
-              <p className="text-gray-400">COMPAÑÍA</p>
-              <p className="text-sm font-semibold text-gray-900">{nombreAgencia}</p>
-              {nitAgencia && <p>NIT: {nitAgencia}</p>}
-              {direccionAgencia && <p>{direccionAgencia}</p>}
-            </div>
-          </div>
-
-          <div className="mt-3 text-center">
-            <p className="text-xs text-gray-500">DEBE LA SUMA DE</p>
-            <p className="text-xl font-bold" style={{ color: "var(--brand-primary)" }}>{formatMonedaDocumento(montoComision, moneda)}</p>
-            <p className="text-xs text-gray-500">({pesosEnLetras(montoComision, moneda === "USD" ? "USD" : "COP", true)})</p>
-          </div>
-
-          <div className="mt-3 text-xs text-gray-700">
-            <p className="text-gray-400">POR CONCEPTO DE</p>
-            <p className="font-medium">{concepto}</p>
-          </div>
-
-          {/* ── Desglose: de dónde sale el valor ─────────────────────── */}
-          <table className="mt-3 w-full border-collapse text-xs">
-            <tbody>
-              <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Fecha de viaje</td><td className="py-1 text-right">{formatFechaLarga(r.fechaSalida)}</td></tr>
-              <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Total PVP</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.pvp, moneda)}</td></tr>
-              {detalle.baseComisionable != null && (
-                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Base comisionable</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.baseComisionable, moneda)}</td></tr>
-              )}
-              <tr className="border-b border-gray-100">
-                <td className="py-1 text-gray-500">{detalle.esPctPactado ? "% comisión (pactado)" : detalle.esPctEfectivo ? "% comisión (efectivo)" : "% comisión"}</td>
-                <td className="py-1 text-right tabular-nums">{(detalle.pctComision * 100).toFixed(2)}%</td>
-              </tr>
-              {detalle.comisionBase != null && (
-                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Comisión</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.comisionBase, moneda)}</td></tr>
-              )}
-              {detalle.recobroAliado != null && detalle.recobroAliado > 0 && (
-                <tr className="border-b border-gray-100"><td className="py-1 text-gray-500">Recobro</td><td className="py-1 text-right tabular-nums">{formatMonedaDocumento(detalle.recobroAliado, moneda)}</td></tr>
-              )}
-              {detalle.aplicaRetencion && detalle.retencion != null && detalle.retencion > 0 && (
-                <tr className="border-b border-gray-100">
-                  <td className="py-1 text-gray-500">Retención en la fuente ({((detalle.pctRetencion ?? 0) * 100).toFixed(1)}%)</td>
-                  <td className="py-1 text-right tabular-nums text-red-600">− {formatMonedaDocumento(detalle.retencion, moneda)}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
-          <div className="mt-2 flex items-center justify-between rounded-lg bg-[rgba(18,5,115,0.06)] px-3 py-2">
-            <span className="text-xs font-semibold text-gray-700">Total a cobrar</span>
-            <span className="text-base font-bold" style={{ color: "var(--brand-primary)" }}>{formatMonedaDocumento(montoComision, moneda)}</span>
-          </div>
-
-          {/* ── Declaración de retención (Art. 383 E.T.) ─────────────── */}
-          {detalle.aplicaRetencion === false && (
-            <div className="mt-3 text-[10px] leading-snug text-gray-500">
-              <p>
-                Para efectos de lo establecido en el parágrafo 2 del Artículo 383 del E.T., modificado por el
-                Artículo 17 de la Ley 1819 de 2016, manifiesto que:
-              </p>
-              <ol className="ml-4 list-decimal">
-                <li>No he contratado o vinculado dos (2) personas o más trabajadores asociados a la actividad que desarrollo.</li>
-                <li>En el año gravable anterior mis ingresos o ventas no superaron las 3.300 UVT.</li>
-                <li>No soy declarante de renta.</li>
-              </ol>
-              <p className="mt-1 text-center font-semibold text-gray-600">NO HACER RETENCIÓN EN LA FUENTE</p>
-            </div>
-          )}
-
-          {/* ── Datos de pago del aliado ──────────────────────────────── */}
-          {aliadoInfo?.numero_cuenta && (
-            <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-[10px] leading-snug text-gray-600">
-              <p className="font-semibold text-gray-700">Forma de pago: Transferencia bancaria</p>
-              <p>
-                {aliadoInfo.banco ?? "—"} — {aliadoInfo.tipo_cuenta ?? "—"} · A nombre de {aliadoInfo.nombre} · N.° {aliadoInfo.numero_cuenta}
-              </p>
-            </div>
-          )}
-
-          <div className="mt-6 text-xs text-gray-600">
-            <div className="border-t border-gray-300 pt-1" style={{ width: 220 }}>Firma</div>
-            <p className="mt-0.5">{aliado}</p>
-            {aliadoInfo?.nit && <p className="text-[10px] text-gray-400">{aliadoInfo.tipo_documento ?? "NIT"} {aliadoInfo.nit}</p>}
-          </div>
-
-          <footer className="mt-4 border-t border-gray-200 pt-2 text-center text-[9px] text-gray-400">
-            Documento generado por el Portal B2B de D&apos;spacios Travel.
-            <span className="mt-0.5 block text-[8px] text-gray-300">{POWERED_BY}</span>
-          </footer>
-        </div>
-      </div>
-      <style dangerouslySetInnerHTML={{ __html: `
-        .cuenta-doc, .cuenta-doc * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-        @page { size: letter; margin: 12mm; }
-        @media print { html, body { background: #fff !important; } }
-      ` }} />
+    <div className="min-h-screen bg-gray-100 py-6 print:min-h-0 print:bg-white print:py-0">
+      {volver}
+      {aviso}
+      <CuentaCobroDocumento snap={snap} firma={firma} acciones={<>{acciones}{historial}</>} />
     </div>
   );
 }

@@ -104,13 +104,13 @@ describe("cotizacionBernaloActions.ts — mensajes públicos con motivo comercia
   });
 });
 
-describe("cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAMENTE sus 6 claves autorizadas", () => {
+describe("cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAMENTE sus 7 claves autorizadas", () => {
   test("el tipo de salida OK declara exactamente ok/pvp/moneda/paxTotal/promedioPorViajero/composicionHabitaciones", () => {
     const tipo = fuenteAction.slice(
       fuenteAction.indexOf("export type ResultadoCotizarAlojamientoBernaloPublicoOk"),
       fuenteAction.indexOf("export type ResultadoCotizarAlojamientoBernaloPublico =")
     );
-    for (const campo of ["ok: true;", "pvp: number;", "moneda: string;", "paxTotal: number;", "promedioPorViajero: number;", "composicionHabitaciones: ComposicionHabitacionPublica[];"]) {
+    for (const campo of ["ok: true;", "pvp: number;", "moneda: string;", "paxTotal: number;", "promedioPorViajero: number;", "composicionHabitaciones: ComposicionHabitacionPublica[];", "menores: CargoMenorUnidad[];"]) {
       assert.match(tipo, new RegExp(campo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }
   });

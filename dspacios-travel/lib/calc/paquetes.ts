@@ -831,6 +831,8 @@ export function liquidarHotelNochesConTemporadas(args: ArgsLiquidar): {
   total: number;
   temporadasTarifa: string[];
   procedencia: ProcedenciaNoche[];
+  /** #126-D: noches ganadas por cada vigencia (por nombre); la suma es el número de noches de la estadía. */
+  nochesPorGanadora: Record<string, number>;
   /** Entrega 4 (reparto exacto, T.3): solo si alguna noche llevó un descuento por habitación. `total` = neto
    * EXACTO de UNA habitación en toda la estadía (sin pasar por la tarifa por persona) y `descuento` = lo que
    * se le descontó; el `total` por persona de arriba es solo `habitacion.total / ocupantes` (presentación). */
@@ -874,8 +876,11 @@ export function liquidarHotelNochesConTemporadas(args: ArgsLiquidar): {
     const k = aj.tipo === "factor" ? aj.factor : aj.tipo === "monto_persona" ? (total > 0 ? estadia.total / total : 0) : 1;
     for (const g of ninoGratisNoches) g.neto = aj.tipo === "noche" ? (g.indice === aj.indice ? 0 : g.neto) : g.neto * k;
   }
+  // #126-D (F2 de Codex): noches que ganó CADA vigencia (solo las noches; la promoción de estadía no gana noches). Aditivo: ningún importe depende de esto.
+  const nochesPorGanadora: Record<string, number> = {};
+  for (let i = 0; i < args.numNoches; i++) nochesPorGanadora[procedenciaCruda[i].temporadaGanadora] = (nochesPorGanadora[procedenciaCruda[i].temporadaGanadora] ?? 0) + 1;
   const comun = {
-    temporadasTarifa: Array.from(vistas), procedencia: deduplicarProcedencia(procedenciaCruda),
+    temporadasTarifa: Array.from(vistas), procedencia: deduplicarProcedencia(procedenciaCruda), nochesPorGanadora,
     ...(ninoGratisNoches.length ? { ninoGratisNoches } : {}),
   };
   // Sin descuento por habitación: exactamente el cálculo de siempre (mismo número, sin reordenar sumas).

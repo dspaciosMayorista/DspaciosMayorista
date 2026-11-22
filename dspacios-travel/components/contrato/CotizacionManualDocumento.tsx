@@ -13,6 +13,8 @@ import {
 import { formatMoneda, formatFechaLarga } from "@/lib/utils";
 import { formatoExacto, repartoPorPersona, tarifaCuadra } from "@/lib/contrato/repartoTarifa";
 import type { Agencia } from "@/types/database";
+import type { LogoAliadoDoc } from "@/lib/aliados/logo";
+import { EmisorLinea, LogoAliado } from "@/components/cotizacion/MarcaAliado";
 
 const PRIMARY = COLOR_DOCUMENTO;
 
@@ -68,6 +70,8 @@ type Props = {
   fechaEmision?: string | null;
   /** Fila de `agencias` del tenant de la cotización (RNT, NIT, cuenta). #49: sin fila o sin razón social/NIT/RNT el documento falla; no hay fallback a `EMPRESA` (identidad de Minorista). */
   agencia?: Agencia | null;
+  /** #32: logo del aliado que presenta la cotización (marca principal). Ausente = documento de siempre. El emisor legal no cambia. */
+  logoAliado?: LogoAliadoDoc | null;
 };
 
 // Convierte texto libre (una línea por ítem) en lista de viñetas.
@@ -87,7 +91,7 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision, agencia }: Props) {
+export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision, agencia, logoAliado = null }: Props) {
   const idAgencia = identidadAgencia(agencia);
   const empresa = { ...idAgencia, titular: idAgencia.razonSocial };
   const moneda = venta.moneda ?? "COP";
@@ -107,8 +111,12 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
         style={{ backgroundColor: PRIMARY }}
       >
         <div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/marca/logo-white.png" alt="D'spacios Travel — Mayorista de Turismo" className="h-12 w-auto" />
+          {logoAliado ? (
+            <LogoAliado logo={logoAliado} />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/marca/logo-white.png" alt="D'spacios Travel — Mayorista de Turismo" className="h-12 w-auto" />
+          )}
         </div>
         <div className="text-center">
           <div className="text-base font-semibold">COTIZACIÓN</div>
@@ -131,6 +139,7 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
           <div className="mt-1">RNT {empresa.rnt}</div>
         </div>
       </header>
+      {logoAliado && <EmisorLinea razonSocial={empresa.razonSocial} nit={empresa.nit} rnt={empresa.rnt} aliado={logoAliado.nombre} />}
 
       {/* ── Estado ─────────────────────────────────────────────── */}
       <div className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-semibold text-amber-700 md:px-8">

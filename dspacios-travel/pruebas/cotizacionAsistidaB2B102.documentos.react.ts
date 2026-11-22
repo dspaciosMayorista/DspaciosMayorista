@@ -18,10 +18,12 @@ const ACCIONES_ALIADOS = `data:text/javascript,${encodeURIComponent(`
   export async function crearAliado(...a) { ${G}.llamadas.push(['crear', a]); return { ok: true }; }
   export async function actualizarAliado(...a) { ${G}.llamadas.push(['actualizar', a]); return { ok: true }; }
   export async function eliminarAliado(...a) { ${G}.llamadas.push(['eliminar', a]); return { ok: true }; }
+  export async function historialCambiosAliado(...a) { ${G}.llamadas.push(['historial', a]); return { ok: true, lineas: [] }; }
+  export async function corregirDatosAliado(...a) { ${G}.llamadas.push(['corregir', a]); return { ok: true, cambios: [] }; }
 `)}`;
 registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (specifier === "./actions" && (context.parentURL ?? "").endsWith("/AliadosClient.tsx")) return { url: ACCIONES_ALIADOS, shortCircuit: true };
+    if (specifier === "./actions" && ["/AliadosClient.tsx", "/CorreccionAliado.tsx"].some((f) => (context.parentURL ?? "").endsWith(f))) return { url: ACCIONES_ALIADOS, shortCircuit: true };
     return nextResolve(specifier, context);
   },
 });

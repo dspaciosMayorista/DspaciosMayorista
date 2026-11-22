@@ -315,7 +315,7 @@ function clienteTarifario(tablas: Record<string, Fila>, dataset: unknown[], vist
   function builder(tabla: string) {
     let rango: [number, number] | null = null;
     const b = {
-      select() { return this; }, eq() { return this; }, in() { return this; }, not() { return this; }, order() { return this; },
+      select() { return this; }, eq() { return this; }, in() { return this; }, not() { return this; }, gte() { return this; }, order() { return this; },
       range(from: number, to: number) { rango = [from, to]; return this; },
       then(resolve: (v: { data: unknown; error: unknown }) => void) {
         if (tabla === vista) {
@@ -654,7 +654,7 @@ function clienteGenerar(tablas: Record<string, unknown[]>, opciones: { errorEn?:
     const filtros: ((r: Record<string, unknown>) => boolean)[] = [];
     let uno = false;
     const b: Record<string, unknown> = {};
-    b.select = () => b; b.order = () => b; b.range = () => b; b.not = () => b;
+    b.select = () => b; b.gte = () => b; b.order = () => b; b.range = () => b; b.not = () => b;
     b.eq = (c: string, v: unknown) => { filtros.push((r) => r[c] === v); return b; };
     b.in = (c: string, v: unknown[]) => { filtros.push((r) => v.includes(r[c])); return b; };
     b.single = () => { uno = true; return b; };

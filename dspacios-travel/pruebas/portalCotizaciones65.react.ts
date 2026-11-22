@@ -77,6 +77,42 @@ test("COT-2 ambos tenants: lo del MISMO aliado aparece en Mayorista y en Minoris
   assert.deepEqual(ids(otro.asistidas as Fila[]), [1, 9]);
 });
 
+// ── Corrección 1 (dueño, 2026-11-21): el origen REAL (sello del servidor en el plan), no la presencia del plan ni NETO/PVP ──────────────────────────────────────
+// La memoria no evalúa los alias JSON de la consulta (`plan_origen`, `plan_rol`): se fijan como propiedades de la fila, tal como los entrega la base real.
+const sello = (origen: string | null, extra: Fila = {}) => ({ plan_origen: origen, plan_rol: origen === "asistida" ? "administracion" : "freelance", b2b_modo: "neta", ...extra });
+
+test("COT-6 la cotización que CREÓ la aliada (sello aliado_directo, NETO o comisión) va en Directas aunque lleve plan congelado; la armada por personal (sello asistida) va en Asistidas", async () => {
+  montar({
+    cotizaciones: [
+      cot(1, { payload: plan(7), ...sello("aliado_directo") }),                                                // la aliada, NETO
+      cot(2, { payload: plan(7), ...sello("aliado_directo", { b2b_modo: "comisionable" }) }),                  // la aliada, comisión
+      cot(3, { payload: plan(7), creado_por: "interno@dspacios.test", ...sello("asistida") }),                 // personal para ella
+      cot(4, { payload: plan(7), creado_por: "interno@dspacios.test", ...sello("asistida", { b2b_modo: "comisionable" }) }),
+      cot(5, { payload: plan(7), creado_por: EMAIL, ...sello("asistida") }),                                   // el sello manda sobre el autor: coincidencia de correo ≠ la creó ella
+      cot(6),                                                                                                  // sin plan, creada por ella
+    ],
+  });
+  const r = await cargarCotizacionesPortal(ctx());
+  assert.deepEqual(ids(r.directas as Fila[]), [1, 2, 6]);
+  assert.deepEqual(ids(r.asistidas as Fila[]), [3, 4, 5]);
+  assert.equal(new Set([...r.directas, ...r.asistidas].map((c) => c.id)).size, r.directas.length + r.asistidas.length, "una sola lista por cotización");
+  // Los términos congelados siguen leyéndose del plan (no se pierden al clasificar) y la procedencia interna no sale del cargador.
+  assert.ok((r.directas as Fila[]).every((f) => !("plan_origen" in f) && !("creado_por" in f) && !("delPlan" in f)));
+});
+
+test("COT-7 otra aliada no obtiene ni siquiera la directa de la primera (aislamiento del beneficiario), y un plan del formato anterior (sin sello) sigue siendo Asistida", async () => {
+  const filas = [
+    cot(1, { payload: plan(7), ...sello("aliado_directo") }),
+    cot(2, { payload: plan(7), creado_por: "interno@dspacios.test" }), // formato anterior: sin sello ni rol ⇒ asistida
+  ];
+  montar({ cotizaciones: filas });
+  const otro = await cargarCotizacionesPortal(ctx({ userId: "u-otro", email: "otro@correo.test", aliadoId: 8 }));
+  assert.deepEqual(ids(otro.directas as Fila[]), []); assert.deepEqual(ids(otro.asistidas as Fila[]), []);
+  montar({ cotizaciones: filas });
+  const yo = await cargarCotizacionesPortal(ctx());
+  assert.deepEqual(ids(yo.directas as Fila[]), [1]); assert.deepEqual(ids(yo.asistidas as Fila[]), [2]);
+});
+
 test("COT-3 sin ficha enlazada no se buscan asistidas (y no se afirma nada por nombre)", async () => {
   const t = { cotizaciones: [cot(1, { payload: plan(7), creado_por: "i@d.test" })] };
   const admin = supabaseEnMemoria(t);

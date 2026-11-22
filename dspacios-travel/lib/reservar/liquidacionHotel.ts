@@ -36,6 +36,7 @@ import {
 import { PAX_TARIFA_DEFAULT, type AcomConfig, type AcomRoom } from "../acomodaciones.ts";
 import { resolverDescuentoHotel, aplicarDescuentoNeta, type ReglaDescuentoHotel, type DescuentoAplicado } from "../calc/descuentoHotel.ts";
 import { liquidarConPrecedencia, mismoDescuento, type DescuentoMostrado } from "../calc/precedenciaPromociones.ts";
+import { promocionesAplicadasDe, type PromoAplicada, type PromocionMostrada } from "../calc/promoMostrada.ts";
 import { evaluarComposicionHotel } from "./composicionHotelBusqueda.ts";
 import {
   clasificarMenoresPorEdad, verificarTarifasMenoresDisponibles, type ClasificacionMenores,
@@ -50,6 +51,7 @@ import {
 import { condicionDeVigenciaHotel, type HotelTemporadaCatalogo } from "../cotizacion/condicionDesdeCatalogo.ts";
 import { type CondicionTipo } from "../cotizacion/condicionPago.ts";
 import { type BaseMotor } from "../cotizacion/composicionPrecio.ts";
+import { resolverCierresEstadia } from "../tarifario/cierresHotel.ts";
 
 const MS_DIA = 86_400_000;
 
@@ -71,6 +73,10 @@ export type ComboCotizado = {
   descuentoPorAcom?: Record<string, DescuentoAplicado | null>;
   // Lo que se MUESTRA de ese EBB / Long Stay para este combo (lo arma cotizarPorFechas; mixto si difiere por acomodación).
   descuentoHotel?: DescuentoMostrado | null;
+  // #126-D: lo que se MUESTRA de la promoción ganadora de este combo (lo arma cotizarPorFechas desde `promosPorAcom`; sin costos). Ausente/null = ninguna.
+  promocionHotel?: PromocionMostrada | null;
+  // #126-D: promociones que REALMENTE ganaron en la estadía de cada acomodación de habitación (de la procedencia del liquidador; vacío = ninguna), con su alcance. Solo para la etiqueta.
+  promosPorAcom?: Record<string, PromoAplicada[]>;
   netosHabitacion?: Record<string, { ocupantes: number; total: number; descuento: number }>;
   // Tarifa de infante (migración 226): precio de un MENOR DE 2 AÑOS por clase de
   // hotel (infante / nino / nino2) — parte de hotel de esa clase + servicios
@@ -234,21 +240,11 @@ export function evaluarHotelPorFechas(
   const impuesto = Number(datos.paquete.impuesto_fijo) || 0;
   const destinoNombre = datos.paquete.destino_nombre;
 
-  const nochesStay: string[] = [];
-  { const base = new Date(`${fechaIda}T00:00:00`).getTime(); for (let n = 0; n < numNoches; n++) nochesStay.push(new Date(base + n * MS_DIA).toISOString().slice(0, 10)); }
-  const reglasCierre: { categorias: string[]; acomodaciones: string[] }[] = [];
-  let cierreTotal = false;
-  for (const b of datos.blackouts) {
-    const cubre = nochesStay.some((d) => b.fecha_inicio <= d && d <= b.fecha_fin);
-    if (!cubre) continue;
-    if (b.total) { cierreTotal = true; continue; }
-    reglasCierre.push({ categorias: b.categorias ?? [], acomodaciones: b.acomodaciones ?? [] });
-  }
-  const estaCerrada = (categoria: string, acom: string) =>
-    reglasCierre.some((r) =>
-      (r.categorias.length === 0 || r.categorias.includes(categoria)) &&
-      (r.acomodaciones.length === 0 || r.acomodaciones.includes(acom))
-    );
+  // #127: la regla de cierre general vive en UN solo módulo (lib/tarifario/cierresHotel.ts), el mismo que usan la generación, la vitrina y la venta.
+  const cierres = resolverCierresEstadia(datos.blackouts, fechaIda, numNoches);
+  const cierreTotal = cierres.totalCerrado;
+  const reglasCierre = cierres.cubren;
+  const estaCerrada = (categoria: string, acom: string) => cierres.cerrada(categoria, acom);
   const monedaHotel = (datos.armadoHotel?.hotel_moneda ?? "COP") === "USD" ? "USD" : "COP";
   if (cierreTotal) return { combos: [], destinoNombre, hotelNombre: datos.armadoHotel?.hotel_nombre ?? null, minNoches: 1, moneda: monedaHotel, serviciosGrupoIncluidos: [] };
   const filtroCat = datos.armadoHotel?.categorias ?? null;
@@ -351,6 +347,7 @@ export function evaluarHotelPorFechas(
     const basePromoPorClave = basesPromoDeFilas(tempMap);
     const netosHabitacion: Record<string, { ocupantes: number; total: number; descuento: number }> = {};
     const descuentoPorAcom: Record<string, DescuentoAplicado | null> = {};
+    const promosPorAcom: Record<string, PromoAplicada[]> = {};
     const ninoGratisNoches: Partial<Record<"nino" | "nino2", NocheNinoGratis[]>> = {};
     for (const acom of ACOM_ALL) {
       const col = COL_NETO[acom];
@@ -371,6 +368,7 @@ export function evaluarHotelPorFechas(
         if (r?.habitacion) netosHabitacion[acom] = r.habitacion;
         if (r) {
           temporadasAcom = r.temporadasTarifa;
+          promosPorAcom[acom] = promocionesAplicadasDe(r.procedencia, temporadas, r.nochesPorGanadora);
           // Unión de la identidad de EDAD (temporadaTarifa/base) con la
           // identidad de la VIGENCIA GANADORA de cada noche (temporadaGanadora,
           // vía `procedencia`, ya deduplicada) — ver el comentario largo en
@@ -426,12 +424,13 @@ export function evaluarHotelPorFechas(
     }
     if (Object.keys(precios).length) combos.push({ categoria, regimen, precios, netos, preciosMenor2, preciosSinFijo, preciosMenor2SinFijo, temporadasTarifaPorAcom, temporadasCondicionPorAcom,
       ...(Object.keys(netosHabitacion).length ? { netosHabitacion } : {}), ...(Object.keys(descuentoPorAcom).length ? { descuentoPorAcom } : {}),
+      ...(Object.keys(promosPorAcom).length ? { promosPorAcom } : {}),
       ...(Object.keys(ninoGratisNoches).length ? { ninoGratisNoches } : {}) });
   }
   if (reglasCierre.length) {
     for (const c of combos) {
       for (const a of Object.keys(c.precios)) {
-        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.preciosMenor2?.[a]; delete c.preciosSinFijo?.[a]; delete c.preciosMenor2SinFijo?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; if (a === "nino" || a === "nino2") delete c.ninoGratisNoches?.[a]; }
+        if (estaCerrada(c.categoria, a)) { delete c.precios[a]; delete c.netos?.[a]; delete c.preciosMenor2?.[a]; delete c.preciosSinFijo?.[a]; delete c.preciosMenor2SinFijo?.[a]; delete c.temporadasTarifaPorAcom?.[a]; delete c.temporadasCondicionPorAcom?.[a]; delete c.promosPorAcom?.[a]; if (a === "nino" || a === "nino2") delete c.ninoGratisNoches?.[a]; }
       }
     }
   }

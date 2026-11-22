@@ -37,6 +37,7 @@ function clienteFalso(tablas: Record<string, Fila>, datasetTarifario: FilaTarifa
       select() { return this; },
       eq() { return this; },
       in() { return this; },
+      gte() { return this; },
       not() { return this; },
       order() { return this; },
       range(from: number, to: number) { rangeArgs = [from, to]; return this; },
@@ -411,7 +412,7 @@ describe("cargarDatosTarifario() — error crítico de paginación: aborta con {
   test("un error en la paginación de tarifario_resultado propaga ok:false con el mensaje público fijo", async () => {
     const sbConError = {
       from(tabla: string) {
-        if (tabla !== "tarifario_resultado_publicable") return { select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; }, then(r: (v: unknown) => void) { r({ data: [], error: null }); } };
+        if (tabla !== "tarifario_resultado_publicable") return { select() { return this; }, eq() { return this; }, in() { return this; }, gte() { return this; }, order() { return this; }, then(r: (v: unknown) => void) { r({ data: [], error: null }); } };
         return {
           select() { return this; },
           eq() { return this; },

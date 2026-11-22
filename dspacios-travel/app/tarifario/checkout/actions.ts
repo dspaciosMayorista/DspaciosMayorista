@@ -55,6 +55,7 @@ import type { ResumenPrecios } from "@/lib/cotizacion/resumenPrecios";
 import { huellaIp } from "@/lib/cotizacion/comparativaServidor";
 import { TIPOS_DOC_PERSONA } from "@/lib/personas/identidad";
 import { tipoDocCheckout } from "@/lib/personas/cotizacion";
+import { errorDocumentoTitular } from "@/lib/personas/tiposDocumento";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { altaPersonasDeCotizacionGuardada } from "@/lib/personas/altaGuardada";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
@@ -1586,6 +1587,9 @@ export async function crearSolicitudReserva(inputRaw: unknown): Promise<Solicitu
   // #42 (D-6): tipo de documento elegido en el checkout, tal cual (nunca un "CC" por defecto).
   const tipoDoc = tipoDocCheckout(inputRaw, TIPOS_DOC_PERSONA);
   if (!tipoDoc.ok) return { ok: false, error: tipoDoc.error };
+  // O-3: la misma gramática de documento que se aplicará al convertir (antes un CE con letras se aceptaba aquí y se rechazaba al generar el contrato).
+  const errDocTitular = errorDocumentoTitular(tipoDoc.tipo ?? "", input.cliente.numeroDoc);
+  if (errDocTitular) return { ok: false, error: errDocTitular };
   const clienteCheckout: SolicitudCliente = tipoDoc.tipo ? { ...input.cliente, tipoDoc: tipoDoc.tipo } : input.cliente;
 
   // El contexto B2B se resuelve ANTES de crear la cotización: si la
@@ -1983,6 +1987,8 @@ async function prepararComparativa(inputCrudo: unknown, vista: boolean): Promise
   // #42 (D-6): tipo de documento del checkout, tal cual; viaja en el payload de la madre y de cada opción.
   const tipoDoc = tipoDocCheckout(inputRaw, TIPOS_DOC_PERSONA);
   if (!tipoDoc.ok) return { ok: false, error: tipoDoc.error };
+  const errDocTitularCmp = errorDocumentoTitular(tipoDoc.tipo ?? "", input.cliente.numeroDoc);
+  if (errDocTitularCmp) return { ok: false, error: errDocTitularCmp };
   const cli: SolicitudCliente = tipoDoc.tipo ? { ...input.cliente, tipoDoc: tipoDoc.tipo } : input.cliente;
   if (!`${cli.nombres}${cli.apellidos}`.trim()) return { ok: false, error: "Ingresa nombres y apellidos." };
   if (!cli.telefono.trim()) return { ok: false, error: "El teléfono / WhatsApp es obligatorio." };

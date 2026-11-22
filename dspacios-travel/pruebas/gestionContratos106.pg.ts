@@ -278,10 +278,10 @@ describe("lectura: ambas agencias, saldos con la regla de cobro existente y filt
     const neg = (await rpcSa("fn_gestion_contratos", { p_filtros: {}, p_orden: "numero_asc", p_limite: -5, p_desplazamiento: -9 })).data as { filas: unknown[]; limite: number; desplazamiento: number };
     assert.deepEqual([neg.limite, neg.desplazamiento, neg.filas.length], [1, 0, 1]);
   });
-  test("orden determinista: páginas contiguas sin solapes con empates de fecha", async () => {
-    const a = [...(await ok({ orden: "salida_asc", pagina: "1" })).datos.filas, ...(await ok({ orden: "salida_asc", pagina: "2" })).datos.filas, ...(await ok({ orden: "salida_asc", pagina: "3" })).datos.filas].map((f) => f.numero);
+  test("orden determinista (sin piso de «Viaje más reciente»): páginas contiguas sin solapes con empates de fecha", async () => {
+    const a = [...(await ok({ orden: "salida_desc", pagina: "1" })).datos.filas, ...(await ok({ orden: "salida_desc", pagina: "2" })).datos.filas, ...(await ok({ orden: "salida_desc", pagina: "3" })).datos.filas].map((f) => f.numero);
     assert.equal(new Set(a).size, 62);
-    const b = [...(await ok({ orden: "salida_asc", pagina: "1" })).datos.filas].map((f) => f.numero);
+    const b = [...(await ok({ orden: "salida_desc", pagina: "1" })).datos.filas].map((f) => f.numero);
     assert.deepEqual(b, a.slice(0, 25), "repetir la consulta da el mismo orden");
     const fueraRango = await ok({ pagina: "4" });
     assert.equal(fueraRango.datos.total, 62); assert.equal(fueraRango.datos.filas.length, 0);
@@ -526,5 +526,126 @@ describe("página real y consumo de solicitudes", () => {
     await registrarSeguimiento({ numero: "DTM-10609", uid: uidDe("DTM-10609"), tipo: "voucher_entregado", accion: "desmarcar" });
     assert.ok(peticiones.length <= 2, peticiones.join(" | "));
     assert.equal(peticiones.filter((x) => x.includes("/rpc/registrar_seguimiento_contrato")).length, 1);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// #126-E · «Viaje más reciente» (orden salida_asc) = salidas de HOY (America/Bogota) en adelante, la más próxima primero.
+// Reloj inyectado en el cargador real; consulta real a fn_gestion_contratos; el conjunto del dato se aísla con el filtro «numero» = DTM-91.
+// ───────────────────────────────────────────────────────────────────────────
+describe("#126-E · Viaje más reciente: hoy (Bogotá) en adelante, el más próximo primero", () => {
+  const HOY = "2030-06-15";
+  const D = (n: number) => { const d = new Date(Date.UTC(2030, 5, 15 + n)); return d.toISOString().slice(0, 10); };
+  // «ahora» (instantes UTC) → día de Bogotá (UTC-5, sin horario de verano)
+  const AHORA = {
+    mediodia: new Date("2030-06-15T17:00:00Z"),           // 12:00 en Bogotá → 2030-06-15
+    ultimoSegundo: new Date("2030-06-16T04:59:59Z"),      // 23:59:59 en Bogotá → todavía 2030-06-15 (en UTC ya es el 16)
+    medianoche: new Date("2030-06-16T05:00:00Z"),         // 00:00:00 en Bogotá → 2030-06-16
+    trampaUtc: new Date("2030-06-16T02:00:00Z"),          // 21:00 del 15 en Bogotá; el día UTC (16) lo daría por pasado
+  };
+  const FUT = Array.from({ length: 30 }, (_, i) => ({ n: `DTM-9${String(1100 + i)}`, salida: D(20 + i) }));       // 30 futuros (para paginar: 25 + 5)
+  const PROPIOS = [
+    { n: "DTM-91001", salida: D(-1), cliente: "Ayer" },
+    { n: "DTM-91002", salida: D(0), cliente: "Hoy" },
+    { n: "DTM-91003", salida: D(1), cliente: "Mañana" },
+    { n: "DTM-91004", salida: null, cliente: "Sin fecha" },
+    { n: "DTM-91005", salida: D(-400), cliente: "Histórico viejo" },
+    { n: "DTM-91006", salida: D(2), cliente: "Pasado mañana" },
+  ];
+  before(() => {
+    const filas = [...PROPIOS.map((p) => ({ n: p.n, salida: p.salida, cliente: p.cliente })), ...FUT.map((f) => ({ n: f.n, salida: f.salida, cliente: `Futuro ${f.n}` }))];
+    sql(`insert into public.ventas (numero_contrato, cliente, moneda, fecha_salida, fecha_venta, precio_venta, estado) values
+      ${filas.map((f) => `(${lit(f.n)}, ${lit(f.cliente)}, 'COP', ${f.salida ? lit(f.salida) : "null"}, '2030-01-02', 1000000, 'pendiente')`).join(",\n")};`);
+  });
+  const cargarEn = async (ahora: Date, sp: Record<string, string | undefined> = {}): Promise<Ok> => {
+    fijar(U.SA);
+    const r = await cargarGestionContratos({ numero: "DTM-91", ...sp }, ahora);
+    assert.equal(r.estado, "ok", JSON.stringify(r));
+    return r as Ok;
+  };
+  const independiente = (desde: string) => num(sql(`select count(*) from public.ventas where numero_contrato like 'DTM-91%' and fecha_salida >= '${desde}'`));
+  const num = (v: unknown) => Number(v);
+  const plano = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim();
+  async function render(sp: Record<string, string | undefined> = {}) {
+    fijar(U.SA);
+    const el = await (PaginaGestion as unknown as (a: unknown) => Promise<unknown>)({ searchParams: Promise.resolve(sp) });
+    return renderToStaticMarkup(el as never);
+  }
+
+  test("ayer / hoy / mañana: ayer queda fuera; hoy y mañana entran; el más próximo primero; sin fecha y viejo fuera", async () => {
+    const r = await cargarEn(AHORA.mediodia, { orden: "salida_asc" });
+    assert.equal(r.pisoDesde, HOY);
+    const primeras = numeros(r).slice(0, 3);
+    assert.deepEqual(primeras, ["DTM-91002", "DTM-91003", "DTM-91006"], "hoy, mañana, pasado mañana (la más próxima primero)");
+    const todos = [...numeros(r), ...numeros(await cargarEn(AHORA.mediodia, { orden: "salida_asc", pagina: "2" }))];
+    for (const fuera of ["DTM-91001", "DTM-91004", "DTM-91005"]) assert.ok(!todos.includes(fuera), `${fuera} no debe estar`);
+  });
+
+  test("medianoche de Bogotá: 23:59:59 sigue siendo HOY (aunque en UTC ya sea mañana); 00:00:00 ya es el día siguiente", async () => {
+    const antes = await cargarEn(AHORA.ultimoSegundo, { orden: "salida_asc" });
+    assert.equal(antes.pisoDesde, HOY); assert.equal(numeros(antes)[0], "DTM-91002", "el viaje de hoy todavía entra");
+    const trampa = await cargarEn(AHORA.trampaUtc, { orden: "salida_asc" });
+    assert.equal(trampa.pisoDesde, HOY); assert.equal(numeros(trampa)[0], "DTM-91002", "el día UTC (16) lo habría descartado");
+    const despues = await cargarEn(AHORA.medianoche, { orden: "salida_asc" });
+    assert.equal(despues.pisoDesde, "2030-06-16"); assert.equal(numeros(despues)[0], "DTM-91003", "00:00 Bogotá: el viaje de ayer-hoy sale, el de mañana pasa a ser el primero");
+    assert.ok(!numeros(despues).includes("DTM-91002"));
+  });
+
+  test("ordenamiento futuro: ascendente por fecha de salida con desempate estable por número; sin repetidos entre páginas", async () => {
+    const p1 = await cargarEn(AHORA.mediodia, { orden: "salida_asc", pagina: "1" });
+    const p2 = await cargarEn(AHORA.mediodia, { orden: "salida_asc", pagina: "2" });
+    const todas = [...p1.datos.filas, ...p2.datos.filas];
+    const fechas = todas.map((f) => f.fechaSalida as string);
+    assert.deepEqual(fechas, [...fechas].sort(), "ascendente por fecha");
+    assert.equal(new Set(todas.map((f) => f.numero)).size, todas.length, "ninguna fila repetida entre páginas");
+    assert.deepEqual(numeros(await cargarEn(AHORA.mediodia, { orden: "salida_asc", pagina: "1" })), numeros(p1), "repetir da el mismo orden");
+  });
+
+  test("conteos, totales y paginación COHERENTES: total = conteo independiente en SQL; resumen suma el total; 25 + resto; página fuera de rango vacía", async () => {
+    const esperado = independiente(HOY);                        // 33: hoy, mañana, pasado mañana + 30 futuros
+    assert.equal(esperado, 33);
+    const p1 = await cargarEn(AHORA.mediodia, { orden: "salida_asc" });
+    const p2 = await cargarEn(AHORA.mediodia, { orden: "salida_asc", pagina: "2" });
+    const p3 = await cargarEn(AHORA.mediodia, { orden: "salida_asc", pagina: "3" });
+    assert.deepEqual([p1.datos.total, p2.datos.total, p3.datos.total], [esperado, esperado, esperado], "el total no cambia con la página");
+    assert.deepEqual([p1.datos.filas.length, p2.datos.filas.length, p3.datos.filas.length], [25, 8, 0]);
+    assert.equal(p1.datos.resumen.reduce((s, r) => s + r.contratos, 0), esperado, "el resumen cuenta el MISMO conjunto que el total");
+    // nunca una fila pasada dentro del conjunto contado
+    const todas = [...p1.datos.filas, ...p2.datos.filas];
+    assert.ok(todas.every((f) => f.fechaSalida != null && (f.fechaSalida as string) >= HOY));
+  });
+
+  test("HISTORIAL accesible de forma explícita: fechas de viaje elegidas mandan (sin piso); otros órdenes no tienen piso", async () => {
+    const explicitoDesde = await cargarEn(AHORA.mediodia, { orden: "salida_asc", salida_desde: D(-1) });
+    assert.equal(explicitoDesde.pisoDesde, null, "con «viaje desde» explícito no se aplica el piso");
+    assert.ok(numeros(explicitoDesde).includes("DTM-91001"), "ayer vuelve a aparecer porque se pidió explícitamente");
+    const soloHasta = await cargarEn(AHORA.mediodia, { orden: "salida_asc", salida_hasta: D(-1) });
+    assert.equal(soloHasta.pisoDesde, null);
+    assert.deepEqual(numeros(soloHasta), ["DTM-91005", "DTM-91001"], "solo pasados, en orden ascendente; el histórico viejo y ayer");
+    assert.equal(soloHasta.datos.total, 2);
+    const otroOrden = await cargarEn(AHORA.mediodia, { orden: "salida_desc" });
+    assert.equal(otroOrden.pisoDesde, null);
+    assert.ok(numeros(otroOrden).length === 25 && otroOrden.datos.total === 36, "sin piso: los 36 propios (incluye ayer, histórico y sin fecha)");
+    const ventaDesc = await cargarEn(AHORA.mediodia, {});
+    assert.equal(ventaDesc.pisoDesde, null); assert.equal(ventaDesc.datos.total, 36);
+  });
+
+  test("contratos SIN fecha de salida: fuera de «Viaje más reciente», visibles en los demás órdenes (nulos al final)", async () => {
+    assert.ok(!numeros(await cargarEn(AHORA.mediodia, { orden: "salida_asc" })).includes("DTM-91004"));
+    const desc = [...(await cargarEn(AHORA.mediodia, { orden: "salida_desc", pagina: "1" })).datos.filas, ...(await cargarEn(AHORA.mediodia, { orden: "salida_desc", pagina: "2" })).datos.filas];
+    assert.ok(desc.some((f) => f.numero === "DTM-91004" && f.fechaSalida == null), "el contrato sin fecha sigue accesible");
+    assert.equal(desc[desc.length - 1].fechaSalida, null, "los nulos van al final");
+  });
+
+  test("la página real dice la regla, el día de Bogotá y cuenta el MISMO conjunto; con fechas explícitas lo aclara", async () => {
+    const { fechaNegocio } = await import("../lib/fechaNegocio.ts");
+    const hoyReal = fechaNegocio(new Date());
+    const html = plano(await render({ orden: "salida_asc", numero: "DTM-91" }));
+    assert.match(html, new RegExp(`con viaje desde hoy \\(${hoyReal}, hora de Bogotá\\)`));
+    assert.match(html, /no incluye viajes pasados ni contratos sin fecha de salida/);
+    assert.ok(!/«Viaje más reciente» muestra solo salidas/.test(plano(await render({ orden: "venta_desc", numero: "DTM-91" }))), "otros órdenes: sin nota");
+    const explicito = plano(await render({ orden: "salida_asc", numero: "DTM-91", salida_desde: "2000-01-01" }));
+    assert.match(explicito, /también salidas anteriores a hoy/);
+    assert.ok(!/con viaje desde hoy/.test(explicito));
   });
 });

@@ -15,9 +15,13 @@ import { PresentacionComparativaEditor, errorEdicion, presentacionDesdeEdicion, 
 import { sugerirIncluye, NO_INCLUYE_DEFAULT } from "@/lib/cotizacion/incluye";
 import { hoyBogota, vigenciaInicial } from "@/lib/cotizacion/vigencia";
 import { acuerdoComision, participacionAliado, validarBnc } from "@/lib/cotizacion/acuerdoComision";
+import { pctComisionNeto, vistaNetoManual } from "@/lib/cotizacion/netoManual";
+import { aUnidades, puedeFijarNeto } from "@/lib/cotizacion/netoHija";
 
 type Asesor = { nombre: string | null; email: string };
-type Aliado = { id: number; nombre: string; tipo: string | null };
+type Aliado = { id: number; nombre: string; tipo: string | null; pct_comision?: number | null };
+/** #48: lo que la vista previa del precio NETO necesita del servidor (la base decide al guardar). */
+type DatosNeto = { rol: string | null; pctAgencia: number | null; pctFreelance: number | null; reglaParticipacion: boolean };
 
 const TIPOS: { value: string; label: string; icon: LucideIcon }[] = [
   { value: "aereo", label: "Aéreo", icon: Plane },
@@ -32,6 +36,8 @@ let _seq = 1;
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const hoy = hoyBogota();
+/** Sin datos del servidor no hay opción NETO (el formulario se comporta como siempre). */
+const SIN_NETO: DatosNeto = { rol: null, pctAgencia: null, pctFreelance: null, reglaParticipacion: false };
 
 function valor(f: { costoNeto: number; modo: "mk" | "ta"; pctMarkup: number; ta: number }): number {
   const c = Number(f.costoNeto) || 0;
@@ -41,8 +47,8 @@ function valor(f: { costoNeto: number; modo: "mk" | "ta"; pctMarkup: number; ta:
   return Math.round(c / (1 - m));
 }
 
-export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, pctAliadoB2B }: {
-  asesores: Asesor[]; aliados: Aliado[]; miNombre: string; miRolVenta: boolean; pctAliadoB2B: number;
+export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, pctAliadoB2B, neto = SIN_NETO }: {
+  asesores: Asesor[]; aliados: Aliado[]; miNombre: string; miRolVenta: boolean; pctAliadoB2B: number; neto?: DatosNeto;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -74,6 +80,11 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const [tipoAsesor, setTipoAsesor] = useState<"interno" | "agencia" | "freelance">("interno");
   const [asesorInterno, setAsesorInterno] = useState(miRolVenta ? miNombre : "");
   const [aliadoNombre, setAliadoNombre] = useState("");
+
+  // #48: modalidad del precio de una dinámica B2B. NETO = el aliado paga PVP menos su comisión (sello #50); solo roles que pueden fijarlo.
+  const [modalidad, setModalidad] = useState<"pvp" | "neto">("pvp");
+  const [reconoce, setReconoce] = useState(true);
+  const [autorizarMargen, setAutorizarMargen] = useState(false);
 
   // Modo explícito «Cotización comparativa» (#35). Apagado por defecto: el flujo simple no cambia.
   const [comparativa, setComparativa] = useState(false);
@@ -177,7 +188,8 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
     // #97: dinámica B2B → aliado del catálogo (id) y BNC escrita expresamente. El servidor lo vuelve a exigir.
     if (tipoAsesor !== "interno") {
       if (aliadoId == null) { setErr("Elige la agencia o el freelance del catálogo de la lista (no se admite texto libre)."); return; }
-      if (!bncValida.ok) { setErr(bncValida.error); return; }
+      if (usaNeto) { if (vistaNeto?.v.bloqueo) { setErr(vistaNeto.v.bloqueo); return; } }
+      else if (!bncValida.ok) { setErr(bncValida.error); return; }
     }
     start(async () => {
       const r = await crearCotizacionManual({
@@ -185,7 +197,8 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
         ninos: nNinos, tarifaNino: valorNino,
         recobro: recobroN, recobroAliado: recobroAliadoN,
         aliadoId: tipoAsesor === "interno" ? null : aliadoId,
-        bnc: tipoAsesor !== "interno" && bncValida.ok ? bncValida.bnc : null,
+        bnc: tipoAsesor !== "interno" && !usaNeto && bncValida.ok ? bncValida.bnc : null,
+        modalidad: usaNeto ? { modalidad: "neto", reconoceRecobro: recobroAliadoN > 0 && reconoce, autorizarMargen } : undefined,
         tipoAsesor,
         asesorInterno: tipoAsesor === "interno" ? asesorInterno : "",
         agenciaNombre: tipoAsesor === "agencia" ? aliadoNombre : "",
@@ -201,7 +214,25 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
   const aliadosFiltrados0 = aliados.filter((a) => tipoAsesor === "agencia" ? (a.tipo ?? "").toLowerCase().includes("agencia") : tipoAsesor === "freelance" ? (a.tipo ?? "").toLowerCase().includes("free") : true);
   const aliadosFiltrados = aliadosFiltrados0;
   // El aliado de una comparativa sale del catálogo por id; el texto libre no cuenta.
-  const aliadoId = aliadosFiltrados.find((a) => a.nombre === aliadoNombre)?.id ?? null;
+  const aliadoSel = aliadosFiltrados.find((a) => a.nombre === aliadoNombre) ?? null;
+  const aliadoId = aliadoSel?.id ?? null;
+
+  // #48: vista previa del NETO (mismas reglas que la base; la base vuelve a decidir con el rol real al guardar).
+  const puedeNeto = esB2B && !comparativa && puedeFijarNeto(neto.rol);
+  const usaNeto = puedeNeto && modalidad === "neto";
+  const vistaNeto = useMemo(() => {
+    if (!usaNeto || aliadoSel == null) return null;
+    const pct = pctComisionNeto(aliadoSel.pct_comision ?? null, tipoAsesor === "agencia" ? neto.pctAgencia : neto.pctFreelance, tipoAsesor === "agencia" ? "agencia" : "freelance");
+    return {
+      pct,
+      v: vistaNetoManual({
+        servicios: filas.map((f) => ({ tipo: f.tipo, valor: valor({ ...f, modo: efModo(f) }), costoNeto: Number(f.costoNeto) || 0 })),
+        total: totalCotizacion, recobro: recobroN, ninos: nNinos, tarifaNino: valorNino, recobroAliado: recobroAliadoN, reconoce,
+        pct, reglaParticipacion: neto.reglaParticipacion, rol: neto.rol, autorizarMargen,
+      }),
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usaNeto, aliadoSel, tipoAsesor, filas, totalCotizacion, recobroN, nNinos, valorNino, recobroAliadoN, reconoce, autorizarMargen, neto]);
 
   return (
     <div className="space-y-6">
@@ -426,6 +457,55 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
       {esB2B && !comparativa && (
         <section className="rounded-xl border border-gray-200 bg-white p-5">
           <h2 className="mb-1 text-sm font-semibold text-gray-700">Comisión del aliado</h2>
+          {puedeNeto && (
+            <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-700" role="radiogroup" aria-label="Modalidad del precio">
+              <label className="flex items-center gap-1.5"><input type="radio" name="modalidad" checked={modalidad === "pvp"} onChange={() => setModalidad("pvp")} /> PVP: el aliado cobra su comisión después</label>
+              <label className="flex items-center gap-1.5"><input type="radio" name="modalidad" checked={modalidad === "neto"} onChange={() => setModalidad("neto")} /> NETO: el aliado paga el PVP menos su comisión</label>
+            </div>
+          )}
+          {usaNeto ? (
+            <div className="space-y-3" data-testid="neto-manual">
+              <p className="text-xs text-gray-400">
+                El cliente final ve siempre el PVP. El aliado paga el NETO y no se crea una segunda comisión: la participación en el recobro va dentro del descuento. La base de datos fija estos valores al guardar.
+              </p>
+              {aliadoSel == null || vistaNeto == null ? (
+                <p className="text-sm text-gray-500">Elige el aliado del catálogo para calcular el NETO.</p>
+              ) : (
+                <>
+                  <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+                    <FilaNeto k="Total (PVP)" v={fmt(aUnidades(vistaNeto.v.resultado.precio))} />
+                    <FilaNeto k="Tiquetes aéreos (no comisionan)" v={fmt(aUnidades(vistaNeto.v.resultado.tiquetes))} />
+                    <FilaNeto k="Base comisionable" v={fmt(aUnidades(vistaNeto.v.resultado.base))} />
+                    <FilaNeto k={`Comisión ordinaria (${(vistaNeto.pct * 100).toLocaleString("es-CO", { maximumFractionDigits: 2 })} %)`} v={fmt(aUnidades(vistaNeto.v.resultado.ordinaria))} />
+                    <FilaNeto k="Participación en el recobro" v={fmt(aUnidades(vistaNeto.v.resultado.participacion))} />
+                    <FilaNeto k="Descuento total al aliado" v={fmt(vistaNeto.v.descuento)} />
+                    <FilaNeto k="Costo total de los servicios" v={fmt(vistaNeto.v.costos)} />
+                    <FilaNeto k={`Margen sobre el NETO (mínimo ${vistaNeto.v.evaluacion.pisoBps / 100} %)`} v={`${(vistaNeto.v.evaluacion.margen * 100).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`} />
+                  </dl>
+                  <div className="flex items-center justify-between rounded-lg border px-3 py-2" style={{ borderColor: "var(--brand-primary)", backgroundColor: "rgba(29,124,154,0.06)" }}>
+                    <span className="text-sm font-semibold text-gray-700">NETO que paga el aliado</span>
+                    <span className="text-xl font-bold tabular-nums" style={{ color: "var(--brand-primary)" }}>{fmt(vistaNeto.v.neto)}</span>
+                  </div>
+                  {recobroAliadoN > 0 && (
+                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                      <input type="checkbox" className="mt-1" checked={reconoce} onChange={(e) => setReconoce(e.target.checked)} />
+                      <span>Reconocer la participación del aliado en el recobro ({fmt(recobroAliadoN)}); sin marcar, el recobro queda en la base de su comisión y no se le paga aparte.</span>
+                    </label>
+                  )}
+                  {vistaNeto.v.requiereAutorizacion && (
+                    <label className="flex items-start gap-2 text-sm text-gray-700">
+                      <input type="checkbox" className="mt-1" checked={autorizarMargen} onChange={(e) => setAutorizarMargen(e.target.checked)} />
+                      <span>Autorizo guardar con un margen por debajo del mínimo (solo superadmin o administración; solo tiquetes: solo superadmin).</span>
+                    </label>
+                  )}
+                  {vistaNeto.v.bloqueo
+                    ? <p className="text-sm text-red-600" role="alert">{vistaNeto.v.bloqueo}</p>
+                    : <p className="text-xs text-emerald-700">Cumple las reglas de margen: se puede guardar en NETO.</p>}
+                </>
+              )}
+            </div>
+          ) : (
+          <>
           <p className="mb-3 text-xs text-gray-400">
             El aliado se toma del catálogo y su porcentaje queda fijado al guardar (no se edita aquí). Indica la base no comisionable: escribe 0 si no hay.
           </p>
@@ -445,6 +525,8 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
               Aliado: <b>{aliadoId == null ? "elige uno de la lista" : aliadoNombre}</b>
             </div>
           </div>
+          </>
+          )}
         </section>
       )}
 
@@ -541,6 +623,15 @@ export function CotizacionManualForm({ asesores, aliados, miNombre, miRolVenta, 
         </Button>
         <span className="text-xs text-gray-400">{comparativa ? "Se guarda como comparativa: no se cobra ni se convierte hasta elegir una opción." : "Se guarda como cotización (estado abierta)."}</span>
       </div>
+    </div>
+  );
+}
+
+function FilaNeto({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b border-gray-100 py-1">
+      <dt className="text-gray-600">{k}</dt>
+      <dd className="tabular-nums font-medium text-gray-900">{v}</dd>
     </div>
   );
 }

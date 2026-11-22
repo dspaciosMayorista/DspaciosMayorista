@@ -189,7 +189,9 @@ describe("O3 · reserva y tarjeta: el servidor rechaza menores sin la configurac
   test("computarReserva con un menor: error accionable; sin menores: se reserva", async () => {
     const con = await reserva(H3.SIN, { edadesMenores: [5], cantidadMenores: 1 });
     assert.equal(con.ok, false);
-    assert.match(con.ok ? "" : con.error, /Hotel SIN edades.*falta: «Infante hasta \(edad\)», «Niño hasta \(edad\)»/);
+    // O-1: la reserva la puede iniciar un aliado B2B: el error es el texto público (sin campos, rutas ni nombre del hotel); el detalle queda en el log.
+    assert.equal(con.ok ? "" : con.error, "Este hotel no está disponible para cotizar con menores en este momento. Consulta con un asesor o cotiza solo con adultos.");
+    assert.doesNotMatch(con.ok ? "" : con.error, /Infante hasta|Producto|Configuración del hotel/);
     const sin = await reserva(H3.SIN);
     assert.equal(sin.ok, true, JSON.stringify(sin));
     assert.equal(sin.ok && sin.data.precioVenta, 750000);

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { ACOM_ROOMS, ACOM_ROOM_LABEL, type AcomRoom } from "@/lib/acomodaciones";
 import { crearBlackout, eliminarBlackout } from "./blackouts-actions";
 import { alternarVisibles, estadoVisibles } from "@/lib/paquetes/seleccionMasiva";
+import { cierreNoAplicaAUnidad } from "@/lib/tarifario/cierresHotel";
 
 export type Blackout = { id: number; fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias?: string[] | null; motivo: string | null };
 
@@ -22,7 +23,7 @@ function describirCierre(b: Blackout): string {
   return "Cierre parcial";
 }
 
-export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelId: number; blackouts: Blackout[]; categorias?: string[] }) {
+export function HotelBlackouts({ hotelId, blackouts, categorias = [], esUnidad = false }: { hotelId: number; blackouts: Blackout[]; categorias?: string[]; esUnidad?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [ini, setIni] = useState("");
@@ -41,7 +42,7 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
     setErr("");
     start(async () => {
       const r = await crearBlackout({ hotelId, fechaInicio: ini, fechaFin: fin, total, acomodaciones: acoms, categorias: cats, motivo });
-      if (r.ok) { setIni(""); setFin(""); setTotal(true); setAcoms([]); setCats([]); setMotivo(""); router.refresh(); }
+      if (r.ok) { setIni(""); setFin(""); setTotal(true); setAcoms([]); setCats([]); setMotivo(""); if (r.aviso) setErr(r.aviso); router.refresh(); }
       else setErr(r.error);
     });
   }
@@ -76,6 +77,11 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
                   <p className="mt-1 text-[11px] text-gray-400">Ninguna marcada = todas las categorías.</p>
                 </div>
               )}
+              {esUnidad ? (
+                <p role="note" data-testid="cierre-unidad-nota" className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  Este hotel se tarifa por unidad: el cierre solo puede ser total o por categoría. El cierre por acomodación no se aplica a una tarifa por unidad (no hay equivalencia entre acomodación y unidad).
+                </p>
+              ) : (
               <div>
                 <p className="mb-1 text-xs font-medium text-gray-600">Acomodaciones a cerrar</p>
                 <MarcarTodas opciones={ACOM_ROOMS} marcadas={acoms} onChange={setAcoms} />
@@ -88,6 +94,7 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
                 </div>
                 <p className="mt-1 text-[11px] text-gray-400">Ninguna marcada = todas las acomodaciones.</p>
               </div>
+              )}
               <p className="text-[11px] text-gray-500">
                 {cats.length > 0 && acoms.length > 0
                   ? `Cierra ${acoms.map((a) => ACOM_ROOM_LABEL[a]).join(", ")} solo en ${cats.join(", ")}. El resto sigue a la venta.`
@@ -95,7 +102,7 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
                     ? `Cierra ${cats.join(", ")} por completo. Las demás categorías siguen a la venta.`
                     : acoms.length > 0
                       ? `Cierra ${acoms.map((a) => ACOM_ROOM_LABEL[a]).join(", ")} en todas las categorías.`
-                      : "Marca al menos una categoría o una acomodación."}
+                      : esUnidad ? "Marca al menos una categoría." : "Marca al menos una categoría o una acomodación."}
               </p>
             </div>
           )}
@@ -112,8 +119,9 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [] }: { hotelI
                   <span className="text-gray-700">
                     {b.fecha_inicio} → {b.fecha_fin} · {b.total ? "Cierre total" : describirCierre(b)}
                     {b.motivo ? ` · ${b.motivo}` : ""}
+                    {esUnidad && cierreNoAplicaAUnidad(b) && <span data-testid="cierre-no-aplica" className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">No aplica: tarifa por unidad</span>}
                   </span>
-                  <button type="button" onClick={() => start(() => { void eliminarBlackout(b.id, hotelId).then(() => router.refresh()); })} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+                  <button type="button" onClick={() => start(() => { void eliminarBlackout(b.id, hotelId).then((r) => { setErr(r.ok ? (r.aviso ?? "") : r.error); router.refresh(); }); })} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
                 </li>
               ))}
             </ul>

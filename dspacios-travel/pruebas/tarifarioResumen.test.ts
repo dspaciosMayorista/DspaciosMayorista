@@ -280,6 +280,7 @@ function clienteFalso(tablas: Record<string, Fila>, datasetResumen: FilaResumen[
       select() { return this; },
       eq() { return this; },
       in() { return this; },
+      gte() { return this; },
       not() { return this; },
       order() { return this; },
       range(from: number, to: number) { rangeArgs = [from, to]; return this; },
@@ -422,7 +423,7 @@ describe("cargarResumenTarifario() — consulta la vista de resumen, entrega Fil
     function builder(tabla: string) {
       let rangeArgs: [number, number] | null = null;
       return {
-        select() { return this; }, eq() { return this; }, in() { return this; }, not() { return this; }, order() { return this; },
+        select() { return this; }, eq() { return this; }, in() { return this; }, not() { return this; }, gte() { return this; }, order() { return this; },
         range(from: number, to: number) { rangeArgs = [from, to]; return this; },
         then(resolve: (v: { data: unknown; error: unknown }) => void) {
           if (tabla === "tarifario_resumen") { const [from, to] = rangeArgs ?? [0, 999]; resolve({ data: resumen.slice(from, to + 1), error: null }); }
@@ -661,6 +662,7 @@ describe("Badge compacto 'Con condiciones' de la tarjeta de exploración — inf
       return {
         select() { return this; },
         in() { return this; },
+        gte() { return this; },
         order() { return this; },
         range(from: number, to: number) { rangeArgs = [from, to]; return this; },
         then(resolve: (v: { data: unknown; error: unknown }) => void) {

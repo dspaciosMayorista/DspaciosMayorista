@@ -44,6 +44,8 @@ export type CotizacionManualInput = {
   /** #97: aliado B2B del catálogo (id) y base no comisionable EXPLÍCITA (null/ausente ≠ 0). Solo la dinámica B2B; los valida el servidor. */
   aliadoId?: number | null;
   bnc?: number | null;
+  /** #48: modalidad del precio de la dinámica B2B. Ausente/«pvp» = PVP con acuerdo de comisión (#97); «neto» = precio NETO sellado (#50). Llega del navegador: se valida en el servidor. */
+  modalidad?: unknown;
   plazo: string;
   vigenciaHasta: string;
   observaciones: string;

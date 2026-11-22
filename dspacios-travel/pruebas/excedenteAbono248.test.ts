@@ -17,7 +17,7 @@ describe("cableado", () => {
   const acciones = leer("app/(dashboard)/dashboard/contratos/actions.ts");
   test("registrarAbono no decide en la Server Action: delega en la RPC atómica y manda la operación", () => {
     const cuerpo = acciones.slice(acciones.indexOf("export async function registrarAbono("), acciones.indexOf("export async function actualizarAbono("));
-    assert.match(cuerpo, /rpcFinanciero<[^>]*>\("registrar_abono"/);
+    assert.match(cuerpo, /rpcFinanciero<[^>]*>\("registrar_abono_moneda"/);
     assert.match(cuerpo, /p_confirmar: confirmarExcedente === true/);
     assert.match(cuerpo, /p_operacion: operacionId/);
     assert.doesNotMatch(cuerpo, /\.from\("abonos"\)\.(insert|select)/, "ni insert ni lectura de abonos fuera de la transacción de la base");

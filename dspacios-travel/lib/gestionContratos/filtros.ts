@@ -132,6 +132,17 @@ export function aQuery(filtros: FiltrosGestion, pagina = 1): string {
   return s ? `?${s}` : "";
 }
 
+/**
+ * #126-E: «Viaje más reciente» (orden `salida_asc`) = viajes cuya salida es HOY (America/Bogota) o posterior, el más próximo primero; las salidas pasadas y los contratos sin fecha de salida NO entran
+ * en ese modo. El piso se entrega a `fn_gestion_contratos` como `salida_desde` (la misma consulta calcula el total, el resumen y la página, así que conteos, totales y paginación son coherentes).
+ * El historial sigue accesible de forma EXPLÍCITA: cualquier fecha de viaje elegida («Viaje desde» o «Viaje hasta») manda y el piso no se aplica; los demás órdenes no tienen piso.
+ * `hoy` llega YA calculado en America/Bogota (YYYY-MM-DD). Devuelve los filtros efectivos y el piso aplicado (null si no se aplicó).
+ */
+export function aplicarPisoViajeReciente(filtros: FiltrosGestion, hoy: string): { filtros: FiltrosGestion; pisoDesde: string | null } {
+  if (filtros.orden !== "salida_asc" || filtros.salidaDesde || filtros.salidaHasta) return { filtros, pisoDesde: null };
+  return { filtros: { ...filtros, salidaDesde: hoy }, pisoDesde: hoy };
+}
+
 export function hayFiltros(filtros: FiltrosGestion): boolean {
   return Object.entries(filtros).some(([k, v]) => !(k === "orden" && v === "venta_desc") && v != null && v !== "");
 }

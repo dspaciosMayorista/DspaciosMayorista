@@ -22,7 +22,8 @@ const MINORISTA_OCULTAS = [
 // `/portal` y `/pagar` son públicas: el portal B2B muestra ingresar/registrarse
 // sin sesión, y /pagar es el link de pago.
 // `/sitio_web` es la web pública de marketing (route group app/sitio_web): toda pública.
-const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/cot/", "/auth", "/portal", "/pagar", "/sitio_web"];
+// `/recuperar` (#62) pide el enlace de recuperación de contraseña SIN sesión; `/restablecer` y `/cuenta` sí exigen sesión (la de recuperación o la normal).
+const RUTAS_PUBLICAS = ["/tarifario", "/login", "/c/", "/cot/", "/auth", "/portal", "/pagar", "/sitio_web", "/recuperar"];
 
 // Vercel invoca estos endpoints sin una sesión de usuario. Cada ruta valida
 // `Authorization: Bearer ${CRON_SECRET}` por su cuenta; el proxy solo debe
@@ -87,7 +88,10 @@ export async function proxy(request: NextRequest) {
   // controles de abajo (activo y rol externo). Se salta en /login y /auth para
   // no consultar de más ni hacer bucle con el redirect de usuario inactivo.
   let perfil: { rol: string | null; activo: boolean } | null = null;
-  if (user && !pathname.startsWith("/login") && !pathname.startsWith("/auth")) {
+  // O-4: `/restablecer` también se salta. Un registro B2B pendiente de aprobación está INACTIVO por diseño; quien pide recuperar su contraseña desde «Continúa tu registro»
+  // llega con una sesión de recuperación y debía rebotar a /login?inactivo=1 antes de poder cambiarla. La pantalla solo ofrece cambiar la contraseña (la acción exige la sesión de
+  // recuperación verificada en el servidor) y no concede acceso: una cuenta inactiva sigue sin rol (`mi_rol()` null) y sin acceso a ningún dato.
+  if (user && !pathname.startsWith("/login") && !pathname.startsWith("/auth") && !pathname.startsWith("/restablecer")) {
     const { data } = await supabase
       .from("usuarios")
       .select("rol, activo")

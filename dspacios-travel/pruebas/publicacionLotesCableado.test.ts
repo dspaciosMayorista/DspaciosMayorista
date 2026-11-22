@@ -48,8 +48,9 @@ describe("publicación por lotes — cableado en «Generar tarifario»", () => {
   test("las filas exactas llevan neto_hotel del MOTOR; «desde» (porción) y la fila de infante sintética no (no verificables)", () => {
     assert.match(cuerpo, /neto_hotel: netoHotelExacto,/);
     // #43/#60 entrega 6: quinto argumento = entrada que justifica el «desde» (porción con grupos); neto_hotel sigue null en «desde».
-    assert.match(cuerpo, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel, desdeReal\?\.desde\?\.justificacion\.entrada \?\? null\);/);
-    assert.match(cuerpo, /publicarFila\("infante", 0, procedenciaHab\);/);
+    assert.match(cuerpo, /publicarFila\(acom, costoHotel, procedencia, masBarato \? null : costoHotel, desdeReal\?\.desde\?\.justificacion\.entrada \?\? testigo\);/);
+    // #127 G1: la fila sintética de infante hereda el testigo vendible del «desde» (o no se publica si un cierre toca la ventana y no hay testigo); neto_hotel sigue null.
+    assert.match(cuerpo, /publicarFila\("infante", 0, procedenciaHab, null, testigoHab\);/);
   });
 
   test("la pantalla usa el bucle reanudable: si todo está en la base solo CONSULTA (no recalcula), se detiene si se desmonta y ofrece «Continuar publicación» al reabrir", () => {

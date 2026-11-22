@@ -96,7 +96,26 @@ export type GrupoTarifa = {
   /** true = el precio cambia según la salida (hay más de un bloque de precio). */
   variaPorSalida: boolean;
   bloques: BloquePrecio[];
+  /** #126-C: todas las filas del grupo son de infante (no hay oferta de adulto aquí); el infante conserva su tarifa base. */
+  soloInfante: boolean;
+  /**
+   * #126-C / F4: vigencia del grupo PROMOCIONAL donde están las tarifas de adulto de ESTAS mismas estadías. Solo se rellena cuando las filas lo establecen:
+   * misma categoría y régimen, un ÚNICO grupo promocional con tarifas de adulto, y ese grupo cubre TODAS las estadías (salida + fechas + noches) del grupo de infante.
+   * Fechas distintas, otra salida, varias promociones candidatas, una candidata que solo cubre parte, o filas sin identidad de estadía → null (explicación neutral, sin enlace).
+   */
+  promoRelacionada: string | null;
+  /** true si alguna fila del grupo es de promoción. */
+  esPromocion: boolean;
 };
+
+const ACOM_ADULTO = new Set(["sencilla", "doble", "triple", "multiple"]);
+
+/** Identidad de una estadía publicada: salida (id) + fechas + noches. null si la fila no la establece (sin id de salida y sin ambas fechas). */
+function llaveEstadia(f: FilaDetalle): string | null {
+  const conId = f.salida_id != null || f.empaquetado_id != null || f.bloqueo_id != null;
+  if (!conId && !(f.fecha_ida && f.fecha_regreso)) return null;
+  return [claveSalida(f), f.fecha_ida ?? "", f.fecha_regreso ?? "", f.noches ?? ""].join(SEP);
+}
 
 /** Agrupa las filas de UN hotel por categoría × vigencia × régimen (nunca por salida). */
 export function agruparPorCategoriaVigenciaRegimen(filas: readonly FilaDetalle[]): GrupoTarifa[] {
@@ -136,7 +155,25 @@ export function agruparPorCategoriaVigenciaRegimen(filas: readonly FilaDetalle[]
       nSalidas: porSalida.size,
       variaPorSalida: ordenados.length > 1,
       bloques: ordenados,
+      soloInfante: lista.length > 0 && lista.every((f) => f.acomodacion === "infante"),
+      promoRelacionada: null,
+      esPromocion: lista.some((f) => f.es_promocion === true),
     });
+  }
+  // Un grupo solo de infante que no es promoción apunta a la promoción donde están los adultos de SUS MISMAS estadías — únicamente si las filas lo establecen (F4: antes tomaba la primera promoción
+  // de la misma categoría y régimen aunque fuera de otras fechas o salida). Ambiguo o desconocido → null.
+  const adultos = new Map<string, Set<string>>();
+  for (const g of grupos) adultos.set(g.clave, new Set((mapa.get(g.clave) ?? []).filter((f) => ACOM_ADULTO.has(f.acomodacion ?? "")).map(llaveEstadia).filter((k): k is string => k != null)));
+  for (const g of grupos) {
+    if (!g.soloInfante || g.esPromocion) continue;
+    const llaves = (mapa.get(g.clave) ?? []).map(llaveEstadia);
+    if (llaves.length === 0 || llaves.some((k) => k == null)) continue;           // sin identidad de estadía: no se puede afirmar nada
+    const propias = new Set(llaves as string[]);
+    const candidatas = grupos.filter((o) => o !== g && o.esPromocion && o.categoria === g.categoria && o.regimen === g.regimen
+      && [...propias].some((k) => adultos.get(o.clave)!.has(k)));
+    if (candidatas.length !== 1) continue;                                        // ninguna o varias: no se inventa el enlace
+    const a = adultos.get(candidatas[0].clave)!;
+    if ([...propias].every((k) => a.has(k))) g.promoRelacionada = candidatas[0].vigencia;   // cubre TODAS las estadías del grupo de infante
   }
   return grupos.sort((a, b) => a.categoria.localeCompare(b.categoria, "es") || a.regimen.localeCompare(b.regimen, "es") || a.vigencia.localeCompare(b.vigencia, "es"));
 }

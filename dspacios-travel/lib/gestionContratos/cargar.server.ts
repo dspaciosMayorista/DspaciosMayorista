@@ -3,20 +3,22 @@
 // pantalla, nunca la cookie de agencia activa, y la RLS sigue siendo la segunda red.
 import { createClient } from "@/lib/supabase/server";
 import { esSuperadminActivo } from "./acceso.server";
-import { aFiltrosRpc, parsearFiltros, POR_PAGINA, type EntradaUrl, type FiltrosGestion } from "./filtros";
+import { aFiltrosRpc, aplicarPisoViajeReciente, parsearFiltros, POR_PAGINA, type EntradaUrl, type FiltrosGestion } from "./filtros";
+import { fechaNegocio } from "../fechaNegocio.ts";
 import { parsearRespuesta, type RespuestaGestion } from "./tipos";
 
 export type CargaGestion =
   | { estado: "sin_permiso" }
   | { estado: "error"; mensaje: string }
-  | { estado: "ok"; filtros: FiltrosGestion; pagina: number; avisos: string[]; datos: RespuestaGestion };
+  | { estado: "ok"; filtros: FiltrosGestion; pagina: number; avisos: string[]; datos: RespuestaGestion; /** #126-E: piso «hoy» (Bogotá) aplicado por el modo «Viaje más reciente»; null si no aplica. */ pisoDesde: string | null };
 
-export async function cargarGestionContratos(entrada: EntradaUrl): Promise<CargaGestion> {
+export async function cargarGestionContratos(entrada: EntradaUrl, ahora: Date = new Date()): Promise<CargaGestion> {
   const sb = await createClient();
   if (!(await esSuperadminActivo(sb))) return { estado: "sin_permiso" };
   const { filtros, pagina, avisos } = parsearFiltros(entrada);
+  const { filtros: efectivos, pisoDesde } = aplicarPisoViajeReciente(filtros, fechaNegocio(ahora));   // #126-E: «hoy» en America/Bogota, no en UTC
   const { data, error } = await sb.rpc("fn_gestion_contratos", {
-    p_filtros: aFiltrosRpc(filtros),
+    p_filtros: aFiltrosRpc(efectivos),
     p_orden: filtros.orden,
     p_limite: POR_PAGINA,
     p_desplazamiento: (pagina - 1) * POR_PAGINA,
@@ -27,7 +29,7 @@ export async function cargarGestionContratos(entrada: EntradaUrl): Promise<Carga
     return { estado: "error", mensaje: "No se pudo cargar la lista de contratos. Recarga la página; si persiste, avisa a soporte." };
   }
   try {
-    return { estado: "ok", filtros, pagina, avisos, datos: parsearRespuesta(data) };
+    return { estado: "ok", filtros, pagina, avisos, datos: parsearRespuesta(data), pisoDesde };
   } catch {
     return { estado: "error", mensaje: "La respuesta de la base no tiene la forma esperada; no se muestra para no presentar datos incorrectos." };
   }

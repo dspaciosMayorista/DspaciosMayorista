@@ -17,6 +17,8 @@ import { SELECT_PROMO_VIGENCIA, acomodacionDeColumna } from "../calc/promociones
 // con `--experimental-strip-types`), así que el relativo es equivalente en
 // build y deja este archivo testeable con ejecución real.
 import { ejecutarConsultaPaginada } from "./paginacion.ts";
+// #127: cierres generales del hotel (`hotel_blackouts`): una vitrina nunca debe mostrar una oferta cuya estadía cae en un cierre, aunque la fila siga publicada.
+import { cargarCierresHoteles, estadiaCerrada, ventanaTocadaPorCierre, type CierreHotel } from "./cierresHotel.ts";
 
 // Oculta del tarifario las tarifas de HOTEL cuya vigencia de COMPRA ya venció.
 // El tarifario_resultado es un snapshot congelado: el PVP no cambia, pero la
@@ -110,7 +112,7 @@ function buildVigenciaChecker(temps: TempRow[], tarifas: TarRow[]) {
 }
 
 type FilaConVigencia = {
-  modulo: string; hotel_id?: number | null; categoria?: string | null; regimen?: string | null;
+  modulo: string; hotel_id?: number | null; categoria?: string | null; regimen?: string | null; acomodacion?: string | null;
   fecha_ida?: string | null; fecha_regreso?: string | null; noches?: number | null; desde_entrada?: string | null; desde_entrada_doble?: string | null;
 };
 
@@ -120,6 +122,27 @@ type FilaConVigencia = {
 // array dos veces con criterios que puedan divergir.
 export function esFilaHotelVerificable<T extends FilaConVigencia>(f: T): boolean {
   return (f.modulo === "bloqueo" || f.modulo === "porcion_terrestre") && f.hotel_id != null && !!f.fecha_ida;
+}
+
+// #127: filas de hotel con estadía (o ventana) concreta a las que aplica un cierre general: las mismas de arriba MÁS el módulo dinámico (salidas), que la vigencia de compra no verifica.
+export function esFilaSujetaACierre<T extends FilaConVigencia>(f: T): boolean {
+  return (f.modulo === "bloqueo" || f.modulo === "dinamico" || f.modulo === "porcion_terrestre") && f.hotel_id != null && !!f.fecha_ida;
+}
+
+/** ¿La fila (una acomodación de una estadía fija, o la ventana «desde» de porción) cae en un cierre general? Sin acomodación = cerrada solo si ninguna habitación es vendible. */
+export function filaCerradaPorCierre<T extends FilaConVigencia>(f: T, cierres: readonly CierreHotel[] | undefined): boolean {
+  if (!cierres?.length || !f.fecha_ida) return false;
+  if (f.modulo === "porcion_terrestre") {
+    // El «desde» es un PRECIO de una estadía concreta: con testigo (`desde_entrada`: hotel con grupos, o el que publica la generación consciente del cierre) la fila vive de ESA estadía.
+    // Sin testigo (publicada antes del cierre) NO se puede probar que ese precio siga existiendo aunque quede alguna fecha libre: si un cierre aplicable toca la ventana, se oculta
+    // hasta una regeneración verificada (G1 de la auditoría).
+    const entrada = f.desde_entrada ?? f.desde_entrada_doble ?? null;
+    const n = f.noches ?? 1;
+    return entrada ? estadiaCerrada(cierres, f.categoria ?? null, f.acomodacion ?? null, entrada, n)
+      : ventanaTocadaPorCierre(cierres, f.categoria ?? null, f.acomodacion ?? null, f.fecha_ida, f.fecha_regreso ?? f.fecha_ida, n);
+  }
+  if (!f.noches) return false;
+  return estadiaCerrada(cierres, f.categoria ?? null, f.acomodacion ?? null, f.fecha_ida, f.noches);
 }
 
 export type ResultadoVigencia<T> = {
@@ -158,7 +181,9 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
 ): Promise<ResultadoVigencia<T>> {
   const hotelFilas = filas.filter(esFilaHotelVerificable);
   const hIds = [...new Set(hotelFilas.map((f) => f.hotel_id as number))];
-  if (!hIds.length) return { filas, error: null };
+  const filasCierre = filas.filter(esFilaSujetaACierre);
+  const cIds = [...new Set(filasCierre.map((f) => f.hotel_id as number))];
+  if (!hIds.length && !cIds.length) return { filas, error: null };
 
   // ⚠️ Ronda posterior — defecto "TAMACÁ pierde PA/PC en Ver opciones"
   // (confirmado con SQL real): las DOS consultas se hacían con UN solo
@@ -175,8 +200,10 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
   // vacía (nunca por `page.length < 1000`: el servidor puede imponer un límite
   // menor) y revisión de `error` en CADA página — un fallo en cualquier página
   // aborta con el mismo fail-closed explícito de siempre.
-  const [resTemps, resTars] = await Promise.all([
-    ejecutarConsultaPaginada<TempRow>((from, hasta) =>
+  const sinFilas = { data: [], error: null };
+  // Una sola lectura de cierres por conjunto de hoteles (nunca una por tarjeta/fila).
+  const [resTemps, resTars, resCierres] = await Promise.all([
+    !hIds.length ? (sinFilas as { data: TempRow[]; error: null }) : ejecutarConsultaPaginada<TempRow>((from, hasta) =>
       admin
         .from("hotel_temporadas")
         .select(`hotel_id, id, nombre, fecha_inicio, fecha_fin, prioridad, compra_inicio, compra_fin, tipo, descuento_valor, rangos, blackouts, min_noches, regimen_restringido, hotel_temporada_grupos(id, dias, activo), ${SELECT_PROMO_VIGENCIA}`)
@@ -185,7 +212,7 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
         .order("id")
         .range(from, hasta)
     ),
-    ejecutarConsultaPaginada<TarRow>((from, hasta) =>
+    !hIds.length ? (sinFilas as { data: TarRow[]; error: null }) : ejecutarConsultaPaginada<TarRow>((from, hasta) =>
       admin
         .from("tarifa_hotel")
         .select("hotel_id, tipo_habitacion, alimentacion, temporada, neto_sencilla, neto_doble, neto_triple, neto_multiple, grupo_id, temporada_base")
@@ -193,19 +220,21 @@ export async function filtrarTarifarioVencidas<T extends FilaConVigencia>(
         .order("id")
         .range(from, hasta)
     ),
+    cargarCierresHoteles(admin, cIds, hoyISO()),
   ]);
-  const errorLectura = resTemps.error ?? resTars.error;
+  const errorLectura = resTemps.error ?? resTars.error ?? resCierres.error;
   if (errorLectura) {
     // Fallo cerrado EXPLÍCITO: no se puede verificar vigencia → se ocultan
     // las filas de hotel verificables (mismo criterio que ya usaba el
     // camino "sin vigencia real", ahora sin depender de que `?? []` lo
     // produzca por accidente).
-    return { filas: filas.filter((f) => !esFilaHotelVerificable(f)), error: errorLectura };
+    return { filas: filas.filter((f) => !esFilaHotelVerificable(f) && !esFilaSujetaACierre(f)), error: errorLectura };
   }
   const chk = buildVigenciaChecker(resTemps.data ?? [], resTars.data ?? []);
 
   const filtradas = filas.filter((f) => {
     if (f.hotel_id == null || !f.fecha_ida) return true;
+    if (esFilaSujetaACierre(f) && filaCerradaPorCierre(f, resCierres.porHotel.get(f.hotel_id))) return false;
     if (f.modulo === "bloqueo") {
       if (!f.noches) return true;
       return chk.bloqueo(f.hotel_id, f.categoria ?? null, f.regimen ?? null, f.fecha_ida, f.noches);

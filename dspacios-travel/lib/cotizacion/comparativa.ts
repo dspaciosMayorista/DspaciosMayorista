@@ -330,6 +330,11 @@ export function construirComparativaManual(
   if (input.aliadoId != null && (tipoAsesor === "interno" || !Number.isInteger(input.aliadoId) || input.aliadoId <= 0)) {
     return { ok: false, error: "El aliado solo aplica a una venta de agencia o freelance." };
   }
+  // #35: una comparativa B2B NUEVA exige un aliado verificable del catálogo (por id, nunca por texto libre).
+  // La guarda de la pantalla no basta: la acción se puede invocar sin ella. Las históricas no se tocan.
+  if (tipoAsesor !== "interno" && input.aliadoId == null) {
+    return { ok: false, error: "Elige el aliado del catálogo (no se admite texto libre en una comparativa)." };
+  }
   const asesor = tipoAsesor === "interno" ? input.asesorInterno : tipoAsesor === "agencia" ? input.agenciaNombre : input.freelanceNombre;
   const canal = tipoAsesor === "interno" ? "B2C" : "B2B";
   const clienteNombre = `${input.cliente.nombres ?? ""} ${input.cliente.apellidos ?? ""}`.trim();

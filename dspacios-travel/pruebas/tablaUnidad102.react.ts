@@ -59,7 +59,9 @@ describe("Vista tabla — alojamientos por unidad", () => {
     assert.match(t, /Alojamientos por unidad · estadía de 3 noches/);
     assert.match(t, /Precio por habitación, no por persona/);
     assert.match(t, /U1 · Hotel por unidad con edades/); assert.match(t, /1 hab Doble · 2 adultos/); assert.match(t, /\$\s?600\.000/); assert.match(t, /2 pax · por unidad/);
-    assert.doesNotMatch(t, /c\/u|Tarifa de adulto/, "no hay tarifa por persona para un hotel por unidad");
+    // O-2: ya no se oculta la lectura por adulto, pero SOLO como «equivalente informativo» de la base de la unidad; nunca una tarifa de adulto vendible.
+    assert.doesNotMatch(t, /Tarifa de adulto/, "no hay tarifa por persona para un hotel por unidad");
+    assert.match(t, /equivalente informativo ≈ \$\s?300\.000 c\/u \(base ÷ 2; el precio real es por unidad, no por persona\)/);
     assert.equal(m.cont.querySelector('section[aria-labelledby="sec-estadia"]'), null, "sin filas por persona no hay sección de estadía por persona");
     assert.equal(m.cont.querySelector('section[aria-labelledby="sec-noche"]'), null, "ni noche adicional (no se calcula para unidad)");
     assert.match(t, /No se calcula una noche adicional/);

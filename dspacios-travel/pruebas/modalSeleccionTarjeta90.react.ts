@@ -193,3 +193,24 @@ test("porción terrestre: las fechas de la tarjeta llegan al modal, que cotiza s
   assert.deepEqual(etiquetasModal(), [EBB.etiqueta]);
   assert.match(modal(), /Estándar/);
 });
+
+// #126-D — tarjeta de fechas (tile) y «Ver opciones»: la promoción que ganó en el MISMO cálculo se ve en ambos; sin promoción ganadora, en ninguno.
+const promoTile = () => [...document.querySelectorAll('[data-testid="etiqueta-promocion-hotel"]')].filter((e) => !e.closest(".fixed.inset-0")).map((e) => e.textContent?.replace(/\s+/g, " ").trim());
+const promoModal = () => [...document.querySelectorAll('.fixed.inset-0 [data-testid="etiqueta-promocion-hotel"]')].map((e) => e.textContent?.replace(/\s+/g, " ").trim());
+for (const [nombre, etiqueta] of [["con promoción en toda la estadía", "Promoción PRE BF"], ["con promoción en algunas noches", "Promoción PRE BF · solo en algunas noches"], ["sin promoción ganadora", null]] as const) {
+  test(`#126-D tarjeta y modal ${nombre}: ${etiqueta ?? "ninguna etiqueta de promoción"}`, async () => {
+    dom.window.localStorage.clear();
+    g.__detalleActionsFake = detalleOk();
+    g.__cotizarTarjetaFake = async () => {
+      const r = cotizacion(1_000_000, null);
+      return { ...r, promocionHotel: etiqueta ? { etiqueta } : null, combos: r.combos.map((x) => ({ ...x, promocion: etiqueta ? { etiqueta } : null })) };
+    };
+    const c = await montar();
+    await elegirDestino(c);
+    await salidaEnTarjeta(c);
+    assert.deepEqual(promoTile(), etiqueta ? [etiqueta] : [], "la tarjeta con fechas");
+    await abrirModal(c);
+    assert.deepEqual(promoModal(), etiqueta ? [etiqueta] : [], "el modal «Ver opciones»");
+    if (etiqueta) assert.doesNotMatch(promoModal().join(" "), /niñ|gratis/i, "la etiqueta nunca habla de niños gratis");
+  });
+}

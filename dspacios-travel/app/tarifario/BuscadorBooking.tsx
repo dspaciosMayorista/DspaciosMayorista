@@ -1,6 +1,7 @@
 "use client";
 
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { EtiquetaPromocionHotel } from "@/components/cotizacion/EtiquetaPromocionHotel";
 import { TextoCategoriaHotel } from "./TextoCategoriaHotel";
 import { DateInput } from "@/components/ui/DateInput";
 import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
@@ -671,7 +672,7 @@ export function BuscadorBooking({
 // el resultado del mismo hotel + paquete + categoría + régimen. Nunca lanza.
 export type RevalidacionHotelPersona =
   // `descuentoHotel`: regla EBB / Long Stay del MISMO cálculo que `precio` (null = sin descuento): precio y etiqueta se actualizan siempre juntos.
-  | { estado: "ok"; precio: number; precioCambio: boolean; condicion: HotelCartItemPersona["condicion"]; descuentoHotel: { etiqueta: string } | null }
+  | { estado: "ok"; precio: number; precioCambio: boolean; condicion: HotelCartItemPersona["condicion"]; descuentoHotel: { etiqueta: string } | null; promocionHotel: { etiqueta: string } | null }
   | { estado: "rechazo" | "error"; mensaje: string };
 
 export const MENSAJE_HOTEL_PERSONA_NO_DISPONIBLE =
@@ -714,7 +715,7 @@ export async function revalidarHotelPersona(
   if (claveReservaPersona(fresca) !== claveReservaPersona(item) || !mismaMoneda) {
     return { estado: "rechazo", mensaje: MENSAJE_HOTEL_PERSONA_NO_DISPONIBLE };
   }
-  return { estado: "ok", precio: combo.total, precioCambio: combo.total !== precioMostrado, condicion: res.condicion ?? null, descuentoHotel: res.descuentoHotel?.etiqueta ? { etiqueta: res.descuentoHotel.etiqueta } : null };
+  return { estado: "ok", precio: combo.total, precioCambio: combo.total !== precioMostrado, condicion: res.condicion ?? null, descuentoHotel: (combo.descuento !== undefined ? combo.descuento : res.descuentoHotel)?.etiqueta ? { etiqueta: (combo.descuento !== undefined ? combo.descuento : res.descuentoHotel)!.etiqueta } : null, promocionHotel: combo.promocion?.etiqueta ? { etiqueta: combo.promocion.etiqueta } : null };
 }
 
 // Tarjeta de un resultado PERSONA ya liquidado por el motor. Sigue viviendo
@@ -833,7 +834,7 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
   // #54: tarifa del hotel revalidada al confirmar una edición, cuando difiere
   // de la de la búsqueda. Solo vale para ESTA reserva y mientras esté en el
   // carrito; agregar de nuevo sigue el flujo normal con el precio de la búsqueda.
-  const [tarifaRevalidada, setTarifaRevalidada] = useState<{ clave: string; total: number; descuentoHotel: { etiqueta: string } | null } | null>(null);
+  const [tarifaRevalidada, setTarifaRevalidada] = useState<{ clave: string; total: number; descuentoHotel: { etiqueta: string } | null; promocionHotel: { etiqueta: string } | null } | null>(null);
   const tarifaHotel = enCarrito && tarifaRevalidada?.clave === claveReserva ? tarifaRevalidada.total : null;
   const itemVigente = tarifaHotel != null ? { ...item, precio: tarifaHotel } : item;
   const selCls = "rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs";
@@ -914,7 +915,7 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
         if (revHotel.precioCambio) {
           // La tarjeta pasa a la tarifa fresca; eso cambia la clave de los
           // servicios, que se recotizan solos, y el usuario confirma de nuevo.
-          setTarifaRevalidada({ clave: claveReserva, total: revHotel.precio, descuentoHotel: revHotel.descuentoHotel });
+          setTarifaRevalidada({ clave: claveReserva, total: revHotel.precio, descuentoHotel: revHotel.descuentoHotel, promocionHotel: revHotel.promocionHotel });
           setErrorEdicion(MENSAJE_TARIFA_HOTEL_CAMBIO);
           return;
         }
@@ -961,7 +962,8 @@ export function Resultado({ r, recomendada = false, foto, fotos, info, descripci
             <EtiquetasHotel adultsOnly={info?.adultsOnly ?? false} petFriendly={info?.petFriendly ?? false} />
             {/* #90: solo en la tarjeta de búsqueda por FECHAS (su precio ya se calculó para ellas, con esta regla); nunca junto a un precio «desde». */}
             {/* Si la tarifa se revalidó (precio nuevo), la etiqueta es la de ESA revalidación, no la de la búsqueda: nunca una etiqueta vieja junto a un precio nuevo. */}
-            <EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : r.descuentoHotel} />
+            <EtiquetaDescuentoHotel descuento={tarifaHotel != null ? tarifaRevalidada?.descuentoHotel : combo && combo.descuento !== undefined ? combo.descuento : r.descuentoHotel} />
+            <EtiquetaPromocionHotel promocion={tarifaHotel != null ? tarifaRevalidada?.promocionHotel : combo?.promocion} />
           </div>
           <div className="mt-1"><CondicionHotelBadges condicion={r.condicion} /></div>
           <div className="text-xs text-gray-500">{r.destino ?? ""} · {r.noches}N</div>

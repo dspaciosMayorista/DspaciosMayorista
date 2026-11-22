@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { KeyRound } from "lucide-react";
 import { redirect } from "next/navigation";
 import { Outfit, Plus_Jakarta_Sans } from "next/font/google";
 import { createClient } from "@/lib/supabase/server";
@@ -208,6 +210,7 @@ export default async function DashboardLayout({
             )}
             {switcher}
             <CampanaAvisos />
+            <Link href="/cuenta/contrasena" aria-label="Cambiar contraseña" title="Cambiar contraseña" className="inline-flex items-center rounded p-1 text-xs hover:underline" style={{ color: "var(--dash-ink-muted)" }}><KeyRound size={15} aria-hidden /></Link>
             <LogoutButton className="text-xs" />
           </div>
         </div>

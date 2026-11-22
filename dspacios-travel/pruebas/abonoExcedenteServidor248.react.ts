@@ -54,7 +54,7 @@ const sb = {
   rpc: async (fn: string, args: Record<string, unknown>) => {
     db.rpcs.push({ fn, args });
     if (fn === "anular_abono") return db.rpcAnular;
-    if (fn === "registrar_abono") return db.rpcRegistro;
+    if (fn === "registrar_abono_moneda") return db.rpcRegistro;
     return { data: { estado: "contabilizado" }, error: null };
   },
 };
@@ -82,14 +82,14 @@ beforeEach(() => {
 // Aquí solo se comprueba que la Server Action valida, manda lo correcto e interpreta cada respuesta; la atomicidad y las
 // carreras se prueban contra Postgres real en supabase/scripts/test_248_anular_abono.sql y test_248_carrera.sh.
 const OP = "00000000-0000-4000-8000-0000000a0001";
-const ultimaRpc = () => db.rpcs.filter((x) => x.fn === "registrar_abono").at(-1)!;
+const ultimaRpc = () => db.rpcs.filter((x) => x.fn === "registrar_abono_moneda").at(-1)!;
 
 test("contrato con saldo: una RPC, sin confirmación pedida, con la operación y los datos normalizados", async () => {
   const r = await registrarAbono("00-0451", 100_000, "Transferencia", "R-1", undefined, "2026-09-30", undefined, OP, {});
   assert.deepEqual(r, { ok: true });
   assert.deepEqual(ultimaRpc().args, {
     p_numero: "00-0451", p_tenant: "mayorista", p_actor: "u-1", p_monto_cop: 100_000, p_trm: null,
-    p_forma: "Transferencia", p_ref: "R-1", p_fecha: "2026-09-30", p_confirmar: false, p_operacion: OP,
+    p_forma: "Transferencia", p_ref: "R-1", p_fecha: "2026-09-30", p_confirmar: false, p_operacion: OP, p_moneda_pago: null,
   });
   assert.equal(db.abonos.length, 0, "la Server Action ya NO inserta: lo hace la RPC en su transacción");
 });

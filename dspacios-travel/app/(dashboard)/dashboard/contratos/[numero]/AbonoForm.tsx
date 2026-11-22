@@ -6,24 +6,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { registrarAbono } from "../actions";
-import { formatUSD } from "@/lib/utils";
+import { CamposPagoUsd, valorCopDelPago } from "@/components/contrato/PagoUsdCampos";
+import type { ModoPagoUsd } from "@/lib/finanzas/pagoUsd";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ConfirmarExcedenteAbono } from "@/components/contrato/ConfirmarExcedenteAbono";
 import { useRegistroAbono } from "@/components/contrato/useRegistroAbono";
 import { ConfirmacionPendienteAbono } from "@/components/contrato/ConfirmacionPendienteAbono";
 
-export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP", identidad }: { numeroContrato: string; formasPago?: string[]; moneda?: string; identidad: IdentidadContrato }) {
+export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP", identidad, saldo }: { numeroContrato: string; formasPago?: string[]; moneda?: string; identidad: IdentidadContrato; saldo?: number }) {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState("");
   const [ref, setRef] = useState("");
   const [trm, setTrm] = useState("");
   const [fecha, setFecha] = useState(() => fechaNegocio());
   const esUSD = (moneda ?? "COP").toUpperCase() === "USD";
-  const usdEq = esUSD && Number(valor) > 0 && Number(trm) > 0 ? Number(valor) / Number(trm) : null;
+  const [modo, setModo] = useState<ModoPagoUsd>("cop");
+  // #126-A: un pago nativo en USD se envía como su equivalente en pesos con SU TRM; la base acredita exactamente lo digitado (a centavos).
+  const valorEnviado = esUSD ? valorCopDelPago(modo, valor, trm) : valor;
   const reg = useRegistroAbono({
-    campos: { valor, forma, ref, trm, fecha },
+    campos: { valor: valorEnviado, forma, ref, trm, fecha, monedaPago: esUSD ? (modo === "usd" ? "USD" : "COP") : undefined },
     esUSD,
-    registrar: (e, confirmar) => registrarAbono(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion, identidad),
+    registrar: (e, confirmar) => registrarAbono(numeroContrato, e.valor, e.forma, e.ref, e.trm, e.fecha, confirmar, e.operacion, identidad, e.monedaPago),
     reiniciar: () => { setValor(""); setForma(""); setRef(""); setTrm(""); setFecha(fechaNegocio()); },
   });
   const { pending, error } = reg;
@@ -32,24 +35,12 @@ export function AbonoForm({ numeroContrato, formasPago = [], moneda = "COP", ide
     <form onSubmit={(e) => { e.preventDefault(); reg.enviar(); }} className="flex flex-wrap items-end gap-3">
       <ConfirmarExcedenteAbono datos={reg.excedente} onCancelar={reg.cancelar} onConfirmar={reg.confirmar} />
       <ConfirmacionPendienteAbono mensaje={reg.confirmacionPendiente} pending={pending} onReintentar={reg.reintentarConfirmacion} />
-      <div>
-        <label className="mb-1 block text-xs font-medium text-gray-600">
-          {esUSD ? "Valor pagado (COP)" : "Valor del abono"}
-        </label>
-        <Input
-          type="number"
-          min={0}
-          value={valor}
-          onChange={(e) => setValor(e.target.value)}
-          placeholder="0"
-          className="w-40"
-        />
-      </div>
-      {esUSD && (
+      {esUSD ? (
+        <CamposPagoUsd modo={modo} onModo={setModo} valor={valor} onValor={setValor} trm={trm} onTrm={setTrm} saldo={saldo} />
+      ) : (
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-600">TRM del día</label>
-          <Input type="number" min={0} value={trm} onChange={(e) => setTrm(e.target.value)} placeholder="4000" className="w-32" />
-          <p className="mt-1 text-[11px] text-gray-400">{usdEq != null ? `= ${formatUSD(usdEq)}` : "COP por 1 USD"}</p>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Valor del abono</label>
+          <Input type="number" min={0} value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0" className="w-40" />
         </div>
       )}
       <div>

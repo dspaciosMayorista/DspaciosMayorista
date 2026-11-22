@@ -6,6 +6,10 @@ import { resolverContextoPortal, categoriaDelPortal, linkPagoPortal } from "@/li
 import { armarPerfil, type AliadoFicha } from "@/lib/portal/perfilPortal";
 import { cargarContextoEdicion } from "@/lib/portal/perfilEdicionServidor";
 import { PerfilEditor } from "./PerfilEditor";
+import { FirmaAliadoSeccion } from "@/components/portal/FirmaAliadoSeccion";
+import { HistorialPerfil } from "@/components/portal/HistorialPerfil";
+import { LogoAliado } from "@/components/portal/LogoAliado";
+import { subirLogoPortal, retirarLogoPortal } from "./logo-actions";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +50,12 @@ export default async function PortalPerfil() {
           />
         </div>
       )}
+      {edicion.lecturaOk && edicion.ficha && (
+        <div className="mb-4">
+          <LogoAliado nombre={edicion.ficha.nombre ?? "Aliado"} src="/portal/b2b/perfil/logo" puedeCambiar={edicion.permisos.puedeFicha} motivo={edicion.permisos.motivoFicha} subir={subirLogoPortal} retirar={retirarLogoPortal} />
+        </div>
+      )}
+      <FirmaAliadoSeccion userId={ctx.userId} />
       <div className="grid gap-4 md:grid-cols-2">
         {perfil.grupos.map((g) => (
           <section key={g.titulo} className="min-w-0 rounded-xl border border-gray-100 bg-white p-4">
@@ -68,6 +78,7 @@ export default async function PortalPerfil() {
           <p className="mt-1 text-[11px] text-gray-400">La define D&apos;spacios.</p>
         </section>
       </div>
+      <HistorialPerfil userId={ctx.userId} />
     </PortalShell>
   );
 }

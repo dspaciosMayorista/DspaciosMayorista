@@ -148,6 +148,7 @@ import {
 } from "@/lib/reservar/edadesMenores";
 import { computarReservaBernalo } from "@/lib/reservar/computoReservaBernalo";
 import { cargarHotelesBernaloDescubiertos } from "@/lib/tarifario/datosBernalo";
+import { peticionConDetalleInterno } from "@/lib/tarifario/detalleInterno.server";
 import {
   evaluarDisponibilidadHotelUnidad,
   ofertasPorHotelDe,
@@ -413,5 +414,7 @@ export async function buscarAlojamientosUnidadPorFechas(
     console.error(`[buscarAlojamientosUnidadPorFechas] etapa=evaluacion hotelId=${v.hotelId} motivo=${v.motivo}`);
   }
 
-  return { ok: true, disponibilidad, incompleto, enRevision };
+  // O-1: el motivo de configuración (campos de edades, ruta de Producto) es solo interno. La sesión se lee una vez, y solo si hay algo que ocultar.
+  const interno = enRevision.length > 0 ? await peticionConDetalleInterno() : false;
+  return { ok: true, disponibilidad, incompleto, enRevision: interno ? enRevision : [] };
 }

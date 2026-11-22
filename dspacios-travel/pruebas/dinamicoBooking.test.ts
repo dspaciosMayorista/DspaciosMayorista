@@ -184,7 +184,7 @@ function cliente(tablas: Record<string, Cfg>, resumen: unknown[]) {
   const builder = (tabla: string) => {
     let rango: [number, number] | null = null;
     return {
-      select() { return this; }, eq() { return this; }, in() { return this; }, not() { return this; }, order() { return this; },
+      select() { return this; }, eq() { return this; }, in() { return this; }, not() { return this; }, gte() { return this; }, order() { return this; },
       range(f: number, t: number) { rango = [f, t]; return this; },
       then(res: (v: Cfg) => void) {
         if (tabla === "tarifario_resumen") { const [f, t] = rango ?? [0, 999]; return res({ data: resumen.slice(f, t + 1), error: null }); }

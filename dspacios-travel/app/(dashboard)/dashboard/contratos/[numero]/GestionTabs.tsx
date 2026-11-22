@@ -1,6 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
+import { resumenCobroUsd, trmNormalizada } from "@/lib/finanzas/pagoUsd";
 import { Fragment, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -32,7 +33,7 @@ import { AnularAbonoBoton } from "@/components/contrato/AnularAbonoBoton";
 import { ResponsiveTableShell } from "@/components/ui/ResponsiveTableShell";
 import { EditorCamposComision } from "../../comisiones/ComisionesList";
 
-type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null };
+type Abono = { id: number; valor_abono: number; forma_pago: string | null; referencia: string | null; fecha_abono: string; trm: number | null; monto_cop: number | null; moneda_pago?: string | null };
 type PagoCxP = { id: number; fecha: string; valor: number; trm: number | null };
 type CxP = {
   id: number; proveedor: string | null; servicio: string | null; valor_total: number;
@@ -248,11 +249,12 @@ function CarteraTab({ identidad, numero, abonos, totalPagado, total, formasPago,
         <Mini label="Pagado" value={fmt(totalPagado)} color="var(--brand-success)" />
         <Mini label="Saldo" value={fmt(saldo)} />
       </div>
+      {esUSD && <ResumenCopUsd total={total} abonos={abonos} />}
       <PlanCobroPanel identidad={identidad} numero={numero} cuotas={cuotas} pagado={totalPagado} puedeEditar={puedeEditarPlan} />
       {puedeEditar && (
         <div className={card}>
           <p className={lbl}>Registrar abono</p>
-          <AbonoForm identidad={identidad} numeroContrato={numero} formasPago={formasPago} moneda={moneda} />
+          <AbonoForm identidad={identidad} numeroContrato={numero} formasPago={formasPago} moneda={moneda} saldo={saldo} />
         </div>
       )}
       {abonos.length > 0 && (
@@ -281,6 +283,33 @@ function CarteraTab({ identidad, numero, abonos, totalPagado, total, formasPago,
   );
 }
 
+// #126-A: lo COBRADO en pesos es un hecho (cada pago a su TRM); el saldo en USD solo admite una estimación provisional.
+function ResumenCopUsd({ total, abonos }: { total: number; abonos: Abono[] }) {
+  const r = resumenCobroUsd(total, abonos);
+  return (
+    <div className="grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white p-3 text-sm sm:grid-cols-3" data-testid="resumen-cop-usd">
+      <div>
+        <p className="text-[11px] uppercase tracking-wide text-gray-400">Cobrado en pesos (real)</p>
+        <p className="font-semibold tabular-nums" style={{ color: "var(--brand-success)" }}>{formatCOP(r.cobradoCop)}</p>
+        <p className="text-[11px] text-gray-400">{r.trmPromedio != null ? `TRM media de lo cobrado ${formatCOP(r.trmPromedio)}` : "Aún sin pagos"}</p>
+        {r.recibidoUsd > 0 && <p data-testid="usd-recibido-panel" className="text-[11px] text-gray-500">Más {formatMoneda(r.recibidoUsd, "USD")} recibidos en dólares (equiv. contable {formatCOP(r.equivalenteContableCop)}; no son pesos recibidos).</p>}
+      </div>
+      <div>
+        <p className="text-[11px] uppercase tracking-wide text-gray-400">Saldo por cobrar (USD)</p>
+        <p className="font-semibold tabular-nums">{formatMoneda(r.saldo, "USD")}</p>
+        <p className="text-[11px] text-gray-400">{r.definitivo ? "Total en pesos definitivo" : "Cada pago futuro fija su propia TRM"}</p>
+      </div>
+      <div>
+        <p className="text-[11px] uppercase tracking-wide text-gray-400">{r.definitivo ? (r.recibidoUsd > 0 ? "Total en pesos (contable)" : "Total cobrado en pesos") : "Equivalente del saldo (provisional)"}</p>
+        <p className={`font-semibold tabular-nums ${r.definitivo ? "" : "text-amber-700"}`}>
+          {r.definitivo ? formatCOP(r.cobradoCop + r.equivalenteContableCop) : r.estimadoSaldoCop != null ? `≈ ${formatCOP(r.estimadoSaldoCop)}` : "—"}
+        </p>
+        <p className="text-[11px] text-gray-400">{r.definitivo ? (r.recibidoUsd > 0 ? "Pesos recibidos + equivalente contable de los dólares" : "Suma de los pagos reales") : r.trmEstimacion != null ? `Estimado a TRM ${formatCOP(r.trmEstimacion)}; no es un cobro` : "Sin TRM para estimar"}</p>
+      </div>
+    </div>
+  );
+}
+
 // Fila de abono con edición inline (corregir valor/fecha/forma/referencia sin
 // tener que registrar un segundo abono para "cuadrar" el saldo) y anular.
 function FilaAbono({ identidad, a, numero, esUSD, moneda, formasPago, puedeEditar = true }: { identidad: IdentidadContrato; a: Abono; numero: string; esUSD: boolean; moneda: string; formasPago: string[]; puedeEditar?: boolean }) {
@@ -301,7 +330,7 @@ function FilaAbono({ identidad, a, numero, esUSD, moneda, formasPago, puedeEdita
     start(async () => {
       const r = await actualizarAbono(a.id, numero, {
         valor: Number(valor) || 0, fecha, formaPago: forma, referencia: ref,
-        trmInput: esUSD ? Number(trm) || 0 : undefined,
+        trmInput: esUSD ? trmNormalizada(trm) ?? 0 : undefined,
       }, identidad);
       if (r.ok) setEditar(false); else setErr(r.error ?? "Error");
     });
@@ -338,7 +367,7 @@ function FilaAbono({ identidad, a, numero, esUSD, moneda, formasPago, puedeEdita
       <td className="px-4 py-2 text-gray-500" data-label="Fecha">{a.fecha_abono}</td>
       <td className="px-4 py-2 text-right tabular-nums" data-label="Valor">{fmt(a.valor_abono)}</td>
       {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500" data-label="TRM">{a.trm ? formatCOP(a.trm) : "—"}</td>}
-      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500" data-label="Pagado (COP)">{a.monto_cop ? formatCOP(a.monto_cop) : "—"}</td>}
+      {esUSD && <td className="px-4 py-2 text-right tabular-nums text-gray-500" data-label="Pagado (COP)">{a.moneda_pago === "USD" ? <span data-testid="pago-usd-recibido" title="Se recibieron dólares; el valor en pesos es el equivalente contable a la TRM del pago"><span className="block">Recibido en USD</span><span className="block text-[10px] text-gray-400">equiv. contable {a.monto_cop ? formatCOP(a.monto_cop) : "—"}</span></span> : (a.monto_cop ? formatCOP(a.monto_cop) : "—")}</td>}
       <td className="px-4 py-2 text-gray-500" data-label="Forma">{a.forma_pago ?? "—"}</td>
       <td className="px-4 py-2 text-gray-500" data-label="Referencia">{a.referencia ?? "—"}</td>
       <td className="px-4 py-2 text-right" data-label="Recibo">

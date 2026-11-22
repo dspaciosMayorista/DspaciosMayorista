@@ -27,6 +27,7 @@ import {
   type TemporadaRango,
 } from "@/lib/calc/paquetes";
 import { crearPresupuestoDesde, hotelConGrupos } from "@/lib/calc/desdeEstadia";
+import { cargarCierresHoteles, resolverCierresEstadia, subventanasEntradaVendible, sumarDiasISO, testigoDesde, ventanaSinEntradaVendible, ventanaTocadaPorCierre, type CierreHotel } from "@/lib/tarifario/cierresHotel";
 import { validarEdadesGeneralesHotel } from "@/lib/calc/reglaEdadTarifa";
 import { basesPromoDeFilas, claveFilaTarifa, clavesPrecioFinal, netosDeColumna } from "@/lib/calc/netosPorTemporada";
 import { SELECT_PROMO_VIGENCIA } from "@/lib/calc/promocionesGrupo";
@@ -1168,6 +1169,17 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
     }
   }
 
+  // #127: cierres GENERALES del hotel (`hotel_blackouts`), una sola lectura para todos los hoteles del paquete. Distinto de `hotel_temporadas.blackouts`
+  // (exclusión de UNA vigencia, ya dentro de `temporadas`): el cierre general gana sobre toda vigencia. Un error de lectura NO significa «sin cierres»:
+  // la generación falla cerrada (no publica ofertas que quizá estén cerradas).
+  let cierresPorHotel = new Map<number, CierreHotel[]>();
+  if (hotelIds.length) {
+    // Cliente de SESIÓN (como el resto de lecturas de la generación; el generador no usa service-role): la RLS de `hotel_blackouts` deja leer a todo usuario autenticado.
+    const rc = await cargarCierresHoteles(sb, hotelIds, hoyBogota(new Date()));
+    if (rc.error) return await fallarTecnico(`hotel_blackouts: ${rc.error instanceof Error ? rc.error.message : JSON.stringify(rc.error)}`);
+    cierresPorHotel = rc.porHotel;
+  }
+
   // `neto_hotel` NO es columna de tarifario_resultado: viaja en el payload y la base lo guarda aparte (tarifario_resultado_neto, migración 260) para la invalidación exacta.
   type ResultadoInsert = Database["public"]["Tables"]["tarifario_resultado"]["Insert"] & { neto_hotel?: number | null };
   const filas: ResultadoInsert[] = [];
@@ -1337,6 +1349,11 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
       const filtroReg = (h.regimenes as string[] | null) ?? null;
       const temporadas = temporadasPorHotel.get(h.hotel_id) ?? [];
       const tarifas = tarifasPorHotel.get(h.hotel_id) ?? [];
+      // #127: cierres generales de ESTE hotel. Estadía fija: se resuelven una vez; un cierre total omite el hotel en esta estadía y uno parcial omite cada
+      // categoría/acomodación cerrada. «Desde» (ventana): solo compiten las entradas vendibles (ver `subventanasEntradaVendible`).
+      const cierresHotel = cierresPorHotel.get(h.hotel_id) ?? [];
+      const cierreEstadia = masBarato ? null : resolverCierresEstadia(cierresHotel, fechaIda, numNoches);
+      if (cierreEstadia?.totalCerrado) continue;
       // Agrupa por (categoría, régimen) -> (temporada -> fila de tarifa)
       const combos = new Map<string, Map<string, TarifaRow>>();
       for (const r of tarifas) {
@@ -1360,6 +1377,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         const basePromoPorClave = basesPromoDeFilas(tempMap);
         let hayHabitacion = false;
         let hayInfante = false;
+        let testigoHab: string | null = null; // #127 G1: testigo del primer precio de habitación publicado (lo hereda la fila sintética de infante)
         const netosCombo: Record<string, number> = {};
         const pvpsCombo: Record<string, { pvp: number; pvpMenor2: number | null }> = {};
         const netosOrigenCombo: Record<string, { monto: number; moneda: string }> = {};
@@ -1431,6 +1449,7 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
           }
         };
         for (const acom of ACOMODACIONES) {
+          if (cierreEstadia?.cerrada(categoria, acom)) continue;
           const col = COL_NETO[acom];
           const netoPorTemporada = netosDeColumna(tempMap, col);
           // Procedencia REAL del precio ganador (migración 180) — SIEMPRE
@@ -1439,15 +1458,29 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
           // venir de CUALQUIER noche de la ventana, no necesariamente la de
           // entrada — ese era exactamente el defecto confirmado).
           // Entrega 6: un hotel CON grupos publica la estadía completa más económica realmente vendible (con su entrada); sin grupos, como siempre.
+          // #127: la ventana «desde» se evalúa SOLO sobre entradas vendibles: sin cierre general que aplique es UNA ventana (la de siempre); con cierre, una por tramo vendible y gana la más barata.
+          const hastaVentana = fechaRegreso ?? fechaIda;
+          const tramos = (hasta: string): [string, string][] => (cierresHotel.length ? subventanasEntradaVendible(cierresHotel, categoria, acom, fechaIda, hasta, numNoches) : [[fechaIda, hasta]]);
           const desdeReal = masBarato && hotelConGrupos(temporadas)
-            ? presupuestoDesde.calcular({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) })
+            ? tramos(sumarDiasISO(hastaVentana, -numNoches)).map(([d, h]) => presupuestoDesde.calcular({ desde: d, hasta: sumarDiasISO(h, numNoches), numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) }))
+                .reduce<ReturnType<typeof presupuestoDesde.calcular> | null>((m, r) => (m == null || (r.desde && (!m.desde || r.desde.total < m.desde.total)) ? r : m), null) ?? { desde: null, medicion: { candidatas: 0, evaluadas: 0, vendibles: 0, ms: 0, resultado: "sin_estadia" as const } }
             : null;
           const resultado = desdeReal
             ? (desdeReal.desde ? { total: desdeReal.desde.total, procedencia: desdeReal.desde.procedencia } : null)
             : masBarato
-            ? liquidarHotelMasBaratoConTemporada({ desde: fechaIda, hasta: fechaRegreso ?? fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) })
+            ? tramos(hastaVentana).map(([d, h]) => liquidarHotelMasBaratoConTemporada({ desde: d, hasta: h, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) }))
+                .reduce<ReturnType<typeof liquidarHotelMasBaratoConTemporada>>((m, r) => (r && (!m || r.total < m.total) ? r : m), null)
             : liquidarHotelNochesConTemporadas({ fechaIda, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) });
+          // #127 G1: un «desde» cuya ventana toca un cierre aplicable se publica CON su testigo vendible (la entrada cuyo precio es exactamente el publicado); sin testigo no se publica
+          // (jamás un precio que nadie puede comprar). Sin cierre que toque la ventana nada cambia (sin testigo, como siempre).
+          let testigo: string | null = null;
+          let sinTestigo = false;
+          if (masBarato && !desdeReal && resultado && ventanaTocadaPorCierre(cierresHotel, categoria, acom, fechaIda, hastaVentana, numNoches)) {
+            testigo = testigoDesde(tramos(hastaVentana), (e) => liquidarHotelMasBaratoConTemporada({ desde: e, hasta: e, numNoches, temporadas, netoPorTemporada, regimen, precioFinalTemporadas, basePromoPorClave, acomodacion: acom, ocupantes: ocupantesDe(acom) })?.total ?? null, resultado.total);
+            sinTestigo = testigo == null;
+          }
           const costoHotel = resultado?.total ?? null;
+          if (sinTestigo) continue;
           // Procedencia deduplicada de TODAS las noches que aportaron al
           // total (nunca solo el checkin) — ver lib/tarifario/procedenciaTarifario.ts.
           const procedencia = columnasProcedencia(resultado?.procedencia);
@@ -1456,9 +1489,9 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
           const esRoom = acom !== "nino" && acom !== "nino2" && acom !== "infante";
           if (costoHotel == null) continue;
           if (esRoom && costoHotel <= 0) continue;
-          if (esRoom) { hayHabitacion = true; procedenciaHab = procedenciaHab ?? procedencia; }
+          if (esRoom) { hayHabitacion = true; procedenciaHab = procedenciaHab ?? procedencia; testigoHab = testigoHab ?? testigo; }
           if (acom === "infante") hayInfante = true;
-          publicarFila(acom, costoHotel, procedencia, masBarato ? null : costoHotel, desdeReal?.desde?.justificacion.entrada ?? null);
+          publicarFila(acom, costoHotel, procedencia, masBarato ? null : costoHotel, desdeReal?.desde?.justificacion.entrada ?? testigo);
           // Entrega 5: la reserva decide la precedencia promoción / EBB / Long Stay con la fecha REAL de compra; para eso guarda qué
           // promociones aplicaron y el neto sin ellas (la estadía es concreta: no aplica al «desde» de la ventana).
           if (componer && !masBarato && resultado && netosCombo[acom] != null) {
@@ -1474,7 +1507,10 @@ export async function generarTarifario(paqueteId: number, opciones: OpcionesGene
         // $0 para que el fee de infante del vuelo y los servicios con su precio de
         // infante se cobren igual. Solo si el combo tiene alguna habitación publicada
         // y el hotel acepta niños (Adults Only no publica infante).
-        if (hayHabitacion && !hayInfante && !hotelAdultsOnly && procedenciaHab) publicarFila("infante", 0, procedenciaHab);
+        // #127: la fila sintética de infante tampoco se publica si el cierre general cierra esa clase (estadía fija) o no queda ninguna entrada vendible (ventana).
+        const infanteCerrado = masBarato ? ventanaSinEntradaVendible(cierresHotel, categoria, "infante", fechaIda, fechaRegreso ?? fechaIda, numNoches) : !!cierreEstadia?.cerrada(categoria, "infante");
+        const infanteSinTestigo = masBarato && testigoHab == null && ventanaTocadaPorCierre(cierresHotel, categoria, "infante", fechaIda, fechaRegreso ?? fechaIda, numNoches);
+        if (hayHabitacion && !hayInfante && !hotelAdultsOnly && procedenciaHab && !infanteCerrado && !infanteSinTestigo) publicarFila("infante", 0, procedenciaHab, null, testigoHab);
         if (componer && Object.keys(netosCombo).length) {
           composicionesCombos.push({
             clave: claveComposicion({ ...origenClaveDeFila(bloqueoId, empaquetadoId, salidaId), hotelId: h.hotel_id as number, categoria, regimen, fechaIda, noches: numNoches }),

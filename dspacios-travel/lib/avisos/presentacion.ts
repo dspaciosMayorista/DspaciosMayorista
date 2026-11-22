@@ -1,7 +1,7 @@
 // Avisos internos (#86): textos y reglas PURAS de presentación. Sin red ni next/*.
 // Un aviso lleva tipo + número de contrato y nada más: ni cliente, ni montos, ni nombre de archivo.
 
-export type TipoAviso = "soporte_pago_nuevo" | "soporte_pago_reemplazado";
+export type TipoAviso = "soporte_pago_nuevo" | "soporte_pago_reemplazado" | "solicitud_contrato";
 
 export type AvisoVista = {
   id: number;
@@ -30,6 +30,7 @@ export const SONDEO_VACIO: RespuestaSondeo = { nuevos: [], noLeidos: 0, reciente
 export const INTERVALO_SONDEO_MS = 30_000;
 
 export function textoAviso(tipo: TipoAviso, numeroVisible: string): string {
+  if (tipo === "solicitud_contrato") return `Solicitud de contrato de un aliado: cotización ${numeroVisible}`;
   return tipo === "soporte_pago_reemplazado"
     ? `Se reemplazó un soporte de pago en el contrato ${numeroVisible}`
     : `Nuevo soporte de pago en el contrato ${numeroVisible}`;

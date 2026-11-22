@@ -124,6 +124,12 @@ describe("manual: reglas v1", () => {
     assert.equal(d.aliadoId, 7);
     assert.equal((d.opciones[0].plantilla_hija.payload as { aliadoId?: number }).aliadoId, undefined, "el aliado no entra al payload de la hija");
   });
+  test("#35: una comparativa B2B nueva sin aliado del catálogo se rechaza aunque traiga el nombre en texto", () => {
+    falla({ tipoAsesor: "agencia", agenciaNombre: "Viajes Sol", aliadoId: null }, /Elige el aliado del catálogo/);
+    falla({ tipoAsesor: "freelance", freelanceNombre: "Laura Gómez" }, /Elige el aliado del catálogo/);
+    // la venta interna (B2C) no necesita aliado y sigue creándose
+    assert.equal(construir({ tipoAsesor: "interno" }).aliadoId, null);
+  });
   test("tres hoteles generan tres opciones (A, B, C)", () => {
     const base = entrada().servicios;
     const d = construir({ servicios: [...base, { ...base[3], nombre: "Hotel C", costoNeto: 640000, opcionRef: "C" }] });

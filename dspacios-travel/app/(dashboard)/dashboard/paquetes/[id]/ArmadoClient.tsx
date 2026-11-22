@@ -1489,6 +1489,10 @@ function GrupoTarifaLinea({ hotel, grupo }: { hotel: string; grupo: GrupoTarifa 
         <span className="text-xs text-gray-500">
           {grupo.dobleDesde != null ? (
             <>Doble desde <b className="tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(grupo.dobleDesde, moneda)}</b></>
+          ) : grupo.soloInfante ? (
+            <span title={grupo.promoRelacionada ? `Las tarifas de adulto están en «${grupo.promoRelacionada}»` : undefined}>
+              Solo tarifa de infante{grupo.promoRelacionada ? ` · adultos en «${grupo.promoRelacionada}»` : ""}
+            </span>
           ) : "Sin tarifa doble"}
           {grupo.variaPorSalida && <span className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">Varía por salida</span>}
         </span>
@@ -1503,6 +1507,12 @@ function GrupoTarifaLinea({ hotel, grupo }: { hotel: string; grupo: GrupoTarifa 
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {grupo.soloInfante && (
+              <p data-testid="nota-solo-infante" className="rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+                En este grupo solo queda la tarifa de infante: el infante conserva su tarifa base aunque haya promoción.
+                {grupo.promoRelacionada ? ` Las tarifas de adulto de esta categoría y régimen están en «${grupo.promoRelacionada}».` : " Las tarifas de adulto no se publican en este grupo."}
+              </p>
+            )}
             {grupo.bloques.map((bl, idx) => (
               <div key={idx} className="rounded-lg border border-gray-100">
                 {grupo.variaPorSalida && (

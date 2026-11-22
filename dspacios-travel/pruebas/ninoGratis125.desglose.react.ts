@@ -106,7 +106,7 @@ describe("I1 — tarjeta de Vista Booking: lo mostrado por pasajero suma el tota
     assert.deepEqual([adultos.cantidad, adultos.porPersona, adultos.subtotal], [2, 125_000, 250_000]);
     assert.deepEqual([nino.cantidad, nino.porPersona, nino.subtotal], [1, 0, 0], "el niño paga $0, no 169.000");
     assert.match(nino.etiqueta, /Niño 1 · 8 años/);
-    assert.equal(nino.explicacion, `Tarifa regular ${moneda(169_000)} · Niño gratis · PRE BF`);
+    assert.equal(nino.explicacion, `Niño 1 · 8 años: tarifa regular ${moneda(169_000)} · a pagar ${moneda(0)} c/u · Niño gratis · PRE BF`);
     assert.doesNotMatch(nino.explicacion ?? "", /[−-]\s?\$/, "sin resta aritmética");
     assert.equal(t.total, 250_000);
     assert.equal(sumaMostrada(t), t.total, "lo mostrado por pasajero SUMA el total");
@@ -160,7 +160,7 @@ describe("I1 — tarjeta de Vista Booking: lo mostrado por pasajero suma el tota
     const nino = t.filas.filter((f) => f.clase === "nino");
     assert.equal(nino.length, 1, "un niño real = una línea (R1/R2)");
     assert.deepEqual([nino[0].porPersona, nino[0].subtotal], [0, 0]);
-    assert.equal(nino[0].explicacion, `Tarifa regular ${moneda(101_000)} · Niño gratis · PROMO UNO, PROMO DOS`);
+    assert.equal(nino[0].explicacion, `Niño 1 · 8 años: tarifa regular ${moneda(101_000)} · a pagar ${moneda(0)} c/u · Niño gratis · PROMO UNO, PROMO DOS`);
     assert.equal(sumaMostrada(t), 360_000); assert.equal(t.total, 360_000);
     await m.cerrar();
   });
@@ -180,7 +180,7 @@ describe("I1 — tarjeta de Vista Booking: lo mostrado por pasajero suma el tota
     const nino = t.filas.find((f) => f.clase === "nino")!;
     assert.equal(nino.subtotal, sinNochesGratis, "el niño paga lo que NO es alojamiento promocionado");
     assert.ok((nino.subtotal ?? 0) > 400_000, "el vuelo sigue cobrándose");
-    assert.equal(nino.explicacion, `Tarifa regular ${moneda(pvpCobrado)} · Alojamiento gratis solo en las noches de la promoción · PROMO UNO, PROMO DOS; las demás noches y los servicios o cargos retenidos se pagan`);
+    assert.equal(nino.explicacion, `Niño 1 · 8 años: tarifa regular ${moneda(pvpCobrado)} · a pagar ${moneda(sinNochesGratis)} c/u · El alojamiento de este niño es gratis solo en las noches de la promoción · PROMO UNO, PROMO DOS; las demás noches y los servicios o cargos retenidos se pagan`);
     assert.doesNotMatch(nino.explicacion ?? "", /Niño gratis/, "paga la noche restante, el traslado y el vuelo: no es «Niño gratis»");
     assert.equal(m.cont.querySelector("[data-tarifa-regular]")?.tagName, "S", "la tarifa regular va tachada");
     assert.equal(sumaMostrada(t), t.total); assert.equal(t.total, 2 * 600_000 + sinNochesGratis);
@@ -215,7 +215,7 @@ describe("I1 — Vista tabla: importes por pasajero de la estadía y de la noche
     assert.match(celda(m.cont, "sec-estadia", "Adulto"), /125\.000/);
     const menores = celda(m.cont, "sec-estadia", "Menores");
     assert.match(menores, /Niño 1 · 8 años/); assert.match(menores, /\$\s?0/);
-    assert.match(menores, /Tarifa regular \$\s?169\.000 · Niño gratis · PRE BF/);
+    assert.match(menores, /tarifa regular \$\s?169\.000 · a pagar \$\s?0 c\/u · Niño gratis · PRE BF/);
     assert.doesNotMatch(menores, /\$\s?169\.000\s*\$\s?169\.000\s*$/, "no queda 169.000 como importe a pagar");
     assert.match(celda(m.cont, "sec-estadia", "Total de la reserva"), /250\.000/);
     await m.cerrar();
@@ -246,7 +246,7 @@ describe("I1 — Vista tabla: importes por pasajero de la estadía y de la noche
     assert.match(celda(m.cont, "sec-noche", "Adulto"), /35\.000/);
     const menores = celda(m.cont, "sec-noche", "Menores");
     assert.match(menores, /\$\s?0/);
-    assert.match(menores, /Tarifa regular \$\s?56\.000 · Niño gratis · PRE BF/, "lo condonado SOLO esa noche (225.000 − 169.000)");
+    assert.match(menores, /tarifa regular \$\s?56\.000 · a pagar \$\s?0 c\/u · Niño gratis · PRE BF/, "lo condonado SOLO esa noche (225.000 − 169.000)");
     assert.match(celda(m.cont, "sec-noche", "Total de la noche"), /70\.000/);
     await m.cerrar();
   });
@@ -313,7 +313,7 @@ describe("Owner 2026-11-18 (#125 búsqueda): «Tarifa regular» tachada junto a 
     assert.equal(num(m.cont.querySelector("[data-tarifa-regular]")!.textContent ?? ""), 269_000);
     assert.doesNotMatch(n.explicacion ?? "", /Niño gratis/);
     assert.doesNotMatch(n.explicacion ?? "", /101\.000/, "no se muestra la resta");
-    assert.match(n.explicacion ?? "", /Alojamiento gratis solo en las noches de la promoción · PRE BF; las demás noches y los servicios o cargos retenidos se pagan/);
+    assert.match(n.explicacion ?? "", /El alojamiento de este niño es gratis solo en las noches de la promoción · PRE BF; las demás noches y los servicios o cargos retenidos se pagan/);
     assert.equal(sumaMostrada(t), t.total);
     await m.cerrar();
   });
@@ -322,7 +322,7 @@ describe("Owner 2026-11-18 (#125 búsqueda): «Tarifa regular» tachada junto a 
     const { m, t } = await pintar(nino(0, 169_000));
     const n = t.filas.find((f) => f.clase === "nino")!;
     assert.deepEqual([n.porPersona, n.subtotal], [0, 0]);
-    assert.equal(n.explicacion, `Tarifa regular ${moneda(169_000)} · Niño gratis · PRE BF`);
+    assert.equal(n.explicacion, `Niño 1 · 8 años: tarifa regular ${moneda(169_000)} · a pagar ${moneda(0)} c/u · Niño gratis · PRE BF`);
     await m.cerrar();
   });
 
@@ -335,7 +335,44 @@ describe("Owner 2026-11-18 (#125 búsqueda): «Tarifa regular» tachada junto a 
 
   test("promoción sin nombre: no queda «· » vacío en la explicación", async () => {
     const { m, t } = await pintar(nino(0, 169_000, [""]));
-    assert.equal(t.filas.find((f) => f.clase === "nino")!.explicacion, `Tarifa regular ${moneda(169_000)} · Niño gratis`);
+    assert.equal(t.filas.find((f) => f.clase === "nino")!.explicacion, `Niño 1 · 8 años: tarifa regular ${moneda(169_000)} · a pagar ${moneda(0)} c/u · Niño gratis`);
+    await m.cerrar();
+  });
+});
+
+describe("Owner 2026-11-21 (corrección 4): el importe regular tachado pertenece al niño, no a la tarjeta", () => {
+  // Caso del dueño: 2 adultos × 480.000, infante de 1 año 100.000, niño de 8 años que paga 168.000 (regular 269.000) = 1.228.000.
+  const lineas = [
+    { clase: "adulto", cantidad: 2, tarifa: 480_000, subtotal: 960_000 },
+    { clase: "infante", cantidad: 1, tarifa: 100_000, subtotal: 100_000, menorDeDos: true, edades: [1] },
+    { clase: "nino", cantidad: 1, tarifa: 168_000, subtotal: 168_000, menorDeDos: false, edades: [8], gratis: { promociones: ["PRE BF"], condonado: 101_000 } },
+  ];
+  const pintar = () => montar(h(DesgloseTarifas, { combo: { desglose: lineas, total: 1_228_000 } as never, moneda: "COP", noches: 3 }));
+
+  test("la nota vive DENTRO del bloque del niño, nombra «Niño 1 · 8 años» y junta tarifa regular tachada con lo que paga; adultos e infante no llevan nota", async () => {
+    const m = await pintar();
+    const bloque = m.cont.querySelector('[data-clase="nino"]') as HTMLElement;
+    assert.ok(bloque.hasAttribute("data-con-beneficio"), "el bloque del niño se distingue como un grupo");
+    const nota = bloque.querySelector("[data-nino-gratis]") as HTMLElement;
+    assert.ok(nota, "la nota está dentro de la fila del niño (no suelta debajo de la tarjeta)");
+    assert.equal((nota.querySelector("[data-nino-gratis-pasajero]")!.textContent ?? "").trim(), "Niño 1 · 8 años");
+    assert.equal(nota.querySelector("[data-tarifa-regular]")!.tagName, "S");
+    assert.equal(num(nota.querySelector("[data-tarifa-regular]")!.textContent ?? ""), 269_000);
+    assert.equal(num(nota.querySelector("[data-tarifa-a-pagar]")!.textContent ?? ""), 168_000);
+    for (const clase of ["adulto", "infante"]) assert.equal(m.cont.querySelector(`[data-clase="${clase}"] [data-nino-gratis]`), null, `${clase}: sin nota de beneficio`);
+    assert.equal(m.cont.querySelectorAll("[data-tarifa-regular]").length, 1, "una sola tarifa regular tachada en toda la tarjeta");
+    await m.cerrar();
+  });
+
+  test("el texto no sugiere que toda la estadía del niño ni el infante sean gratis, y el total mostrado es el de siempre", async () => {
+    const m = await pintar();
+    const t = leerTarjeta(m.cont);
+    const nino = t.filas.find((f) => f.clase === "nino")!;
+    assert.match(nino.explicacion ?? "", /El alojamiento de este niño es gratis solo en las noches de la promoción/);
+    assert.doesNotMatch(nino.explicacion ?? "", /Niño gratis/);
+    assert.equal(t.filas.find((f) => f.clase === "infante")!.explicacion, null);
+    assert.deepEqual(t.filas.map((f) => f.subtotal), [960_000, 100_000, 168_000]);
+    assert.equal(t.total, 1_228_000); assert.equal(sumaMostrada(t), t.total);
     await m.cerrar();
   });
 });

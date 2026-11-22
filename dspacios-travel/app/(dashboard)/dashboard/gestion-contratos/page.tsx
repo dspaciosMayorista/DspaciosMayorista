@@ -21,7 +21,7 @@ export default async function GestionContratosPage({ searchParams }: { searchPar
       </div>
     );
   }
-  const { filtros, pagina, avisos, datos } = carga;
+  const { filtros, pagina, avisos, datos, pisoDesde } = carga;
   const paginas = totalPaginas(datos.total);
   const enlace = (p: number) => `/dashboard/gestion-contratos${aQuery(filtros, p)}`;
   const fueraDeRango = datos.filas.length === 0 && datos.total > 0;
@@ -45,7 +45,15 @@ export default async function GestionContratosPage({ searchParams }: { searchPar
       {avisos.length > 0 && <ul className="mt-3 space-y-1 text-xs text-amber-700">{avisos.map((a) => <li key={a} className="flex items-start gap-1"><CircleAlert size={12} className="mt-0.5 shrink-0" aria-hidden /> {a}</li>)}</ul>}
 
       <section aria-label="Resumen del conjunto filtrado" className="mt-4">
-        <p className="text-sm text-gray-600"><strong className="tabular-nums">{datos.total.toLocaleString("es-CO")}</strong> contrato{datos.total === 1 ? "" : "s"}{hayFiltros(filtros) ? " con estos filtros" : " en total"}.</p>
+        <p className="text-sm text-gray-600"><strong className="tabular-nums">{datos.total.toLocaleString("es-CO")}</strong> contrato{datos.total === 1 ? "" : "s"}{pisoDesde ? ` con viaje desde hoy (${pisoDesde}, hora de Bogotá)` : hayFiltros(filtros) ? " con estos filtros" : " en total"}.</p>
+        {pisoDesde && (
+          <p data-testid="nota-viaje-reciente" className="mt-1 text-xs text-gray-500">
+            «Viaje más reciente» muestra solo salidas de hoy en adelante, la más próxima primero; no incluye viajes pasados ni contratos sin fecha de salida. Para consultar el historial, elige otro orden o fija «Viaje (salida) desde/hasta» en Más filtros.
+          </p>
+        )}
+        {!pisoDesde && filtros.orden === "salida_asc" && (
+          <p data-testid="nota-viaje-explicito" className="mt-1 text-xs text-gray-500">Con fechas de viaje elegidas se muestran también salidas anteriores a hoy, ordenadas por fecha de salida ascendente.</p>
+        )}
         {datos.resumen.length > 0 && (
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {datos.resumen.map((r) => (

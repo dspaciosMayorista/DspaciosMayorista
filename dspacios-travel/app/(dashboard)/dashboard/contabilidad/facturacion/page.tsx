@@ -2,6 +2,8 @@ import { createClient } from "@/lib/supabase/server";
 import { identidadDe } from "@/lib/contrato/identidad";
 import { getTenant } from "@/lib/tenant.server";
 import { FacturacionClient, type FactRow } from "./FacturacionClient";
+import { contratosUsdProvisionales } from "@/lib/finanzas/cobroUsdReporte";
+import { cargarAbonosParaReporte } from "@/lib/finanzas/abonosReporte";
 
 export const dynamic = "force-dynamic";
 
@@ -27,13 +29,14 @@ export default async function FacturacionPage() {
   const tenant = await getTenant();
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: params }] = await Promise.all([
     sb.from("ventas")
-      .select("numero_contrato, contrato_uid, cliente, destino, fecha_venta, precio_venta, moneda, trm_contrato, estado")
+      .select("numero_contrato, contrato_uid, cliente, destino, fecha_venta, precio_venta, moneda, moneda_cobro, trm_contrato, estado")
       .eq("tenant", tenant)
       .order("fecha_venta", { ascending: false }),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento, tipo_exento, observacion"),
     sb.from("cuentas_por_pagar").select("numero_contrato, valor_total, clasificacion").eq("tenant", tenant),
     sb.from("parametros_tributarios").select("parametro, valor"),
   ]);
+  const provisionales = contratosUsdProvisionales(ventas ?? [], await cargarAbonosParaReporte(sb, tenant));
 
   // Estado DIAN aparte (tolerante si aún no se corrió la migración 105).
   const { data: dianRows } = await sb.from("contrato_facturacion").select("numero_contrato, dian_emitida");
@@ -64,6 +67,7 @@ export default async function FacturacionPage() {
       moneda: "COP", // se factura en pesos; USD ya viene convertido
       monedaOrig: (v.moneda as string) ?? "COP",
       trm: esUSD ? factor : null,
+      copProvisional: provisionales.has(v.numero_contrato),
       estado: (v.estado as string) ?? "",
       irtProveedores: (irtProvMap.get(v.numero_contrato) ?? 0) * factor,
       dianEmitida: dianMap.get(v.numero_contrato) ?? false,

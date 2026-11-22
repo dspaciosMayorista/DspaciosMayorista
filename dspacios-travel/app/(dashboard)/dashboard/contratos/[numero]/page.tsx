@@ -33,6 +33,8 @@ import { MinimoConfirmacionPanel, type DetalleMinimo } from "./MinimoConfirmacio
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
 import { SoportesPagoInterno, type SoporteInterno } from "./SoportesPagoInterno";
+import { EvidenciaAliadoPanel } from "@/components/cotizacion/EvidenciaAliadoPanel";
+import { cargarEvidenciaAliado, cotizacionesDeContrato } from "@/lib/cotizacion/evidenciaAliadoServidor";
 import { desgloseNetoB2B, esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 
@@ -109,8 +111,8 @@ export default async function ContratoDetallePage({
     // contrato ajeno esta consulta devuelve vacío por RLS; el total sale del
     // resumen de abajo.
     (puedeEditar
-      ? sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop").eq("numero_contrato", numero).order("fecha_abono", { ascending: false })
-      : Promise.resolve({ data: [] as Pick<Database["public"]["Tables"]["abonos"]["Row"], "id" | "valor_abono" | "forma_pago" | "referencia" | "fecha_abono" | "trm" | "monto_cop">[] })),
+      ? sb.from("abonos").select("id, valor_abono, forma_pago, referencia, fecha_abono, trm, monto_cop, moneda_pago").eq("numero_contrato", numero).order("fecha_abono", { ascending: false })
+      : Promise.resolve({ data: [] as Pick<Database["public"]["Tables"]["abonos"]["Row"], "id" | "valor_abono" | "forma_pago" | "referencia" | "fecha_abono" | "trm" | "monto_cop" | "moneda_pago">[] })),
     sb.from("cuentas_por_pagar").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("aliados_b2b").select("*").eq("numero_contrato", numero).order("id"),
     sb.from("facturacion").select("*").eq("numero_contrato", numero).order("id"),
@@ -236,6 +238,8 @@ export default async function ContratoDetallePage({
         .select("id, nombre_original, mime, size_bytes, subido_en, vigente, motivo_retiro, retirado_en, nota_retiro, reemplaza_id")
         .eq("numero_contrato", numero).is("archivado_en", null).order("id", { ascending: false })).data ?? []) as SoporteInterno[]
     : [];
+  // O-3: evidencia que el aliado adjuntó a la COTIZACIÓN de origen, para verla ANTES de registrar un abono (no es un pago). La RLS de `cotizacion_evidencias` decide quién la ve.
+  const evidenciaPrevia = puedeEditar ? await cargarEvidenciaAliado(sb, await cotizacionesDeContrato(sb, numero)) : { evidencias: [], codigos: {} };
   const fin = verFinanzas
     ? (venta as Database["public"]["Tables"]["ventas"]["Row"])
     : null;
@@ -495,6 +499,8 @@ export default async function ContratoDetallePage({
       </div>
 
       {/* Flujo de la venta */}
+      <EvidenciaAliadoPanel evidencias={evidenciaPrevia.evidencias} codigos={evidenciaPrevia.codigos} antesDe="registrar un abono" />
+
       <GestionTabs
         tabInicial={tabInicial}
         identidad={identidad}

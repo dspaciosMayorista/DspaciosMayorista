@@ -221,7 +221,7 @@ describe("los caminos de venta usan la fuente única de menores de 2 años", () 
     assert.match(generador, /Number\(e\.fee_infante\) \|\| 0\);/);
     assert.match(generador, /Number\(sal\.fee_infante\) \|\| 0\);/);
     assert.match(generador, /precioMenorDeDos\(\{ aporteHotel, aporteServiciosMenor: aporteServMenor, feeInfante, moneda: monedaHotel \}\)/);
-    assert.match(generador, /if \(hayHabitacion && !hayInfante && !hotelAdultsOnly && procedenciaHab\) publicarFila\("infante", 0, procedenciaHab\);/);
+    assert.match(generador, /if \(hayHabitacion && !hayInfante && !hotelAdultsOnly && procedenciaHab && !infanteCerrado && !infanteSinTestigo\) publicarFila\("infante", 0, procedenciaHab, null, testigoHab\);/);
     // Ni MK ni TA sobre el fee: no pasa por aporteVuelo/marcar.
     assert.doesNotMatch(generador, /marcar\([^)]*feeInfante/);
     assert.doesNotMatch(generador, /aporteVuelo\([^)]*fee_infante/);

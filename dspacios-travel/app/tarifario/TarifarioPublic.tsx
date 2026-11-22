@@ -12,6 +12,7 @@ import type { DinamicoPublico } from "@/lib/paqueteDinamico/publico";
 import { RegimenInfo, type PlanesInfo } from "./RegimenInfo";
 import { BriefFlyerButton } from "./BriefFlyerButton";
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { EtiquetaPromocionHotel } from "@/components/cotizacion/EtiquetaPromocionHotel";
 import { entradaSalida, useCotizacionesHoteles } from "./cotizacionSalidaModal";
 import { BuscadorBooking, type EstadoBusquedaPorcion } from "./BuscadorBooking";
 import { TablaResultadosBusqueda } from "./TablaResultadosBusqueda";
@@ -151,7 +152,7 @@ function pivotar(filas: FilaTarifario[]): Pivotada[] {
 
 // #90: precio de una fila de Vista tabla calculado con el motor de la tarjeta (promoción vigente HOY para ESA salida). Mientras no sea "ok" no se muestra ninguna tarifa base.
 type FilaVivo =
-  | { estado: "ok"; precios: Record<string, number>; preciosMenor2: Record<string, number>; descuento: { etiqueta: string } | null }
+  | { estado: "ok"; precios: Record<string, number>; preciosMenor2: Record<string, number>; descuento: { etiqueta: string } | null; promocion?: { etiqueta: string } | null }
   | { estado: "cargando" }
   | { estado: "error"; mensaje: string; reintentar: () => void }
   | { estado: "sin" };
@@ -781,7 +782,7 @@ function PorSalida({ filas, puedeReservar, cuposPorBloqueo = {}, soloAcom = null
     if (c.estado === "cargando") return c;
     if (c.estado === "error") return { estado: "error", mensaje: c.mensaje, reintentar: () => cotizaciones.reintentar(clave) };
     const combo = c.cot.combos.find((x) => x.categoria === r.categoria && x.regimen === r.regimen);
-    return combo ? { estado: "ok", precios: combo.precios, preciosMenor2: combo.preciosMenor2, descuento: combo.descuento } : { estado: "sin" };
+    return combo ? { estado: "ok", precios: combo.precios, preciosMenor2: combo.preciosMenor2, descuento: combo.descuento, promocion: combo.promocion ?? null } : { estado: "sin" };
   };
 
   return (
@@ -1159,6 +1160,7 @@ export function TablaHorizontal({ rows, vivo, referencia = false, puedeReservar 
                     <td className="px-3 py-2.5 align-top text-gray-600" data-label="Categoría">
                       {r.categoria}
                       {v?.estado === "ok" && v.descuento && <div className="mt-1"><EtiquetaDescuentoHotel descuento={v.descuento} className="rounded-lg! whitespace-normal" /></div>}
+                      {v?.estado === "ok" && v.promocion && <div className="mt-1"><EtiquetaPromocionHotel promocion={v.promocion} /></div>}
                       {/* El estado va junto a la categoría (siempre visible), no al final de una tabla que en móvil se desplaza. */}
                       {v && v.estado !== "ok" && (
                         <div data-testid="fila-sin-precio" className="mt-1 max-w-[11rem] whitespace-normal text-xs text-gray-500">

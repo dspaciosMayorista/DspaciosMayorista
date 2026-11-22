@@ -27,7 +27,7 @@ const OPCIONES: Record<string, readonly Opcion[]> = {
   factura: [["emitida", "Factura emitida (validada DIAN)"], ["sin_emitir", "Pendiente de validación DIAN"]],
   envio: [["pendiente", "Envío sin registrar"], ["enviada", "Envío registrado"], ["desactualizada", "Acuse desactualizado"]],
   comision: [["pendiente", "Pendiente de pago"], ["parcial", "Pago parcial"], ["pagada", "Pagada"], ["descontada", "Descontada (NETO)"], ["revision_neto", "NETO: revisar fila"], ["retenida", "Retenida"], ["prevista", "Prevista al confirmar"], ["sin_definir", "Sin definir"], ["no_aplica", "No aplica"]],
-  orden: [["venta_desc", "Compra: más reciente"], ["venta_asc", "Compra: más antigua"], ["salida_asc", "Viaje: más próximo"], ["salida_desc", "Viaje: más lejano"], ["saldo_desc", "Mayor saldo"], ["numero_asc", "Número de contrato"]],
+  orden: [["venta_desc", "Compra: más reciente"], ["venta_asc", "Compra: más antigua"], ["salida_asc", "Viaje más reciente (desde hoy)"], ["salida_desc", "Viaje: más lejano"], ["saldo_desc", "Mayor saldo"], ["numero_asc", "Número de contrato"]],
 };
 
 function Lista({ nombre, etiqueta, valor, onCambio, todas }: { nombre: string; etiqueta: string; valor: string; onCambio: (v: string) => void; todas: string }) {

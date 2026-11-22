@@ -1,6 +1,7 @@
 "use client";
 
 import { EtiquetaDescuentoHotel } from "@/components/cotizacion/EtiquetaDescuentoHotel";
+import { EtiquetaPromocionHotel } from "@/components/cotizacion/EtiquetaPromocionHotel";
 import { DateInput } from "@/components/ui/DateInput";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
@@ -71,7 +72,7 @@ export type Meta = {
   petNota: string | null;
 };
 // `preciosMenor2`: precio de un MENOR DE 2 AÑOS por clase de hotel (migración 226).
-export type Combo = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2?: Record<string, number>; descuentoHotel?: { etiqueta: string } | null };
+export type Combo = { categoria: string; regimen: string; precios: Record<string, number>; preciosMenor2?: Record<string, number>; descuentoHotel?: { etiqueta: string } | null; promocionHotel?: { etiqueta: string } | null };
 
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const inp = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
@@ -121,6 +122,8 @@ export function ReservaForm({
   const [serviciosGrupo, setServiciosGrupo] = useState<string[]>([]);
   // #90: regla EBB / Long Stay que usó la última cotización por fechas (null = sin descuento).
   const [descuentoHotel, setDescuentoHotel] = useState<{ etiqueta: string } | null>(null);
+  // #126-D: promoción que ganó en la última cotización por fechas (null = ninguna).
+  const [promocionHotel, setPromocionHotel] = useState<{ etiqueta: string } | null>(null);
 
   function cotizar() {
     setCotErr("");
@@ -130,6 +133,7 @@ export function ReservaForm({
         setCombosState(r.combos); setNochesCot(r.noches); setMonedaState(r.moneda);
         setServiciosGrupo(r.serviciosGrupoPendientes ?? []);
         setDescuentoHotel(r.descuentoHotel ?? null);
+        setPromocionHotel(r.promocionHotel ?? null);
       } else setCotErr(r.error);
     });
   }
@@ -388,6 +392,7 @@ export function ReservaForm({
         </section>
       )}
       {(combo && "descuentoHotel" in combo ? combo.descuentoHotel : descuentoHotel) && <div className="-mb-2"><EtiquetaDescuentoHotel descuento={combo && "descuentoHotel" in combo ? combo.descuentoHotel : descuentoHotel} /></div>}
+      {(combo && "promocionHotel" in combo ? combo.promocionHotel : promocionHotel) && <div className="-mb-2" data-testid="promocion-reserva"><EtiquetaPromocionHotel promocion={combo && "promocionHotel" in combo ? combo.promocionHotel : promocionHotel} /></div>}
       {/* Habitaciones */}
       {!esServicios && (
       <section className="rounded-xl border border-gray-200 bg-white p-5">

@@ -1,9 +1,9 @@
 // Se ejecuta con npm run test:react (loader TSX/esbuild), no con test:unit.
-// Ejecuta la Server Action REAL `enviarSolicitudB2B` (app/portal/registro/
+// Ejecuta la Server Action REAL `iniciarRegistroB2B` (app/portal/registro/
 // actions.ts) — el destino del enlace "Solicitar acceso B2B" del login —
 // contra un cliente service-role simulado (stub "@/lib/supabase/admin"):
-//   - Una solicitud nueva queda `estado: "pendiente"` en b2b_solicitudes, que
-//     es lo que lista /dashboard/usuarios/b2b.
+// #62: el registro es en DOS pasos; la solicitud `pendiente` ya NO nace en `iniciarRegistroB2B` sino tras verificar el código
+//     (recorrido completo en pruebas/registroCodigo62.test.ts). Aquí quedan las barreras del PASO 1 que no necesitan Auth OTP.
 //   - La cuenta queda INACTIVA (`usuarios.activo = false`) hasta que alguien la
 //     apruebe; el registro nunca escribe `activo: true`.
 //   - Falla cerrado: si no se puede confirmar la cuenta inactiva (error o 0
@@ -13,7 +13,7 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const { enviarSolicitudB2B } = await import("../app/portal/registro/actions.ts");
+const { iniciarRegistroB2B } = await import("../app/portal/registro/actions.ts");
 const { __setAdmin, __resetAdmin } = await import("./support/stubs/supabaseAdminStub.mjs");
 
 const UID = "00000000-0000-4000-8000-000000000b2b";
@@ -23,7 +23,7 @@ type Fallos = { updateError?: boolean; updateSinFilas?: boolean; insertError?: b
 
 function adminFalso(fallos: Fallos = {}) {
   const ops: Op[] = [];
-  const auth = { creados: [] as unknown[], borrados: [] as string[] };
+  const auth = { creados: [] as unknown[], borrados: [] as string[], rpc: [] as Array<{ fn: string; args: unknown }> };
 
   function resolver(q: Op) {
     if (q.tabla === "usuarios" && q.op === "select") return { data: fallos.duplicado ? { id: "otro" } : null, error: null };
@@ -49,12 +49,15 @@ function adminFalso(fallos: Fallos = {}) {
         eq: (...a: unknown[]) => { q.filtros.push(["eq", ...a]); return api; },
         in: (...a: unknown[]) => { q.filtros.push(["in", ...a]); return api; },
         ilike: (...a: unknown[]) => { q.filtros.push(["ilike", ...a]); return api; },
+        neq: (...a: unknown[]) => { q.filtros.push(["neq", ...a]); return api; },
         limit: () => api,
         maybeSingle: () => Promise.resolve(resolver(q)),
         then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => Promise.resolve(resolver(q)).then(ok, ko),
       };
       return api;
     },
+    // Funciones registro_b2b_* (migración 324): la BASE borra la cuenta sin verificar (atómico) y responde «borrada»; la aplicación no llama a deleteUser.
+    rpc: async (fn: string, args: unknown) => { auth.rpc.push({ fn, args }); return { data: fn === "registro_b2b_descartar" ? "borrada" : "ok", error: null }; },
     auth: {
       admin: {
         createUser: async (args: unknown) => { auth.creados.push(args); return { data: { user: { id: UID } }, error: null }; },
@@ -65,74 +68,28 @@ function adminFalso(fallos: Fallos = {}) {
   return { sb, ops, auth };
 }
 
-const entrada = (extra: Partial<Parameters<typeof enviarSolicitudB2B>[0]> = {}) => ({
+const entrada = (extra: Partial<Parameters<typeof iniciarRegistroB2B>[0]> = {}) => ({
   tipo: "agencia", tipoDocumento: "NIT", nombre: "Viajes Prueba SAS", nit: "900123456", contacto: "Ana",
   email: "Ana@Agencia.com ", telefono: "3000000000", ciudad: "Medellín", notas: "", aceptaNotificaciones: true,
   password: "secreta123", passwordConfirm: "secreta123", ...extra,
 });
 
-const escriturasActivoTrue = (ops: Op[]) =>
-  ops.filter((o) => (o.op === "update" || o.op === "insert") && (o.payload as { activo?: unknown })?.activo === true);
-
 afterEach(() => __resetAdmin());
-
-test("solicitud nueva: queda 'pendiente' en b2b_solicitudes y la cuenta INACTIVA", async () => {
-  const { sb, ops, auth } = adminFalso();
-  __setAdmin(sb);
-
-  const r = await enviarSolicitudB2B(entrada());
-  assert.deepEqual(r, { ok: true });
-
-  const upd = ops.find((o) => o.tabla === "usuarios" && o.op === "update")!;
-  assert.ok(upd, "debe actualizar el perfil creado por el trigger");
-  assert.deepEqual(upd.filtros, [["eq", "id", UID]]);
-  assert.equal((upd.payload as { activo: boolean }).activo, false, "la cuenta queda inactiva");
-  assert.equal((upd.payload as { rol: string }).rol, "agencia");
-
-  const ins = ops.find((o) => o.tabla === "b2b_solicitudes" && o.op === "insert")!;
-  assert.ok(ins, "debe registrar la solicitud");
-  const sol = ins.payload as Record<string, unknown>;
-  assert.equal(sol.estado, "pendiente", "aparece como pendiente en /dashboard/usuarios/b2b");
-  assert.equal(sol.usuario_id, UID);
-  assert.equal(sol.email, "ana@agencia.com");
-  assert.equal(sol.tipo, "agencia");
-
-  assert.deepEqual(escriturasActivoTrue(ops), [], "el registro nunca activa la cuenta");
-  assert.deepEqual(auth.borrados, []);
-  // El orden importa: la cuenta se inactiva ANTES de dejar la solicitud.
-  assert.ok(ops.indexOf(upd) < ops.indexOf(ins));
-});
-
-test("freelance: mismo flujo, rol freelance e inactiva", async () => {
-  const { sb, ops } = adminFalso();
-  __setAdmin(sb);
-  assert.deepEqual(await enviarSolicitudB2B(entrada({ tipo: "freelance", tipoDocumento: "CC" })), { ok: true });
-  const upd = ops.find((o) => o.op === "update")!.payload as { rol: string; activo: boolean };
-  assert.deepEqual([upd.rol, upd.activo], ["freelance", false]);
-  assert.equal((ops.find((o) => o.op === "insert")!.payload as { estado: string }).estado, "pendiente");
-});
 
 for (const [caso, fallos] of [
   ["error al inactivar", { updateError: true }],
   ["inactivar no afectó ninguna fila", { updateSinFilas: true }],
 ] as const) {
-  test(`falla cerrado (${caso}): borra la cuenta recién creada y no deja solicitud`, async () => {
+  test(`falla cerrado (${caso}): pide a la base descartar la cuenta recién creada (sin deleteUser desde la aplicación) y no deja solicitud`, async () => {
     const { sb, ops, auth } = adminFalso(fallos);
     __setAdmin(sb);
-    const r = await enviarSolicitudB2B(entrada());
+    const r = await iniciarRegistroB2B(entrada());
     assert.equal(r.ok, false);
-    assert.deepEqual(auth.borrados, [UID], "la cuenta no puede quedar viva (estaría activa por default)");
+    assert.deepEqual(auth.borrados, [], "la aplicación no borra cuentas de Auth: lo hace la base, de forma atómica");
+    assert.deepEqual(auth.rpc.filter((c) => c.fn === "registro_b2b_descartar").map((c) => (c.args as { p_usuario: string }).p_usuario), [UID], "la cuenta no puede quedar viva (estaría activa por default): se pide su descarte a la base");
     assert.equal(ops.some((o) => o.tabla === "b2b_solicitudes"), false, "sin solicitud");
   });
 }
-
-test("falla cerrado (no se pudo registrar la solicitud): borra la cuenta para poder reintentar", async () => {
-  const { sb, auth } = adminFalso({ insertError: true });
-  __setAdmin(sb);
-  const r = await enviarSolicitudB2B(entrada());
-  assert.equal(r.ok, false);
-  assert.deepEqual(auth.borrados, [UID]);
-});
 
 test("validaciones y nombre duplicado: ni siquiera se crea la cuenta", async () => {
   for (const [extra, fallos] of [
@@ -143,7 +100,7 @@ test("validaciones y nombre duplicado: ni siquiera se crea la cuenta", async () 
   ] as const) {
     const { sb, auth } = adminFalso(fallos);
     __setAdmin(sb);
-    const r = await enviarSolicitudB2B(entrada(extra));
+    const r = await iniciarRegistroB2B(entrada(extra));
     assert.equal(r.ok, false);
     assert.deepEqual(auth.creados, [], `no debe crear cuenta (${JSON.stringify(extra)} ${JSON.stringify(fallos)})`);
   }

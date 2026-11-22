@@ -22,6 +22,8 @@ import { incluyeParaMostrar } from "@/lib/cotizacion/incluye";
 import { visitantePuedeContinuar } from "@/lib/cotizacion/comparativaServidor";
 import { PrintButton } from "@/components/contrato/PrintButton";
 import { ComparativaHoja, type IdentidadHoja } from "@/components/cotizacion/ComparativaHoja";
+import { logoParaDocumento, type AdminLogo } from "@/lib/aliados/logoServidor";
+import type { LogoAliadoDoc } from "@/lib/aliados/logo";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
 import { DescartarBtn } from "@/app/(dashboard)/dashboard/cotizaciones/[id]/DescartarBtn";
 import { DesgloseInterno } from "@/components/cotizacion/DesgloseInterno";
@@ -101,11 +103,13 @@ function ResumenViaje({ m }: { m: Pick<MadreComparativa, "cliente" | "destino" |
 
 /** Documento de una comparativa (enlace público e impresión). */
 export function ComparativaDocumento({
-  madre, datos, modo, token, vencida, motivoDeshabilitada, identidad = null,
+  madre, datos, modo, token, vencida, motivoDeshabilitada, identidad = null, logoAliado = null,
 }: {
   madre: MadreComparativa; datos: DatosComparativa; modo: ModoSeleccion; token: string | null; vencida: boolean; motivoDeshabilitada?: string; identidad?: IdentidadHoja;
+  /** #32: logo del aliado dueño de la comparativa (marca principal del documento); el emisor legal no cambia. */
+  logoAliado?: LogoAliadoDoc | null;
 }) {
-  const hoja = <ComparativaHoja madre={madre} grupos={datos.grupos} resumenes={datos.resumenes} vencida={vencida} identidad={identidad} />;
+  const hoja = <ComparativaHoja madre={madre} grupos={datos.grupos} resumenes={datos.resumenes} vencida={vencida} identidad={identidad} logoAliado={logoAliado} />;
   // Página imprimible (sin enlace ni acciones): solo la hoja. En el enlace público la pantalla conserva sus controles y al imprimir se cambia por la hoja.
   if (modo === "solo_lectura" && !token) return hoja;
   const desde = desdeComparativa(datos.grupos.flatMap((g) => g.acomodaciones));
@@ -238,6 +242,12 @@ export async function FichaComparativa({ madre, puedeResolver, hoy }: { madre: M
   );
 }
 
+/** #32: logo del aliado dueño de la comparativa (solo si TIENE logo vigente); la lectura va por service-role y el aliado sale de la propia madre. */
+async function logoDeMadre(madre: MadreComparativa, rutaBase: string): Promise<LogoAliadoDoc | null> {
+  const payload = (madre.payload ?? null) as { b2bAsistido?: { aliado_id?: unknown } } | null;
+  return logoParaDocumento(createAdminClient() as unknown as AdminLogo, { id: madre.id, aliado_id: madre.aliado_id, b2b_aliado: payload?.b2bAsistido?.aliado_id }, rutaBase);
+}
+
 /** Página imprimible /cotizacion/[id] de una comparativa. */
 export async function PaginaImprimibleComparativa({ madre, hoy }: { madre: MadreComparativa; hoy: string }) {
   const sb = await createClient();
@@ -245,6 +255,7 @@ export async function PaginaImprimibleComparativa({ madre, hoy }: { madre: Madre
   if (!datos.grupos.length) notFound();
   const vencida = (!!madre.vigencia_hasta && madre.vigencia_hasta < hoy) || abiertaConSalidaPasada(madre, hoy);
   const identidad = await identidadDe(sb, madre.tenant);
+  const logoAliado = await logoDeMadre(madre, `/cotizacion/${madre.id}`);
   return (
     <div className="min-h-screen bg-gray-100 py-6 print:min-h-0 print:bg-white print:py-0">
       <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
@@ -252,7 +263,7 @@ export async function PaginaImprimibleComparativa({ madre, hoy }: { madre: Madre
         <PrintButton />
       </div>
       <div className="px-4 print:px-0">
-        <ComparativaDocumento madre={madre} datos={datos} modo="solo_lectura" token={null} vencida={vencida} identidad={identidad} />
+        <ComparativaDocumento madre={madre} datos={datos} modo="solo_lectura" token={null} vencida={vencida} identidad={identidad} logoAliado={logoAliado} />
       </div>
       <style dangerouslySetInnerHTML={{ __html: ESTILO_IMPRESION }} />
     </div>
@@ -273,6 +284,7 @@ export async function paginaPublicaComparativa(token: string) {
   if (madre.estado === "descartada") notFound();
   const datos = await cargarDatosComparativa(admin, madre.id);
   const identidad = await identidadDe(admin, madre.tenant);
+  const logoAliado = await logoDeMadre(madre, `/cot/${token}`);
 
   // Quién mira (solo para elegir el camino «checkout» vs «solicitud»; no concede nada).
   const ses = await createClient();
@@ -287,7 +299,7 @@ export async function paginaPublicaComparativa(token: string) {
     <div className="min-h-screen bg-gray-100 py-6 print:min-h-0 print:bg-white print:py-0">
       <div className="mx-auto mb-4 flex max-w-5xl items-center justify-end px-4 print:hidden"><PrintButton /></div>
       <div className="px-4 print:px-0">
-        <ComparativaDocumento madre={madre} datos={datos} modo={modo} token={token} vencida={vencida} identidad={identidad} />
+        <ComparativaDocumento madre={madre} datos={datos} modo={modo} token={token} vencida={vencida} identidad={identidad} logoAliado={logoAliado} />
       </div>
       <style dangerouslySetInnerHTML={{ __html: ESTILO_IMPRESION }} />
     </div>

@@ -21,6 +21,8 @@ import { netoTotalExigibleDeDetalle } from "@/lib/cotizacion/asistidaB2B";
 import type { SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
 import { snapshotDelDocumento } from "@/lib/cotizacion/paqueteSnapshotDocumento";
 import { cargarAgenciaDeCotizacion } from "@/lib/cotizacion/agenciaCotizacion";
+import { logoParaDocumentoPorId, type AdminLogo } from "@/lib/aliados/logoServidor";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotizacion/SolicitudPendiente";
 import { estaPendienteTarifa } from "@/lib/reservar/solicitudHotel";
 
@@ -128,6 +130,8 @@ export default async function CotizacionImprimiblePage({
   // Falla explícita (no se imprime el RNT de otra agencia): error técnico, fila ausente o sin RNT en Minorista.
   if (!agenciaRes.ok) throw new Error(agenciaRes.mensaje);
   const agencia = agenciaRes.agencia;
+  // #32: logo del aliado dueño de la cotización (la lectura va por service-role; el acceso a esta página ya se autorizó arriba). El emisor legal no cambia.
+  const logoAliado = await logoParaDocumentoPorId(createAdminClient() as unknown as AdminLogo, Number(id), `/cotizacion/${id}`);
 
   const volverLink = (
     <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between px-4 print:hidden">
@@ -170,6 +174,7 @@ export default async function CotizacionImprimiblePage({
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={cot.created_at ? String(cot.created_at).slice(0, 10) : null}
               agencia={agencia}
+              logoAliado={logoAliado}
             />
           </div>
         </div>
@@ -203,6 +208,7 @@ export default async function CotizacionImprimiblePage({
             vigenciaHasta={cot.vigencia_hasta}
             netoTotalExigible={netoTotalExigible}
             agencia={agencia}
+            logoAliado={logoAliado}
             incluye={d.incluye ?? null}
             noIncluye={d.noIncluye ?? null}
             tituloPaquete={d.tituloPaquete ?? null}

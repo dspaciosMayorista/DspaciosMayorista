@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { contratosUsdProvisionales } from "@/lib/finanzas/cobroUsdReporte";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { liquidarFacturacion } from "@/lib/contabilidad/facturacion";
 import { liquidarEmpleadoContrato, type ClaseRiesgo } from "@/lib/calc/nomina";
@@ -45,6 +46,8 @@ export type EstadosFinancieros = {
     patrimonioResidual: number; // CxCobrar − (CxPagar + IRT + IVA)
   };
   validador: { contratos: ContratoEstado[]; completos: number; incompletos: number };
+  /** #126-A: contratos USD del mes con saldo por cobrar; su aporte en COP mezcla lo cobrado con una estimación (provisional). */
+  contratosCopProvisional: number;
 };
 
 function cxpConfigurada(c: { clasificacion: string | null; base_gravable: number | null }): boolean {
@@ -56,7 +59,7 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
   const sb = await createClient();
   const tenant = await getTenant();
   const [{ data: ventas }, { data: cfgs }, { data: cxp }, { data: abonos }, { data: emps }, { data: costos }, { data: movs }, { data: paramsRows }] = await Promise.all([
-    sb.from("ventas").select("numero_contrato, cliente, fecha_venta, precio_venta, moneda, trm_contrato").eq("tenant", tenant),
+    sb.from("ventas").select("numero_contrato, cliente, fecha_venta, precio_venta, moneda, moneda_cobro, trm_contrato").eq("tenant", tenant),
     sb.from("contrato_facturacion").select("numero_contrato, irt, ingreso_exento"),
     sb.from("cuentas_por_pagar").select("id, numero_contrato, valor_total, iva_proveedor, clasificacion, base_gravable").eq("tenant", tenant),
     sb.from("abonos").select("numero_contrato, valor_abono"),
@@ -187,5 +190,6 @@ export async function calcularEstadosFinancieros(mesPedido?: string): Promise<Es
     },
     situacion: { cuentasPorCobrar, cuentasPorPagar, irtPorPagar, ivaPorPagar, patrimonioResidual },
     validador: { contratos, completos, incompletos: contratos.length - completos },
+    contratosCopProvisional: contratosUsdProvisionales(ventasMes, abonos ?? []).size,
   };
 }
