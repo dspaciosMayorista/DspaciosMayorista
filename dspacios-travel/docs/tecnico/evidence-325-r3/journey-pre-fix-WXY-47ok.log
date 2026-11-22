@@ -1,0 +1,58 @@
+
+══ X · pasajeros del aliado con un menor y un infante: conversión del carrito y vínculo con el adulto responsable ══
+OK    X cotización C-0007 con 2 adultos + menor de 8 + infante de 1 (4 viajeros)
+OK    X el aliado guardó 3 pasajeros: adulto, menor (TI) e infante (RC), con sus fechas de nacimiento
+OK    X las 4 filas llegan precargadas sin retipear (4)
+OK    X tipo y número de documento del menor (TI) y del infante (RC) llegan tal como los escribió el aliado
+OK    X la pantalla clasifica a Sol por su fecha de nacimiento (8 años)
+OK    X la pantalla clasifica a Bebé como infante y EXIGE su adulto responsable (regla existente; el aliado no lo inventó)
+OK    X el responsable llega SIN elegir: ni el aliado ni el sistema lo deciden
+OK    X sin adulto responsable la conversión se rechaza con la regla existente y no crea contrato
+OK    X con el adulto responsable elegido por el personal se generó DTM-0006
+OK    X adulto persistido tal como lo escribió la aliada (Marco Prueba Menores:CE:7654321:1987-02-02:false:-)
+OK    X menor de 8 años persistido con TI, su documento y su fecha, sin ser infante ni llevar responsable
+OK    X infante persistido como infante, con RC y su fecha, vinculado al adulto responsable que eligió el personal (id 14)
+OK    X convertir no creó abonos
+
+══ W · cotización de tarifario (no carrito) de una aliada: pasajeros guardados → pantalla de conversión → contrato ══
+OK    W una cotización dinámica (manual): el panel DICE que no admite pasajeros adicionales y no ofrece escribirlos (no promete un traspaso que no ocurre)
+OK    W una cotización que ya trae pasajeros capturados por D'spacios: el panel DICE que no admite pasajeros adicionales y no ofrece escribirlos (no promete un traspaso que no ocurre)
+OK    W C-9005 (tarifario sin pasajeros) SÍ ofrece escribir pasajeros
+OK    W la aliada guardó 3 pasajeros de la cotización de 2 adultos + 2 menores: un adulto, un menor de 8 (TI) y un menor de 5 (RC)
+OK    W en la dinámica y en la que ya trae pasajeros NO quedó guardado nada
+OK    W la pantalla de conversión NO-carrito muestra 4 filas (titular + 3)
+OK    W las filas 2-4 llegan precargadas con lo que escribió la aliada (nombres, tipo y número de documento), sin retipear
+OK    W las fechas de nacimiento también llegan
+OK    W administración@ generó el contrato DTM-0007 desde la cotización NO-carrito
+OK    W el contrato guarda a los 3 pasajeros de la aliada (adulto y dos menores) exactamente como los escribió (Sofía Ejemplo 125 abierta:CC:125000003:1975-05-05:false:- | Ana Uno:CC:1010101010:1985-03-04:false:- | Tomas Dos:TI:2020202020:2018-01-01:false:- | Lucia Tres:RC:3030303030:2021-01-01:false:-)
+OK    W convertir no crea abonos
+OK    W (composición distinta) las filas llegan precargadas también aquí
+OK    W (composición distinta) la regla EXISTENTE pasajeros↔acomodación rechaza la conversión con su mensaje y no se crea contrato (el sistema no ajusta ni inventa nada)
+OK    W (composición distinta) lo que la aliada guardó se conserva tras el rechazo (la conversión no lo borra ni lo altera)
+OK    W ninguna conversión creó abonos ni soportes
+
+══ Y · conversión ordinaria con infante: la aliada guarda → el personal recibe → falta responsable (rechazo sin efectos) → elige adulto elegible → vínculo persistido ══
+OK    Y la cotización ordinaria sin pasajeros ofrece la captura
+OK    Y la aliada guardó adulto, menor (TI) e infante (RC) con sus fechas de nacimiento
+OK    Y el personal recibe las 4 filas precargadas (titular + Ana, Tomas, Bebe) sin retipear
+OK    Y la pantalla clasifica por fecha de nacimiento contra la salida: — / Adulto · 41a / Niño · 8a / Infante · 1a
+OK    Y solo el infante pide «Adulto responsable *» y llega SIN elegir (nadie lo decide por el personal)
+OK    Y antes de que el titular tenga fecha, el único adulto elegible es Ana: Sin vincular (se rechazará al generar) | Ana Uno
+OK    Y con la fecha del titular hay 2 adultos elegibles y nunca el menor de 8 ni el propio infante: Sin vincular (se rechazará al generar) | Sofía Ejemplo 125 abierta | Ana Uno
+OK    U conversión ordinaria con selector de responsable · escritorio (1366px): 35 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión ordinaria con selector de responsable · intermedio (820px): 35 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión ordinaria con selector de responsable · movil (390px): 35 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Y sin responsable la base rechaza y la pantalla lo explica sin navegar
+       huella antes 90|20|16|7|0|2|59|9|0|0|0|MIN-00-0905
+       huella después 90|20|16|7|0|2|59|9|0|0|0|MIN-00-0905 → diferencias: ninguna · acciones de servidor en el intento: 1
+OK    Y el intento rechazado no dejó contrato, pasajeros, ítems, hoteles, servicios, cuentas por pagar, abonos, asientos ni sillas, y el último número de contrato no avanzó
+OK    Y la cotización sigue abierta y sin contrato
+OK    Y los 3 pasajeros que guardó la aliada se conservan tras el rechazo
+OK    Y con el adulto responsable elegido por el personal se generó DTM-0009
+OK    Y el infante quedó persistido como infante (RC, 2025-06-01) con responsable_id = la fila de Ana (22)
+OK    Y el adulto y el menor de 8 se persistieron tal como los escribió la aliada, sin infante ni responsable
+OK    Y se creó exactamente UN contrato y ningún abono
+OK    Y la cotización quedó convertida
+       acciones de servidor: intento rechazado 1, intento aceptado 1; número generado DTM-0009 (último antes: MIN-00-0905)
+
+=== O-3/O-2: 47 OK, 0 FALLO

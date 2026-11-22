@@ -1,0 +1,24 @@
+// Sonda de DOM #2 (diagnóstico local): tarjeta con fechas tras elegir destino y formulario de reserva tras cotizar.
+import { chromium } from "@playwright/test";
+import { APP, cookieSesion } from "./revision_comun.mjs";
+const browser = await chromium.launch({ channel: "msedge", headless: true });
+const ctx = await browser.newContext({ viewport: { width: 1366, height: 900 }, locale: "es-CO" });
+await ctx.addCookies(await cookieSesion("administracion@revision.test"));
+const page = await ctx.newPage();
+const ids = async () => [...new Set(await page.locator("[data-testid]").evaluateAll((e) => e.map((x) => x.getAttribute("data-testid"))))].join(", ");
+await page.goto(`${APP}/tarifario`, { waitUntil: "networkidle" });
+await page.getByRole("button", { name: /Porción terrestre/ }).first().click(); await page.waitForTimeout(800);
+await page.locator('button[role="combobox"]').first().click();
+await page.getByRole("option", { name: "DEMO 125" }).click(); await page.waitForTimeout(1500);
+console.log("TRAS DESTINO:", await ids());
+console.log("TEXTO:", (await page.locator("body").innerText()).replace(/\s+/g, " ").slice(600, 1500));
+await page.screenshot({ path: "C:/tmp/ev126/sonda_destino.png", fullPage: true });
+await page.goto(`${APP}/dashboard/reservar/nuevo?paquete=912503&hotel=912503&modulo=porcion_terrestre`, { waitUntil: "networkidle" });
+const ida = page.getByLabel("Fecha de ida"); const reg = page.getByLabel("Fecha de regreso");
+await ida.fill("04/12/2026"); await ida.blur(); await reg.fill("09/12/2026"); await reg.blur();
+console.log("valores:", await ida.inputValue(), await reg.inputValue());
+await page.getByRole("button", { name: /Ver tarifas para estas fechas/ }).click(); await page.waitForTimeout(4000);
+console.log("RESERVA ids:", await ids());
+console.log("RESERVA texto:", (await page.locator("body").innerText()).replace(/\s+/g, " ").slice(700, 1800));
+await page.screenshot({ path: "C:/tmp/ev126/sonda_reserva2.png", fullPage: true });
+await browser.close();

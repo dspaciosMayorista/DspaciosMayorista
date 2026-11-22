@@ -1,0 +1,28 @@
+
+══ ZR · R326-1: dos servicios de 16 viajeros — límite técnico de captura (30) frente al universo (hasta 32) ══
+OK    ZR fixture C-9R19 (id 19): dos servicios independientes de 16 viajeros, propiedad de la aliada
+OK    ZR.1 el panel ofrece 30 adicionales (no 31) antes de que escriba nada
+OK    ZR.1 y lo explica ANTES de la captura: el universo declarado, el límite de 30 y que el personal completa el resto
+OK    ZR.2 la acción real y la base guardaron los 30 pasajeros (la frontera)
+OK    ZR.2 ninguno se truncó: están el primero y el último escritos
+OK    ZR.2 tras guardar, los 30 quedan compactos
+OK    ZR.3 con 30 adicionales «Agregar pasajero» NO se ofrece (la fila 31 no existe en pantalla)
+OK    ZR.3 en el límite el panel NO afirma que estén todos: dice que el personal completa el resto
+OK    U panel en el límite técnico (30 compactos) · escritorio (1366px): 63 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel en el límite técnico (30 compactos) · intermedio (820px): 63 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel en el límite técnico (30 compactos) · movil (390px): 63 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    ZR.3 tras recargar sigue igual: 30 guardados, sin botón y con el aviso
+OK    ZR.3 al quitar una fila (29) vuelve a ofrecerse exactamente una más
+ERROR:  F4721: Aquí se pueden dejar hasta 30 pasajeros adicionales; el personal de D'spacios completa el resto al convertir la cotización.
+CONTEXT:  PL/pgSQL function public.cotizacion_pasajeros_aliado_guardar(bigint,uuid,jsonb) line 39 at RAISE
+OK    ZR.4 31 pasajeros: la base responde con su mensaje propio (F4721 «hasta 30 … completa el resto»), no con el CHECK
+OK    ZR.4 el intento rechazado no cambió la lista guardada (siguen 30)
+OK    ZR.5 la conversión del personal recibe titular + 30 pasajeros sin retipear (31 filas)
+OK    ZR.5 el personal SÍ puede agregar la fila que falta (el límite técnico no aplica a su pantalla; su cota es el universo, 32)
+OK    ZR.5 con 32 filas se alcanza la cota del universo y el botón desaparece
+OK    U conversión del personal con 31+1 filas · escritorio (1366px): 143 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión del personal con 31+1 filas · intermedio (820px): 143 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión del personal con 31+1 filas · movil (390px): 143 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+
+=== O-3/O-2: 21 OK, 0 FALLO
+GUION_EXIT=0

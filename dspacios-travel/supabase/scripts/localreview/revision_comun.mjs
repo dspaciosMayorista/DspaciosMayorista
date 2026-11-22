@@ -3,7 +3,7 @@
 import { readFileSync, mkdirSync } from "node:fs";
 import { chromium } from "@playwright/test";
 
-export const CFG = JSON.parse(readFileSync(`${process.env.LOCALAPPDATA}/dspacios-local-revision/config.json`, "utf8"));
+export const CFG = JSON.parse(readFileSync(`${process.env.REV_CFG_DIR ?? `${process.env.LOCALAPPDATA}/dspacios-local-revision`}/config.json`, "utf8"));
 export const SUPA = "http://127.0.0.1:54370";
 export const APP = process.env.REV_APP ?? "http://127.0.0.1:3070";
 export const CLAVE = "Revision2026!";

@@ -1,0 +1,196 @@
+
+══ S.1 · entrada: el documento del titular se valida con la regla de la conversión (checkout real de la freelance) ══
+OK    S.1 CE «E1234567»: el checkout lo rechaza al capturar y dice por qué
+OK    S.1 el rechazo no creó ninguna cotización
+OK    S.1 letras sin tipo elegido: se pide elegir el tipo
+OK    S.1 con CE «1234567» se generó C-0009 (id 10, 2 viajeros) con el titular tal cual
+
+══ Q/P · portal del aliado: pasajeros adicionales opcionales y comprobantes (ANTES de cualquier contrato) ══
+OK    Q/P C-0009 muestra su panel «Preparar la solicitud (opcional)» y NO obliga a usarlo
+OK    Q/P el resumen parte en 0 comprobantes y 0 pasajeros adicionales (nada inventado)
+OK    Q un CE con letras se rechaza al guardar (misma regla que la conversión) y no se guarda nada
+OK    Q el pasajero adicional quedó guardado tal como se escribió ([{"nombres": "Marco", "tipoDoc": "CE", "apellidos": "Vega Demo", "numeroDoc": "7654321", "nacionalidad": "", "fechaNacimiento": "1987-02-02"}])
+OK    Q con 2 viajeros cotizados el universo está completo (titular + 1): «Agregar pasajero» ya NO se ofrece
+OK    Q tras guardar, el resumen dice 1 pasajero adicional (el servidor releyó lo guardado)
+OK    Q al recargar, el pasajero guardado llega COMPACTO (resumen), no como formulario expandido
+OK    Q al recargar, el pasajero adicional sigue precargado en el portal
+OK    P el comprobante quedó vigente en la cotización y su huella coincide con la del archivo (dd30987a1b29…)
+OK    P el archivo se guardó en el bucket privado (un objeto más)
+OK    P adjuntar NO crea ni aprueba un pago: abonos, pagos previos, contratos y soportes de contrato idénticos
+OK    P un .txt se rechaza por su contenido real: sin fila nueva ni objeto nuevo
+OK    P un texto disfrazado de .png se rechaza por su contenido real: sin fila nueva ni objeto nuevo
+OK    P reintento con el MISMO archivo: sin fila ni objeto duplicados (idempotente)
+OK    P un segundo archivo distinto queda vigente (2)
+OK    P retirar conserva la fila (vigente 1 de 2) y el archivo (el objeto no se borra)
+OK    P el retiro deja constancia de quién y cuándo
+OK    P tras subir, rechazar, repetir y retirar, el dinero sigue intacto
+OK    U portal del aliado (panel abierto) · escritorio (1366px): 12 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U portal del aliado (panel abierto) · intermedio (820px): 12 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U portal del aliado (panel abierto) · movil (390px): 12 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+
+══ Q/P · otro aliado y otros roles NO alcanzan esta evidencia ni estos pasajeros ══
+OK    P Beto (otro aliado) no ve C-0009 ni a Marco en su portal (ni en Directas ni en Asistidas)
+OK    P Beto (otro aliado): por la API directa (RLS) no lee evidencias ni pasajeros guardados (200/200)
+OK    P Camila (la dueña): por la API directa (RLS) no lee evidencias ni pasajeros guardados (200/200)
+OK    P visitante anónimo: por la API directa (RLS) no lee evidencias ni pasajeros guardados (401/401)
+OK    P un aliado no puede llamar las funciones de escritura desde el navegador (solo el servidor: 403/403)
+
+══ R · solicitud → aviso → administración@ (rol real del aviso) ve la evidencia ANTES de pagar y convierte ══
+OK    R la solicitud de contrato queda registrada (un evento)
+OK    R solicitar no tocó la evidencia ni los pasajeros ya preparados
+OK    R la campana de administración@ avisa de la solicitud
+OK    R administración ve «Evidencia previa del aliado (1 vigente)» y que NO es un pago, ANTES de cualquier pago
+OK    R la evidencia aparece ARRIBA del botón de generar contrato (se ve antes de confirmar)
+OK    R «Abrir» entrega el archivo exacto que subió la aliada (URL firmada de 2 min; misma huella)
+OK    R mirar y abrir la evidencia no registra nada: dinero idéntico
+OK    U cotización — evidencia previa (personal) · escritorio (1366px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U cotización — evidencia previa (personal) · intermedio (820px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U cotización — evidencia previa (personal) · movil (390px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    R administración@ ve el selector OBLIGATORIO con 1 asesor(es) venta de SU agencia y activos (antes: vacío; el de la otra agencia y el inactivo NO salen): Rev Venta
+OK    R la fila 1 es la titular (Laura Vega Demo · CE 1234567) — 2 filas
+OK    Q la fila 2 llega con lo que la aliada escribió (Marco Vega Demo · CE 7654321), SIN retipear
+OK    Q la fecha de nacimiento del pasajero adicional también llegó
+OK    R sin asesor la conversión sigue exigiéndolo (administración no es superadmin) y no crea nada
+OK    S.2 al convertir, un CE con letras se rechaza ANTES de enviar con la misma regla de la captura
+OK    R administración@ (no superadmin) generó el contrato DTM-0008
+OK    Q el contrato conservó a los dos pasajeros tal como los escribieron la aliada y el personal (Laura Vega Demo:CE:1234567:1985-01-01 | Marco Vega Demo:CE:7654321:1987-02-02)
+OK    R el asesor elegido quedó en el contrato
+OK    P/R convertir NO crea abonos: el comprobante sigue siendo evidencia, no dinero
+OK    P en la ficha del CONTRATO la evidencia sigue visible antes de registrar el abono
+OK    U contrato — evidencia previa (personal) · escritorio (1366px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U contrato — evidencia previa (personal) · intermedio (820px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U contrato — evidencia previa (personal) · movil (390px): 1 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    R reintento: la cotización dice «Convertida en…», sin botón, y hay UN solo contrato
+OK    P la cotización convertida conserva visible su evidencia
+OK    P el pago existe SOLO porque el personal lo registró; la evidencia sigue igual (vigente, sin vincularse sola)
+
+══ R · aislamiento de agencia y de roles ══
+OK    R el administrador de la OTRA agencia (minorista) no ve la cotización, ni su evidencia, ni sus pasajeros
+OK    R por la API con gerencia@revision.test: evidencia visible, pasajeros del aliado visibles (obtenido 2/1)
+OK    R por la API con operaciones@revision.test: evidencia visible, pasajeros del aliado visibles (obtenido 2/1)
+OK    R por la API con venta@revision.test: evidencia NO visible, pasajeros del aliado visibles (obtenido 0/1)
+OK    R por la API con minorista@revision.test: evidencia NO visible, pasajeros del aliado NO visibles (obtenido 0/0)
+OK    R la solución NO abrió `usuarios`: por la API administración@ sigue sin poder listar asesores (la lista sale solo en esta pantalla, con nombre y correo)
+
+══ Z.1 · origen REAL de la cotización: la aliada cotiza sola (NETO y comisión) y el personal arma una para ella ══
+OK    Z.1 se creó la cotización NETO de la aliada: C-0010 (id 11)
+OK    Z.1 se creó la cotización comisionable de la aliada: C-0011 (id 12)
+OK    Z.1 se creó la cotización asistida NETO: C-0012 (id 13)
+OK    Z.1 se creó la cotización asistida comisionable: C-0013 (id 14)
+OK    Z.1 C-0010: el servidor selló origen=aliado_directo, modo=neta, autor=la aliada
+OK    Z.1 C-0011: origen=aliado_directo, modo=comisionable
+OK    Z.1 C-0012: origen=asistida, modo=neta, autor=el personal
+OK    Z.1 C-0013: origen=asistida, modo=comisionable
+OK    Z.1 cada cotización conserva congelados sus términos financieros (total exigible > 0)
+OK    Z.1 la pestaña DIRECTAS trae la NETO y la comisionable de la aliada (C-0010, C-0011)
+OK    Z.1 ninguna de las dos aparece en ASISTIDAS (la modalidad NETO ya no la manda ahí)
+OK    Z.1 las dos que armó el personal para ella siguen en ASISTIDAS y no en Directas (C-0012, C-0013)
+OK    Z.1 los conteos de las pestañas son las filas visibles (Directas 5=5; Asistidas 2=2)
+OK    Z.1 una cotización aparece en UNA sola lista (sin duplicados entre pestañas)
+OK    Z.1 la cotización NETO ya existente de la aliada (C-0007, convertida, con plan congelado) también pasa a Directas: la corrección alcanza lo ya guardado
+OK    Z.1 otra aliada (Beto) no ve ninguna de las cuatro, ni en Directas ni en Asistidas
+OK    Z.1 crear cotizaciones no tocó dinero: abonos, pagos previos, contratos y soportes idénticos
+OK    U pestañas de cotizaciones (directas) · escritorio (1366px): 2 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U pestañas de cotizaciones (directas) · intermedio (820px): 2 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U pestañas de cotizaciones (directas) · movil (390px): 2 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+
+══ Z.2 · panel de pasajeros del aliado: compacto, sin botón al completar el universo, vuelve al quitar una fila ══
+OK    Z.2 cotización C-0014 con 6 viajeros (4 adultos + menor de 8 + infante de 1) ⇒ 5 adicionales además del titular
+OK    Z.2 sin pasajeros adicionales todavía caben 5: «Agregar pasajero» se ofrece
+OK    Z.2 el aliado guardó sus 5 pasajeros adicionales (la base los aceptó)
+OK    Z.2 tras guardar, los 5 pasajeros quedan COMPACTOS (5 resúmenes, ningún formulario expandido)
+OK    Z.2 universo completo (titular + 5 = 6): «Agregar pasajero» NO se ofrece y el panel explica por qué
+OK    Z.2 cada resumen es legible: «Pasajero 6 Bebe Infante · RC 1111222234 · nac. 2025-03-10 Editar Quitar»
+OK    Z.2 la vista compacta ocupa 378 px frente a 1345 px con los 5 formularios expandidos (< 60 %)
+OK    Z.2 «Editar» reabre cada pasajero con sus datos intactos
+OK    Z.2 compactar OTRA fila no pierde lo escrito (sin guardar) en la que sigue abierta
+OK    Z.2 un documento inválido se rechaza en pantalla con su mensaje y la fila sigue abierta (lo inválido no se esconde)
+OK    U panel de pasajeros del aliado (5 adicionales, mixto) · escritorio (1366px): 37 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 adicionales, mixto) · intermedio (820px): 37 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 adicionales, mixto) · movil (390px): 37 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Z.2 al guardar, todo vuelve a compactarse y el cambio quedó guardado
+OK    U panel de pasajeros del aliado (5 compactos) · escritorio (1366px): 13 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 compactos) · intermedio (820px): 13 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U panel de pasajeros del aliado (5 compactos) · movil (390px): 13 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Z.2 quitar un pasajero (4 adicionales) libera un lugar: «Agregar pasajero» VUELVE a mostrarse
+OK    Z.2 al agregar de nuevo el universo se completa y el botón desaparece otra vez (la fila nueva queda abierta)
+OK    Z.2 las altas/bajas sin guardar no tocaron la base (siguen 5 guardados)
+
+══ Z.3 · conversión del personal sobre esa cotización: filas compactas, infante con responsable, sin botón de agregar ══
+OK    Z.3 6 filas: 5 compactas (titular + 3 adultos + menor) y 1 ABIERTA (el infante, que aún no tiene responsable) — compactas 5, abiertas 1
+OK    Z.3 la fila abierta es la del infante y trae su selector de adulto responsable
+OK    Z.3 universo declarado completo (6 filas = 6 viajeros): «+ Agregar pasajero» no se ofrece
+OK    Z.3 el titular (sin fecha de nacimiento) se ve compacto pero con «Faltan: nacimiento»
+OK    U conversión del personal — 5 compactas + infante abierto · escritorio (1366px): 27 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión del personal — 5 compactas + infante abierto · intermedio (820px): 27 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    U conversión del personal — 5 compactas + infante abierto · movil (390px): 27 controles, sin desborde horizontal, sin controles superpuestos ni fuera de la ventana
+OK    Z.3 el infante se compacta mostrando SU responsable elegido: «Pasajero 6 Bebe Infante · RC 1111222234 · nac. 2025-03-10 · Infante · 1a · responsable: Adulto Editado Dos Editar Quitar»
+OK    Z.3 con las filas compactas y el responsable elegido se generó DTM-0009
+OK    Z.3 el infante quedó persistido como infante con responsable_id = el adulto que eligió el personal (id 18)
+OK    Z.3 se persistieron los 6 pasajeros (titular + 5 adicionales) tal como estaban en las filas compactas
+OK    Z.3 convertir no creó abonos
+
+══ Z.3b · «Agregar pasajero» en la conversión: se oculta al completar el universo y vuelve al quitar una fila ══
+OK    Z.3b C-0015: 2 viajeros = 2 filas ⇒ no hay «+ Agregar pasajero»
+OK    Z.3b quitar una fila libera un lugar: el botón VUELVE
+OK    Z.3b agregar de nuevo completa el universo y el botón desaparece
+
+══ Z.3c · cotización de carrito con DOS hoteles (universo ambiguo): el botón NO se oculta por el máximo ══
+OK    Z.3c con dos hoteles de 2 viajeros hay 2 filas pero el botón SIGUE: el universo no se calcula como el máximo; la nota explica que el personal confirma el número real
+OK    Z.3c solo la cota de seguridad (suma de los dos hoteles = 4) detiene el botón
+
+══ Z.4 · tarjeta de tarifa (Vista Booking): importe regular y a pagar dentro del bloque del niño ══
+       tarjetas con desglose: 4; bloques de niño con beneficio: 2
+OK    Z.4 la nota nombra al niño y junta tarifa regular y a pagar: «Niño 1 · 8 años: tarifa regular $ 197.000 · a pagar $ 0 c/u · Niño gratis · PRE BF»
+OK    Z.4 una sola tarifa regular tachada y dentro del bloque del niño
+OK    Z.4 el infante y los adultos no llevan nota de beneficio
+OK    Z.4 la nota está geométricamente DENTRO del bloque del niño (no suelta debajo de la tarjeta)
+OK    Z.4 tarjeta · escritorio (1366px): sin desborde horizontal
+OK    Z.4 tarjeta · intermedio (820px): sin desborde horizontal
+OK    Z.4 tarjeta · movil (390px): sin desborde horizontal
+
+══ ZR · R326-1: dos servicios de 16 viajeros — límite técnico de captura (30) frente al universo (hasta 32) ══
+OK    ZR fixture C-9R18 (id 18): dos servicios independientes de 16 viajeros, propiedad de la aliada
+OK    ZR.1 el panel ofrece 30 adicionales (no 31) antes de que escriba nada
+OK    ZR.1 y lo explica ANTES de la captura: el universo declarado, el límite de 30 y que el personal completa el resto
+OK    ZR.2 la acción real y la base guardaron los 30 pasajeros (la frontera)
+ERROR:  operator does not exist: text -> integer
+LINE 1: ...lect pasajeros->29->>'nombres' || '|' || pasajeros->0->>'nom...
+                                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+node:internal/errors:986
+  const err = new Error(message);
+              ^
+
+Error: Command failed: docker exec -i -e PGPASSWORD=postgres pgb2b psql -h 127.0.0.1 -U supabase_admin -d rev_verif_int_o3b -X -q -t -A -v ON_ERROR_STOP=1
+ERROR:  operator does not exist: text -> integer
+LINE 1: ...lect pasajeros->29->>'nombres' || '|' || pasajeros->0->>'nom...
+                                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+
+    at genericNodeError (node:internal/errors:986:15)
+    at wrappedFn (node:internal/errors:540:14)
+    at checkExecSyncError (node:child_process:943:11)
+    at execFileSync (node:child_process:979:15)
+    at sql (file:///<repo>/.worktrees/integracion-126-127-b2b/dspacios-travel/supabase/scripts/localreview_integrado/guion_o3_completo.mjs:22:20)
+    at file:///<repo>/.worktrees/integracion-126-127-b2b/dspacios-travel/supabase/scripts/localreview_integrado/guion_o3_completo.mjs:882:6 {
+  status: 3,
+  signal: null,
+  output: [
+    null,
+    '',
+    'ERROR:  operator does not exist: text -> integer\n' +
+      "LINE 1: ...lect pasajeros->29->>'nombres' || '|' || pasajeros->0->>'nom...\n" +
+      '                                                             ^\n' +
+      'HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.\n'
+  ],
+  pid: 21664,
+  stdout: '',
+  stderr: 'ERROR:  operator does not exist: text -> integer\n' +
+    "LINE 1: ...lect pasajeros->29->>'nombres' || '|' || pasajeros->0->>'nom...\n" +
+    '                                                             ^\n' +
+    'HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.\n'
+}
+
+Node.js v24.22.1
+GUION_EXIT=1

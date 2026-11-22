@@ -1,0 +1,23 @@
+// Sonda de DOM (solo diagnóstico local): qué controles hay en la lista de hoteles de Vista Booking y en el formulario de reserva. Uso: node sonda_126.mjs
+import { chromium } from "@playwright/test";
+import { SUPA, APP, cookieSesion } from "./revision_comun.mjs";
+void SUPA;
+const browser = await chromium.launch({ channel: "msedge", headless: true });
+const ctx = await browser.newContext({ viewport: { width: 1366, height: 900 }, locale: "es-CO" });
+await ctx.addCookies(await cookieSesion("administracion@revision.test"));
+const page = await ctx.newPage();
+await page.goto(`${APP}/tarifario`, { waitUntil: "networkidle" });
+console.log("BOTONES:", (await page.locator("button").allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 25).join(" | "));
+console.log("TESTIDS:", [...new Set(await page.locator("[data-testid]").evaluateAll((e) => e.map((x) => x.getAttribute("data-testid"))))].join(", "));
+await page.getByRole("button", { name: /Porción terrestre/ }).first().click().catch((e) => console.log("sin botón porción", String(e).slice(0, 80)));
+await page.waitForTimeout(1500);
+console.log("TRAS PORCIÓN TESTIDS:", [...new Set(await page.locator("[data-testid]").evaluateAll((e) => e.map((x) => x.getAttribute("data-testid"))))].join(", "));
+console.log("INPUTS aria:", (await page.locator("input[aria-label]").evaluateAll((e) => e.map((x) => x.getAttribute("aria-label")))).slice(0, 12).join(", "));
+console.log("TEXTO hoteles:", (await page.locator("body").innerText()).replace(/\s+/g, " ").slice(0, 700));
+await page.screenshot({ path: process.argv[2] ?? "C:/tmp/ev126/sonda_tarifario.png", fullPage: true });
+await page.goto(`${APP}/dashboard/reservar/nuevo?paquete=912503&hotel=912503&modulo=porcion_terrestre`, { waitUntil: "networkidle" });
+console.log("RESERVA inputs aria:", (await page.locator("input[aria-label]").evaluateAll((e) => e.map((x) => x.getAttribute("aria-label") + ":" + x.type))).join(", "));
+console.log("RESERVA botones:", (await page.locator("button").allInnerTexts()).map((t) => t.replace(/\s+/g, " ").trim()).filter(Boolean).slice(0, 20).join(" | "));
+console.log("RESERVA texto:", (await page.locator("body").innerText()).replace(/\s+/g, " ").slice(0, 500));
+await page.screenshot({ path: "C:/tmp/ev126/sonda_reserva.png", fullPage: false });
+await browser.close();
