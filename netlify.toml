@@ -1,4 +1,5 @@
 [build]
+  base = "dspacios-travel"
   command = "pnpm run build"
   publish = ".next"
 
