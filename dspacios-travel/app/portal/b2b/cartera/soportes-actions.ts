@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseIdentidad, uidDeclarado, MENSAJE_IDENTIDAD, type IdentidadContrato } from "@/lib/contrato/identidad";
-import { aliadoActual, contratosPropios, contarAbonos, contarVigentes, confirmarRuta, soporteVigenteConHash, sucesorDe, BUCKET_SOPORTES } from "@/lib/soportes/servidor";
+import { aliadoActual, contratosPropios, contarAbonos, contarVigentes, confirmarRuta, soporteVigenteConHash, sucesorDe, correccionDe, BUCKET_SOPORTES } from "@/lib/soportes/servidor";
 import { cabeUnoNuevo, maxBytesSoporte, nombreSeguro, rutaSoporte, validarArchivo } from "@/lib/soportes/archivo";
 import { mensajeDeBase, precomprobarIdentidad, subirYVincular, type Validado } from "@/lib/soportes/operaciones";
 
@@ -123,6 +123,44 @@ export async function reemplazarSoporte(fd: FormData, identidad: IdentidadContra
     {
       ...depsStorage(),
       registrar: async (p) => admin.rpc("soporte_reemplazar", { p_id: idSoporte, p_actor: s.actor, p_path: p, p_nombre: l.nombre, p_mime: l.archivo.mime, p_size: l.archivo.size, p_sha: l.archivo.sha256 }),
+    },
+    { path, archivo: l.archivo, bytes: l.bytes }
+  );
+  if (!r.ok) return { ok: false, error: r.error };
+  revalidatePath(RUTA);
+  return { ok: true };
+}
+
+/**
+ * Corregir un soporte RECHAZADO por el equipo (S339-02): sube el archivo correcto, ligado al rechazado. Cuenta como un soporte nuevo contra el tope (vigentes ≤ pagos + 1): rechazar liberó el
+ * cupo del rechazado, así que la cadena rechazado → corregido ocupa uno solo. No registra ni aprueba ningún pago. Si el contrato ya llenó el cupo con otros soportes, la base responde SOPORTE_LIMITE
+ * y el aliado puede reemplazar uno de ellos.
+ */
+export async function corregirSoporte(fd: FormData, identidad: IdentidadContrato): Promise<ResultadoSoporte> {
+  const s = await soporteDelAliado(fd.get("id"), identidad);
+  if (!s.ok) return s;
+  const l = await leerArchivo(fd);
+  if (!l.ok) return l;
+  const idRechazado = Number(fd.get("id"));
+  const id = parseIdentidad(identidad);
+  if (s.fila.vigente) return { ok: false, error: mensajeDeBase({ message: "SOPORTE_CORRECCION" }) };
+  // Reintento tras una respuesta perdida: si el rechazo ya tiene su corrección con ESTE contenido, no se duplica nada.
+  const c = await correccionDe(idRechazado);
+  if (c.estado === "error") return { ok: false, error: "No se pudo comprobar el estado del soporte. Inténtalo de nuevo." };
+  if (c.estado === "existe") {
+    if (c.sha256 === l.archivo.sha256) { revalidatePath(RUTA); return { ok: true }; }
+    return { ok: false, error: mensajeDeBase({ message: "SOPORTE_YA_CORREGIDO" }) };
+  }
+  const previa = await precomprobar(s.fila.numero_contrato, id);
+  if (previa) return previa;
+  const [abonos, vigentes] = await Promise.all([contarAbonos(s.fila.numero_contrato), contarVigentes(s.fila.numero_contrato)]);
+  if (abonos !== null && vigentes !== null && !cabeUnoNuevo(vigentes, abonos)) return { ok: false, error: mensajeDeBase({ message: "SOPORTE_LIMITE" }) };
+  const admin = createAdminClient(id);
+  const path = rutaSoporte(s.fila.numero_contrato, randomUUID(), l.archivo.ext);
+  const r = await subirYVincular(
+    {
+      ...depsStorage(),
+      registrar: async (p) => admin.rpc("soporte_corregir", { p_id: idRechazado, p_actor: s.actor, p_path: p, p_nombre: l.nombre, p_mime: l.archivo.mime, p_size: l.archivo.size, p_sha: l.archivo.sha256 }),
     },
     { path, archivo: l.archivo, bytes: l.bytes }
   );

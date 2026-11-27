@@ -122,7 +122,8 @@ test("documento: la excepción es ESTRECHA — con ítems (aunque sumen 0), sin 
 });
 test("documento: el aviso de «sin detalle de ítems» está en el documento y el total sale del precio registrado", () => {
   const src = leer("components/contrato/ContratoDocumento.tsx");
-  assert.match(src, /cantidadItems: items\.length,/);
+  // B95-19: el documento dibuja `items` ya sin la fila de ajuste (residuo plegado en la tarifa del adulto), pero el aviso «sin detalle» y el total se deciden con las líneas GUARDADAS (`itemsPlegados`: antes de plegar el ajuste).
+  assert.match(src, /cantidadItems: itemsPlegados\.length,/);
   assert.match(src, /precioRegistrado: Number\(\(venta as \{ precio_venta\?: number \| string \| null \}\)\.precio_venta\) \|\| null,/);
   assert.match(src, /sinDetalleItems && \(/);
   assert.match(src, /Este contrato no tiene detalle de ítems \(registro histórico\)/);
@@ -179,10 +180,12 @@ test("modalidad del contrato: si la lectura falla, no adivina (no vuelve a impri
 
 test("documento: ContratoDocumento calcula total/saldo NETO y prorratea los importes visibles", () => {
   const src = leer("components/contrato/ContratoDocumento.tsx");
-  assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(items\),\s*totalPagado,\s*netoTotalExigible,\s*cantidadItems: items\.length,[\s\S]*?\}\)/);
-  assert.doesNotMatch(src, /const total = totalVisibleContratoItems\(items\);/, "volvió a sumar los ítems a PVP como total");
+  assert.match(src, /presentacionValoresContrato\(\{\s*totalItems: totalVisibleContratoItems\(itemsPlegados\),\s*totalPagado,\s*netoTotalExigible,\s*cantidadItems: itemsPlegados\.length,[\s\S]*?\}\)/);
+  assert.doesNotMatch(src, /const total = totalVisibleContratoItems\(/, "volvió a sumar los ítems a PVP como total");
+  assert.doesNotMatch(src, /totalItems: totalVisibleContratoItems\(items\)/, "el total no puede salir de las filas ya plegadas (B95-19): saldría con fracciones de centavo");
   assert.match(src, /valoresNetosDocumento\(items, total\)/);
-  assert.match(src, /const mostrarDesglose = mostrarValoresItems \|\| valoresDoc !== null/);
+  // Misma regla, ahora con el respaldo incondicional (sinDesglose: sin importes por fila cuando el importe no se puede absorber exacto).
+  assert.match(src, /const mostrarDesglose = !sinDesglose && \(mostrarValoresItems \|\| valoresDoc !== null\)/);
   assert.doesNotMatch(src, /Valor total acordado para el paquete/);
 });
 

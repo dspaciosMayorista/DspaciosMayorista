@@ -3,7 +3,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { resumenUnidad, type Cupo, type ServicioCobertura, type UnidadResumen } from "../lib/cotizacion/resumenPrecios.ts";
-import { filasDeUnidad } from "../lib/cotizacion/filasResumen.ts";
+import { filasDeUnidad, unidadSinReparto } from "../lib/cotizacion/filasResumen.ts";
 
 const meta = { ref: "item-0", paquete: { id: 7, nombre: "Paquete" }, hotel: "Hotel", categoria: "Estándar", regimen: "PC" };
 const cupo = (id: string, tipo: Cupo["tipo"], pesos: number): Cupo => ({ id, tipo, baseCentavos: pesos * 100 });
@@ -158,12 +158,14 @@ describe("filas combinadas de adultos y niños", () => {
     assert.equal(legado.ajusteCentavos, 1, "el resumen guardado no se muta");
   });
 
-  test("si no se puede identificar a cada pasajero, el ajuste heredado se conserva como fila (nunca se inventa un reparto)", () => {
+  test("si no se puede identificar a cada pasajero, el ajuste heredado NO se muestra como fila ni se reparte: unidadSinReparto=true y las filas conservan sus tarifas guardadas", () => {
     const base = unidad([cupo("a1", "adulto", 300_000), cupo("a2", "adulto", 300_000)]);
     const sinIds: UnidadResumen = { ...base, grupos: base.grupos.map((g) => ({ ...g, cupos: [] })), ajusteCentavos: 1, totalCentavos: base.totalCentavos + 1 };
     const filas = filasDeUnidad(sinIds);
-    assert.equal(filas.at(-1)!.ajuste, true);
-    assert.equal(filas.reduce((s, f) => s + f.total, 0), sinIds.totalCentavos);
+    assert.equal(filas.some((f) => f.ajuste), false, "nunca una fila de ajuste");
+    assert.equal(unidadSinReparto(sinIds), true);
+    assert.equal(filas.reduce((s, f) => s + f.total, 0), base.totalCentavos, "las filas conservan lo guardado: nada se inventa");
+    assert.equal(unidadSinReparto(base), false);
   });
 
   test("distintos paquetes (unidades) nunca comparten fila", () => {

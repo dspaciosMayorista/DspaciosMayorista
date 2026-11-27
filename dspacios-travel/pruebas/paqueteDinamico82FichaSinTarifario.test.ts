@@ -86,6 +86,8 @@ test("un valor nuevo solo se guarda en paquete_din_hoteles: el servidor no escri
   assert.doesNotMatch(act, /from\("(categorias_habitacion|planes_alimentacion|hotel_categorias|hotel_regimenes)"\)\.(insert|upsert|update)/);
   assert.doesNotMatch(act, /from\("hoteles"\)\.(insert|upsert|update)/);
   assert.match(act, /categoria: h\.categoria \|\| null, regimen: h\.regimen \|\| null/);
-  const p = sinComentarios(leer("app/(dashboard)/dashboard/paquetes/total/[id]/page.tsx"));
+  // #61: el mapeo fila → editor vive en `entradaDesdeFilas` (lo comparten la edición y la duplicación); la página de edición debe seguir usándolo.
+  const p = sinComentarios(leer("lib/paqueteDinamico/entradaDesdeFilas.ts"));
   assert.match(p, /categoria/);
+  assert.match(leer("app/(dashboard)/dashboard/paquetes/total/[id]/page.tsx"), /entradaDesdeFilas\(/);
 });

@@ -4,8 +4,9 @@ import { PrintButton } from "@/components/contrato/PrintButton";
 import { DocHeader, PRINT_DOC_STYLE } from "@/components/contrato/DocHeader";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import { cargarPlanCobro } from "@/lib/cuenta/estado";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMonedaDocumento, formatFechaLarga, formatFechaCorta } from "@/lib/utils";
 import { tituloDocumento } from "@/lib/utils/tituloDocumento";
+import { fechaNegocio } from "@/lib/fechaNegocio";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ export default async function PlanCobroPage({ params }: { params: Promise<{ nume
   if (!plan) notFound();
   if (plan.cuotas.length === 0) notFound();
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaNegocio();
   const total = plan.cuotas.reduce((s, c) => s + c.monto, 0);
   const saldo = Math.max(plan.precio_venta - plan.pagado, 0);
 
@@ -34,7 +35,7 @@ export default async function PlanCobroPage({ params }: { params: Promise<{ nume
         <PrintButton />
       </div>
       <div className="mx-auto max-w-3xl px-4 print:max-w-none print:px-0">
-        <div className="doc-print rounded-xl bg-white p-8 shadow-sm print:rounded-none print:shadow-none">
+        <div className="doc-print rounded-xl bg-white p-4 shadow-sm sm:p-8 print:rounded-none print:shadow-none">
           <DocHeader tenant={plan.tenant} />
 
           <div className="mt-5 flex items-end justify-between">
@@ -53,30 +54,30 @@ export default async function PlanCobroPage({ params }: { params: Promise<{ nume
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Cliente</td><td className="py-2 text-right">{plan.cliente ?? "—"}</td></tr>
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Destino</td><td className="py-2 text-right">{plan.destino ?? "—"}</td></tr>
               <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Fecha de viaje</td><td className="py-2 text-right">{formatFechaLarga(plan.fecha_salida)}</td></tr>
-              <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Valor del contrato</td><td className="py-2 text-right tabular-nums font-semibold">{formatMoneda(plan.precio_venta, plan.moneda)}</td></tr>
+              <tr className="border-b border-gray-100"><td className="py-2 text-gray-500">Valor del contrato</td><td className="py-2 text-right tabular-nums font-semibold">{formatMonedaDocumento(plan.precio_venta, plan.moneda)}</td></tr>
             </tbody>
           </table>
 
           <h2 className="mt-6 mb-2 text-sm font-semibold text-gray-700">Cuotas</h2>
-          <div className="overflow-hidden rounded-lg border border-gray-200">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-gray-200">
+            <table className="w-full text-xs sm:text-sm">
               <thead>
                 <tr className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-400">
-                  <th className="px-3 py-2">Concepto</th>
-                  <th className="px-3 py-2">Fecha límite</th>
-                  <th className="px-3 py-2 text-right">Monto</th>
-                  <th className="px-3 py-2 text-right">Estado</th>
+                  <th className="px-1.5 py-2 sm:px-3">Concepto</th>
+                  <th className="px-1.5 py-2 sm:px-3">Fecha límite</th>
+                  <th className="px-1.5 py-2 text-right sm:px-3">Monto</th>
+                  <th className="px-1.5 py-2 text-right sm:px-3">Estado</th>
                 </tr>
               </thead>
               <tbody>
                 {plan.cuotas.map((c) => (
                   <tr key={c.id} className="border-t border-gray-100">
-                    <td className="px-3 py-2 text-gray-700">{TIPO_LABEL[c.tipo] ?? c.tipo}</td>
-                    <td className="px-3 py-2 text-gray-600">{formatFechaLarga(c.fecha_limite)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-gray-700">{formatMoneda(c.monto, plan.moneda)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${c.cubierta ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                        {c.cubierta ? "Cubierta" : "Pendiente"}
+                    <td className="px-1.5 py-2 text-gray-700 sm:px-3">{TIPO_LABEL[c.tipo] ?? c.tipo}</td>
+                    <td className="px-1.5 py-2 text-gray-600 sm:px-3"><span className="hidden sm:inline">{formatFechaLarga(c.fecha_limite)}</span><span className="whitespace-nowrap sm:hidden">{formatFechaCorta(c.fecha_limite)}</span></td>
+                    <td className="whitespace-nowrap px-1.5 py-2 text-right tabular-nums text-gray-700 sm:px-3">{formatMonedaDocumento(c.monto, plan.moneda)}</td>
+                    <td className="whitespace-nowrap px-1.5 py-2 text-right sm:px-3">
+                      <span className={`rounded-full px-1.5 py-0.5 text-[11px] sm:px-2 sm:text-xs ${c.cubierta ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                        {c.cubierta ? "Cubierta" : c.parcial ? `Parcial · falta ${formatMonedaDocumento(c.faltante, plan.moneda)}` : "Pendiente"}
                       </span>
                     </td>
                   </tr>
@@ -84,9 +85,9 @@ export default async function PlanCobroPage({ params }: { params: Promise<{ nume
               </tbody>
               <tfoot>
                 <tr className="border-t border-gray-200 bg-gray-50 font-semibold">
-                  <td className="px-3 py-2 text-gray-600" colSpan={2}>Total del plan</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-gray-800">{formatMoneda(total, plan.moneda)}</td>
-                  <td className="px-3 py-2"></td>
+                  <td className="px-1.5 py-2 text-gray-600 sm:px-3" colSpan={2}>Total del plan</td>
+                  <td className="whitespace-nowrap px-1.5 py-2 text-right tabular-nums text-gray-800 sm:px-3">{formatMonedaDocumento(total, plan.moneda)}</td>
+                  <td className="px-1.5 py-2 sm:px-3"></td>
                 </tr>
               </tfoot>
             </table>
@@ -96,7 +97,7 @@ export default async function PlanCobroPage({ params }: { params: Promise<{ nume
             style={{ backgroundColor: saldo > 0 ? "rgba(192,57,43,0.06)" : "rgba(102,181,150,0.12)" }}>
             <span className="text-sm font-semibold text-gray-700">{saldo > 0 ? "Saldo pendiente" : "Pagado en su totalidad"}</span>
             <span className="text-xl font-bold" style={{ color: saldo > 0 ? "#C0392B" : "var(--brand-success)" }}>
-              {formatMoneda(saldo, plan.moneda)}
+              {formatMonedaDocumento(saldo, plan.moneda)}
             </span>
           </div>
 

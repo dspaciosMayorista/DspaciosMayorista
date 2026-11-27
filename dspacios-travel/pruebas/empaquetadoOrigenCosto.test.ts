@@ -45,9 +45,10 @@ describe("lib/reservar/empaquetadoOrigen.ts — costo_neto sale de tarifa_provee
     assert.doesNotMatch(fn, /costo_neto: Number\(e\.tarifa_para_empaquetar\)/, "costo_neto NUNCA debe mapear tarifa_para_empaquetar (ese era el bug)");
   });
 
-  test("datosVueloBloqueo/datosVueloSalida: costo_neto = el único valor que existe (sin cambio de comportamiento, no tienen campo neto separado)", () => {
+  test("datosVueloBloqueo: costo_neto = tarifa_neta (nunca la reventa); datosVueloSalida: valor_tiquete (no tiene neto separado)", () => {
     const fnBloqueo = src.slice(src.indexOf("export async function datosVueloBloqueo"), src.indexOf("/**\n * Trae y VALIDA"));
-    assert.match(fnBloqueo, /costo_neto: Number\(b\.tarifa_para_empaquetar\) \|\| 0,/);
+    assert.match(fnBloqueo, /costo_neto: neta,/);
+    assert.doesNotMatch(fnBloqueo, /costo_neto: Number\(b\.tarifa_para_empaquetar\)/);
     const fnSalida = src.slice(src.indexOf("export async function datosVueloSalida"), src.indexOf("/**\n * Resuelve"));
     assert.match(fnSalida, /costo_neto: Number\(s\.valor_tiquete\) \|\| 0,/);
   });

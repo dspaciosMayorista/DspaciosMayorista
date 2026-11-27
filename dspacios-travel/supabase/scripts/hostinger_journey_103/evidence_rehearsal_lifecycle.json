@@ -1,0 +1,145 @@
+{
+  "ok": true,
+  "total": 13,
+  "resultados": [
+    {
+      "nombre": "L1 fingerprint taken before stop covers the database, uploaded files (rows and bytes), captured mail, simulated mailbox, files and saved accounts",
+      "ok": true,
+      "detalle": "{\"tablasNA\":[],\"correo\":\"7:ae254fbce04041cc7c767c9625111b43cb6a815dc95409ad482813462d3427e2\",\"bytes\":\"9991c8f88b24\"}"
+    },
+    {
+      "nombre": "L2 `review.mjs stop` exits 0 after OBSERVING the stopped state",
+      "ok": true,
+      "detalle": "REVIEW SESSION STOPPED (checked). Nothing was deleted: database, captured mail, uploaded files, simulated mailbox, config, credentials and browser profile are kept in C:\\Users\\Usuario\\hostinger-rehear"
+    },
+    {
+      "nombre": "L3 `review.mjs status` reports STOPPED (clean) with exit 0",
+      "ok": true,
+      "detalle": "STOPPED (clean)"
+    },
+    {
+      "nombre": "L4 files kept while stopped: config, credentials folder content, ownership record, review state, simulated mailbox, browser profile",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "L5 `review.mjs start` RESUMES (no re-creation), every readiness check is observed OK and the browser autofill is re-verified",
+      "ok": true,
+      "detalle": "== resume the stopped environment (nothing re-created, nothing re-seeded) | resumed: gateway 127.0.0.1:19080, mailpit 127.0.0.1:19083, database hj103_journey (no data was changed) | REVIEW SESSION READY (every check above observed, includin"
+    },
+    {
+      "nombre": "L6 fingerprint after start is IDENTICAL to the one before stop (database rows, uploaded bytes, captured mail, simulated mailbox, files, saved accounts)",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "L7 after the resume the earlier request still shows «Respondió» and its history",
+      "ok": true,
+      "detalle": "Solicitudes a proveedores por correo\n2 respuesta(s) nueva(s) · marcar leídas\nProveedor\nHotel Prueba 103 · Hotel\nReceptivo 103 · Servicios\nCorreo(s) del proveedor (máx. 5, separados por coma)\nVista pre"
+    },
+    {
+      "nombre": "L8 a second reply after the restart is recorded exactly once (the simulated mailbox kept its position)",
+      "ok": true,
+      "detalle": "review folder: C:\\Users\\Usuario\\hostinger-rehearsal-103 webhook → HTTP 200 (200 = pass finished, 202 = more work left); new replies recorded: 1; complete: true simulated reply uid 1004 to the latest r"
+    },
+    {
+      "nombre": "L9 harness «up» over seeded review progress is refused",
+      "ok": true,
+      "detalle": "harness: Refused: «up» would DESTROY the owner's review progress (database, uploaded files, captured mail). Use the expl"
+    },
+    {
+      "nombre": "L9 harness «down» over seeded review progress is refused",
+      "ok": true,
+      "detalle": "harness: Refused: «down» would DESTROY the owner's review progress (database, uploaded files, captured mail). Use the ex"
+    },
+    {
+      "nombre": "L9 harness «pg-destroy» over seeded review progress is refused",
+      "ok": true,
+      "detalle": "harness: Refused: «pg-destroy» would DESTROY the owner's review progress (database, uploaded files, captured mail). Use "
+    },
+    {
+      "nombre": "L10 `review.mjs reset` without the explicit flag refuses (exit 2)",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "L11 after those refusals nothing changed (fingerprints equal; environment still running)",
+      "ok": true,
+      "detalle": ""
+    }
+  ],
+  "huellaAntesDeParar": {
+    "tablas": {
+      "ventas": "4:92903709178698f3617ef3f0c6db78db",
+      "contrato_hoteles": "3:8d7a4163e1aba31bf213573f39e11734",
+      "contrato_pasajeros": "5:28003fa5787f68e71d9f15a64387880e",
+      "contrato_servicios": "1:5adb6b1a41c397ef2b0659175773c049",
+      "solicitudes_proveedor": "4:600c5cc82caff3a868efe17290d99581",
+      "solicitud_proveedor_eventos": "7:c0eb9370b0820e9096ea1c113c28ef04",
+      "solicitud_proveedor_avisos": "6:73e2082b82e64eaeac7c1b1d256fcfc7",
+      "cxp_pagos": "4:a13231bb32ee9240272438211ed6f033",
+      "cuentas_por_pagar": "3:61776e459f5953bc8e748a8235227966",
+      "cxp_pago_soportes": "4:3189a107807a35fd51dca9ddc666885c",
+      "hotel_temporadas": "4:17328a8049282e99f2974721c5cd302b",
+      "hotel_blackouts": "0:-",
+      "hotel_codigos_promocion": "3:cb187b62a999bcf56c6564d57ce3fc91",
+      "conjuntos_fechas": "1:09caef909d1425f7c747618c0e0d70a9",
+      "armado_paquetes": "2:9f79f445cf2f3ba5d7f87ba160662ded",
+      "tarifario_cambio_fuente": "8:66396a134c540fe728acc2d1cba9728b",
+      "usuarios": "4:352f89b3661bbfc74899113915ed2a25",
+      "hostinger_estado_buzon": "1:fdd59f7ceca3fab21cdee9697411f32d",
+      "hostinger_respuestas_pendientes": "0:-",
+      "auditoria": "90:616557a537b7c5b6ea4114483027700e",
+      "auth.users": "4:6777b2cf48c38cb53b1ac5fb743cceb6",
+      "storage.objects": "1:36edef8818d9787461f10ef5d640c891"
+    },
+    "ficheros": {
+      "config.json": "ce31c0380c6613ec0c517e9c2083abd6bf93e9e1dfb78c000b473e1489116ac1",
+      "review_credentials.txt": "f3fc2729a8945f25f71d1a29c841277bec2c9cd8452d131bdef8a59ec2b40488",
+      "soporte-walk.pdf": "8d74568a68c5d45c13529556567fe0262230fd38101f057787e718a03fddcfff",
+      "sim-state.json": "fee1ec2054c890a49b4da9089d4609a7dcf9083f6c382976d7fc90679ec4a636",
+      "review-state.json": "d633537dce8c8c781da9ab712d2d287742c2a09e731b5e7343c475e72744753b",
+      "pg.json": "e4a23eac3397107b6c9a154c352a4f03e354772a215b1d4e8f468196be662527"
+    },
+    "correoCapturado": "7:ae254fbce04041cc7c767c9625111b43cb6a815dc95409ad482813462d3427e2",
+    "bytesAlmacenados": "9991c8f88b2402de9a4ac6d58a8c0f4d68c831c8c74274cd328a3ccb8523901d",
+    "cuentasNavegador": "2e036a947112ebd738406cd54418452edad229052f3989376b56efb601f5fd06"
+  },
+  "huellaTrasReanudar": {
+    "tablas": {
+      "ventas": "4:92903709178698f3617ef3f0c6db78db",
+      "contrato_hoteles": "3:8d7a4163e1aba31bf213573f39e11734",
+      "contrato_pasajeros": "5:28003fa5787f68e71d9f15a64387880e",
+      "contrato_servicios": "1:5adb6b1a41c397ef2b0659175773c049",
+      "solicitudes_proveedor": "4:600c5cc82caff3a868efe17290d99581",
+      "solicitud_proveedor_eventos": "7:c0eb9370b0820e9096ea1c113c28ef04",
+      "solicitud_proveedor_avisos": "6:73e2082b82e64eaeac7c1b1d256fcfc7",
+      "cxp_pagos": "4:a13231bb32ee9240272438211ed6f033",
+      "cuentas_por_pagar": "3:61776e459f5953bc8e748a8235227966",
+      "cxp_pago_soportes": "4:3189a107807a35fd51dca9ddc666885c",
+      "hotel_temporadas": "4:17328a8049282e99f2974721c5cd302b",
+      "hotel_blackouts": "0:-",
+      "hotel_codigos_promocion": "3:cb187b62a999bcf56c6564d57ce3fc91",
+      "conjuntos_fechas": "1:09caef909d1425f7c747618c0e0d70a9",
+      "armado_paquetes": "2:9f79f445cf2f3ba5d7f87ba160662ded",
+      "tarifario_cambio_fuente": "8:66396a134c540fe728acc2d1cba9728b",
+      "usuarios": "4:352f89b3661bbfc74899113915ed2a25",
+      "hostinger_estado_buzon": "1:fdd59f7ceca3fab21cdee9697411f32d",
+      "hostinger_respuestas_pendientes": "0:-",
+      "auditoria": "90:616557a537b7c5b6ea4114483027700e",
+      "auth.users": "4:6777b2cf48c38cb53b1ac5fb743cceb6",
+      "storage.objects": "1:36edef8818d9787461f10ef5d640c891"
+    },
+    "ficheros": {
+      "config.json": "ce31c0380c6613ec0c517e9c2083abd6bf93e9e1dfb78c000b473e1489116ac1",
+      "review_credentials.txt": "f3fc2729a8945f25f71d1a29c841277bec2c9cd8452d131bdef8a59ec2b40488",
+      "soporte-walk.pdf": "8d74568a68c5d45c13529556567fe0262230fd38101f057787e718a03fddcfff",
+      "sim-state.json": "fee1ec2054c890a49b4da9089d4609a7dcf9083f6c382976d7fc90679ec4a636",
+      "review-state.json": "d633537dce8c8c781da9ab712d2d287742c2a09e731b5e7343c475e72744753b",
+      "pg.json": "e4a23eac3397107b6c9a154c352a4f03e354772a215b1d4e8f468196be662527"
+    },
+    "correoCapturado": "7:ae254fbce04041cc7c767c9625111b43cb6a815dc95409ad482813462d3427e2",
+    "bytesAlmacenados": "9991c8f88b2402de9a4ac6d58a8c0f4d68c831c8c74274cd328a3ccb8523901d",
+    "cuentasNavegador": "2e036a947112ebd738406cd54418452edad229052f3989376b56efb601f5fd06"
+  }
+}

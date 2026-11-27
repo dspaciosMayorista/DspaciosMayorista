@@ -158,7 +158,7 @@ export function CampanaAvisos({ className = "" }: { className?: string }) {
       </button>
       <span className="sr-only" aria-live="polite">{n > 0 ? `${n} avisos sin leer` : ""}</span>
       {abierto && (
-        <div role="region" aria-label="Avisos" className="absolute right-0 z-50 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white p-3 text-left shadow-lg">
+        <div role="region" aria-label="Avisos" className="fixed inset-x-4 top-16 z-50 max-h-[calc(100vh-5rem)] overflow-y-auto sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:max-h-none sm:w-80 sm:overflow-visible rounded-xl border border-gray-200 bg-white p-3 text-left shadow-lg">
           <div className="mb-2 flex items-center justify-between gap-2">
             <p className="text-sm font-semibold text-gray-700">Avisos</p>
             {n > 0 && (
@@ -175,7 +175,10 @@ export function CampanaAvisos({ className = "" }: { className?: string }) {
                 <li key={a.id}>
                   <Link href={a.href} onClick={() => alAbrir(a.id)} className={`block rounded-lg px-2 py-1.5 text-xs hover:bg-gray-50 ${a.leido ? "text-gray-500" : "font-semibold text-gray-800"}`}>
                     {textoAviso(a.tipo, numeroVisible(a.numero_contrato))}
-                    <span className="block text-[11px] font-normal text-gray-400">{new Date(a.creado_en).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" })}</span>
+                    <span className="flex flex-wrap items-center gap-x-2 text-[11px] font-normal text-gray-400">
+                      {new Date(a.creado_en).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" })}
+                      {a.atendida && <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700"><Check size={11} aria-hidden /> Atendida · convertida a contrato</span>}
+                    </span>
                   </Link>
                 </li>
               ))}

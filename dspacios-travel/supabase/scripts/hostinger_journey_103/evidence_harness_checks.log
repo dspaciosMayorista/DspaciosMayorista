@@ -1,0 +1,24 @@
+OK   0.1 init generates credentials in a folder OUTSIDE the repository  — config ready in C:\Users\Usuario\AppData\Local\Temp\hj103-checks-p7G3ve (generated credentials stay there; never copy them into the repository)
+OK   0.2 init refuses a work folder inside the repository (credentials never tracked)  — harness: HJ_WORK (C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\hotel-cal-
+OK   0.3 no build is touched: .next/BUILD_ID present and unchanged by the checks
+OK   1.0 two foreign listeners are up (fixture)
+OK   1.1 app-start REFUSES an occupied foreign port (non-zero exit, named reason)  — harness: Refused: port 39471 is already in use by pid 25284 — not ours, left untouched.
+OK   1.2 …and the foreign process was neither killed nor replaced
+OK   1.3 app-stop with NO launcher record is a no-op (nothing owned, nothing stopped)  — {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+OK   1.4 a record pointing at a FOREIGN pid (right start time, wrong command line) is refused, foreign survives  — {"estado":"rechazado","detalle":"pid 25284 is NOT the process this launcher started (command line does not contain the launcher marker); lef
+OK   1.5 PID-reuse protection: right pid, WRONG start time → refused, foreign survives  — {"estado":"rechazado","detalle":"pid 25284 is NOT the process this launcher started (start time differs (record 2020-01-01T00:00:00.0000000Z
+OK   1.6 a stale record of a dead process is just forgotten  — {"estado":"ya-detenido"}
+OK   1.7 a forged record never makes start kill the foreign port owner (start still refuses)  — harness: Refused: port 39471 is already in use by pid 25284 — not ours, left untouched.
+OK   2.1 app-start succeeds on the free port and reports loopback-only  — app listening ONLY on 127.0.0.1:39471 (pid 22452); non-loopback addresses of this machine refuse connections
+OK   2.2 the ONLY listener address is 127.0.0.1  — ["127.0.0.1"]
+OK   2.3 every non-loopback address of this machine (192.168.1.156, 172.31.96.1, 172.25.112.1) refuses a connection to the app  — refused on 192.168.1.156,172.31.96.1,172.25.112.1
+OK   2.4 the listener belongs to the process the launcher started (pid/descendants) and the record carries its start time  — pid 22452
+OK   2.5 the compiled app answers HTTP on 127.0.0.1  — GET /login → 200
+OK   2.6 a second app-start while ours runs is refused and does not disturb it
+OK   2.7 the foreign listener on another port is untouched by all of this
+OK   2.8 app-restart replaces only our process (old pid gone, new pid owns the port)  — 22452 → 2800
+OK   2.9 app-stop stops exactly our verified process; port free; foreign still alive  — {"estado":"detenido","pid":2800}
+OK   2.10 the product build was not touched
+OK   3.1 control: `next start` WITHOUT -H listens beyond loopback and the detector reports it (so 2.2/2.3 are meaningful)  — listeners ::; reachable on 192.168.1.156,172.31.96.1,172.25.112.1
+
+HARNESS CHECKS PASSED: 22/22

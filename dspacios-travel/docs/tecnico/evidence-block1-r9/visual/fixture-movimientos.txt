@@ -1,0 +1,10 @@
+4 | AAA111 |  | retiro_cupo | 00000000-0000-4000-8000-000000881002 | 2026-11-24 04:30:00 | Javier Alberto de Jesús Hernández-Quintero (control de vuelo, turno de la madrugada del lunes festivo) | 4 |  | 10>9 |  | Se pasa al record BBB222 por pedido del cliente (esto es sol
+9 | AAA111 |  | retiro_cupo | 00000000-0000-4000-8000-000000881005 | 2026-11-23 05:00:00 | Javier | 6 |  | 12>11 |  | límite de día B
+8 | AAA111 |  | retiro_cupo | 00000000-0000-4000-8000-000000881004 | 2026-11-23 04:59:00 | Javier | 5 |  | 13>12 |  | límite de día A
+5 | BBB222 | AAA111 | mover_con_cupo | 00000000-0000-4000-8000-000000881003 | 2026-11-02 20:15:00 | Javier | 3 | 13 | 9>8 | 9>10 | (null)
+1 | AAA111 | BBB222 | traslado_cupo | 00000000-0000-4000-8000-000000881001 | 2026-10-05 15:00:00 | Javier | 10 | 7 | 12>9 | 6>9 | Cupos libres para el grupo de octubre
+2 | AAA111 | BBB222 | traslado_cupo | 00000000-0000-4000-8000-000000881001 | 2026-10-05 15:00:00 | Javier | 11 | 8 | 12>9 | 6>9 | Cupos libres para el grupo de octubre
+3 | AAA111 | BBB222 | traslado_cupo | 00000000-0000-4000-8000-000000881001 | 2026-10-05 15:00:00 | Javier | 12 | 9 | 12>9 | 6>9 | Cupos libres para el grupo de octubre
+7 | CCC333 | AAA111 | legado | - | 2026-01-03 12:00:00 | (null) | 1 |  |  |  | (null)
+6 | AAA111 |  | legado | - | 2026-01-02 12:00:00 | (null) | 2 |  |  |  | pasó al record CCC333
+10 | AAA111 |  | retiro_cupo | 00000000-0000-4000-8000-000000881006 | 2026-01-01 04:59:00 | Javier | 7 |  | 11>10 |  | límite de año

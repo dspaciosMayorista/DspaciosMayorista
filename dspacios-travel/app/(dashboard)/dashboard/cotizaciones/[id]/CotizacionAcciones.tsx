@@ -212,7 +212,7 @@ export function CotizacionAcciones({
           <Input id="trm-costo-input" aria-label="TRM de costos" type="number" min={0} step="0.01" inputMode="decimal" placeholder="Obligatoria, ej. 4000" required
             value={trmCostoTxt} onChange={(e) => setTrmCostoTxt(e.target.value)} />
           <p className="mt-1 text-[10px] text-gray-400">
-            Este contrato está en USD y sus proveedores se deben en dólares: ingresa la tasa con la que se congela el equivalente en pesos de cada cuenta por pagar. Es distinta de la TRM de cobro; no cambia después.
+            Este contrato está en USD y sus proveedores se deben en dólares: ingresa la tasa con la que se congela el equivalente en pesos de cada cuenta por pagar. Es distinta de la TRM de cobro y de la TRM del pago real. Es provisional: la puedes corregir en la ficha del contrato mientras esté pendiente; al confirmarlo queda congelada.
           </p>
         </div>
       )}

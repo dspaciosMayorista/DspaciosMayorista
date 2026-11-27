@@ -1,0 +1,66 @@
+NEGATIVE CONTROL 2: round-2 behaviour (claim + completeness, no revalidation under the claim)
+
+### F1 · conversion: separate sessions, pause after the header, injected downstream failure
+
+-- S1 winner paused after the header; concurrent loser; then release
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+OK    winner header committed and INCOMPLETE (financiero_estado=pendiente, hotels=0) — DTM-0001
+OK    loser (another session) is told it is IN PROGRESS, not success (Esta cotización ya se está convirtiendo en contrato (otra solicitud la tiene en curso). No se creó nada nuevo ni se gastó otro número; espera unos segundos y vuelve a intentarlo.)
+OK    loser spent NO contract number (sequence 1 -> 1)
+OK    still ONE header, quotation NOT marked converted (abierta|)
+OK    a third session (administracion) gets the same answer and spends nothing
+OK    winner completes with ITS number (DTM-0001)
+OK    complete contract: {"numero":"DTM-0001","financiero":"completo","ventas":1,"cotizacion":"convertida|DTM-0001","pasajeros":2,"hoteles":1,"items":1,"cxp":1,"reclamo":0}
+OK    replay after completion returns the SAME contract and spends nothing (DTM-0001)
+OK    exactly ONE number spent for the whole S1 (0 -> 1)
+
+-- S2 injected downstream failure after the header
+OK    loser sees IN PROGRESS during the pause, no extra number (1 -> 2)
+OK    winner reports the failure (No se pudo guardar el hotel del contrato: INYECTADO: fallo posterior a la cabecera)
+OK    nothing left behind: header, passengers, payables gone; quotation unchanged ({"numero":null,"financiero":null,"ventas":0,"cotizacion":"abierta|","pasajeros":0,"hoteles":0,"items":0,"cxp":0,"reclamo":0})
+OK    the winner's contract DTM-0002 no longer exists (no dangling converted quotation)
+OK    retry after the failure builds ONE complete contract (DTM-0003)
+
+-- S3 simultaneous start (5 rounds, two sessions each)
+   R1: A=DTM-0004 B=en curso gastados=1 | R2: A=DTM-0005 B=en curso gastados=1 | R3: A=en curso B=DTM-0006 gastados=1 | R4: A=DTM-0007 B=en curso gastados=1 | R5: A=DTM-0008 B=en curso gastados=1
+OK    every round: ONE complete contract, ONE number spent, any answer is either the same completed contract or an in-progress error
+
+-- S4 lease: live lease blocks, expired lease is taken over, other tenant cannot reach it
+OK    live lease, no header: in-progress error, nothing spent or created
+OK    expired lease taken over: contract DTM-0009, one number, lease released
+OK    a user of the OTHER agency is refused before any lease/number (Cotización no encontrada.)
+
+-- S5a backstop: lost claim, 23505 on the unique key (winner still incomplete when the loser resumes)
+OK    loser hit the unique key against an INCOMPLETE header and answered IN PROGRESS (Esta cotización ya se está convirtiendo en contrato (otra so)
+OK    still one header, quotation not converted by the loser
+OK    winner finishes: {"numero":"DTM-0010","financiero":"completo","ventas":1,"cotizacion":"convertida|DTM-0010","pasajeros":2,"hoteles":1,"items":1,"cxp":1,"reclamo":0}
+OK    no claim left behind
+   numbers spent in S5a: 2 (the winner's, plus the loser's: the only path that can burn one — documented)
+OK    S5a: exactly two numbers (winner + the loser that lost its claim), still ONE contract
+
+-- S5b backstop: lost claim, 23505 on the unique key (winner already complete when the loser resumes)
+OK    winner completes first (DTM-0012)
+OK    loser hit the unique key against a COMPLETE header: returns THAT contract (DTM-0012) and links the quotation
+OK    no claim left behind
+   numbers spent in S5b: 2 (the winner's, plus the loser's: the only path that can burn one — documented)
+OK    S5b: exactly two numbers (winner + the loser that lost its claim), still ONE contract
+
+-- S6 B paused after its initial «none» read and before the claim; A completes and releases; B resumes
+OK    B has read «none» and holds no claim; nothing exists yet
+OK    A completes (DTM-0014) and released its claim; one number so far (1)
+OK    B returns A's EXISTING contract (DTM-0014)
+FALLO exactly ONE number spent in total (13 -> 15): B did not reach numbering
+OK    one complete contract, quotation linked, no claim left: {"numero":"DTM-0014","financiero":"completo","ventas":1,"cotizacion":"convertida|DTM-0014","pasajeros":2,"hoteles":1,"items":1,"cxp":1,"reclamo":0}
+
+-- S7 same gate; the winner's downstream write fails (injected) and reverts; B resumes and converts
+OK    A failed and left nothing behind (No se pudo guardar el hotel del contrato: INYECTADO: fallo posterior a); claim released
+OK    B converts after the winner's failure: ONE complete contract (DTM-0017)
+OK    two numbers: the failed winner's (burned, unchanged behaviour) and B's (15 -> 17)
+
+-- S8 B acquires a claim while an INCOMPLETE header exists (winner's claim gone): in progress, no number, claim released
+OK    B revalidated under its claim and answered IN PROGRESS (Esta cotización ya se está convirtiendo en contrato (otra so)
+FALLO no number spent by B (18 -> 19); B's claim released
+OK    A finishes: one complete contract (DTM-0018)
+
+=== 2 fallo(s) de 38

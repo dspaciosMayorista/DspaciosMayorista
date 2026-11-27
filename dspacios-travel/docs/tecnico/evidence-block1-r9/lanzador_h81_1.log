@@ -1,0 +1,8 @@
+  cargado: 20260601000334_destinos_aereos_alternativos_integridad.sql
+  cargado: 20260601000335_vuelos_sistema_exige_componente_aereo.sql
+  cargado: 20260601000336_conversion_cotizacion_reclamo.sql
+  cargado: 20260601000337_voucher_vuelo_atomico.sql
+  cargado: 20260601000338_voucher_vuelo_por_servicio_y_revision.sql
+No se pudo cargar supabase/scripts/semilla_visual_historial_h81.sql
+ERROR:  insert or update on table "movimientos_silla" violates foreign key constraint "movimientos_silla_operacion_id_fkey"
+DETAIL:  Key (operacion_id)=(00000000-0000-4000-8000-000000881001) is not present in table "operaciones_vuelo".

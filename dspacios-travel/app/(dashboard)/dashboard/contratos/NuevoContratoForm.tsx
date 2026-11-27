@@ -8,10 +8,15 @@ import { Input } from "@/components/ui/input";
 import { formatMoneda, calcularEdad } from "@/lib/utils";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { ComboCiudad } from "@/components/ComboCiudad";
-import type { DestinoOpt } from "@/components/ComboDestino";
+import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
+import { ACOM_ROOMS, ACOM_ROOM_LABEL, clasificarPorEdad } from "@/lib/acomodaciones";
+import { errorOrdenFechas } from "@/lib/reglas/duracionViaje";
+import { evaluarHotel, hotelDbDeCatalogo, type HotelDb } from "@/lib/catalogo/evaluarHoteles";
+import { hotelesDeDestino, ETIQUETA_COMPRA } from "@/lib/catalogo/validacionManual";
 import { ciudadIata } from "@/lib/iata";
 import { esInfantePorEdad } from "@/lib/reservar/pasajeros";
 import { quitarPasajero, recalcularVinculosPorEdad } from "@/lib/reservar/pasajerosFilas";
+import { seleccionarCatalogo, hotelPorId, servicioPorId, entradasHoteles, entradasServicios, etiquetasCatalogo, prefillHotelManual, prefillServicioManual, restriccionesHotel, serviciosParaTipo, vinculoProveedor, type HotelCatalogoManual, type ServicioCatalogoManual } from "@/lib/catalogo/prefillManual";
 import { OpcionesTipoDoc } from "@/components/personas/OpcionesTipoDoc";
 import { BuscarTitular } from "@/components/personas/BuscarTitular";
 import { BuscarPasajeroDocumento } from "@/components/pasajeros/BuscarPasajeroDocumento";
@@ -70,6 +75,7 @@ export function NuevoContratoForm({
   freelances = [],
   destinos = [],
   hotelesCatalogo = [],
+  serviciosCatalogo = [],
   proveedoresCatalogo = [],
   aerolineasCatalogo = [],
   puedeForzarMargen = false,
@@ -84,7 +90,9 @@ export function NuevoContratoForm({
   // Catálogo de hoteles ya negociados (mayorista) + su proveedor, para
   // autocompletar en el hotel del contrato manual/dinámico sin perder la
   // opción de escribirlo libre si no está (mismo criterio que `destinos`).
-  hotelesCatalogo?: { nombre: string; proveedor: string | null }[];
+  // #95: además del proveedor, trae categorías de habitación, regímenes, acomodaciones y restricciones del hotel para PRECARGAR información general EDITABLE (nunca precios).
+  hotelesCatalogo?: HotelCatalogoManual[];
+  serviciosCatalogo?: ServicioCatalogoManual[];
   proveedoresCatalogo?: string[];
   // Catálogo de aerolíneas (configurado en mayorista, `/dashboard/producto/
   // aerolineas`) con sus tipos de tarifa/equipaje — cada una trae su propia
@@ -122,7 +130,10 @@ export function NuevoContratoForm({
   const [dir, setDir] = useState("");
 
   // Generales
-  const [destino, setDestino] = useState("");
+  // B95-13: el destino se ELIGE del catálogo (id) y decide qué hoteles del catálogo se ofrecen (por el destino guardado de cada hotel).
+  const [destinoId, setDestinoId] = useState<number | "">("");
+  const destino = destinos.find((d) => d.id === destinoId)?.nombre ?? "";
+  const [avisoDestino, setAvisoDestino] = useState("");
   const [fechaSalida, setFechaSalida] = useState("");
   const [fechaRegreso, setFechaRegreso] = useState("");
   // Día de negocio (Bogotá) al MONTAR el formulario, no al cargar el módulo.
@@ -142,6 +153,8 @@ export function NuevoContratoForm({
     { nombres: "", apellidos: "", tipoId: "CC", identificacion: "", fechaNacimiento: "", esInfante: false },
   ]);
   const [hoteles, setHoteles] = useState<HotelInput[]>([]);
+  const hotelesFiltrados = hotelesDeDestino(hotelesCatalogo, destinoId === "" ? null : destinoId);
+  const etiquetasHoteles = etiquetasCatalogo(entradasHoteles(hotelesFiltrados));
   const [vuelos, setVuelos] = useState<VueloInput[]>([]);
   // Compras aéreas: 1 pago real a un proveedor puede cubrir VARIOS tramos (ej.
   // ida con Copa + regreso con Wingo compradas juntas). El costo cuelga de la
@@ -218,6 +231,33 @@ export function NuevoContratoForm({
     return () => { vigente = false; clearTimeout(t); };
   }, [pideNeto, tipoVenta, aliadoId, total, bnc, claveNeto]);
 
+  // B95-13/14/15/20: la misma evaluación que repite el servidor (destino ↔ hotel, compra directa/plataforma, habitaciones frente a los pasajeros reales).
+  const dbHoteles = new Map<number, HotelDb>(hotelesCatalogo.map((h) => [h.id, hotelDbDeCatalogo(h)]));
+  const errFechas = errorOrdenFechas(fechaSalida, fechaRegreso);
+  const pasajerosConDatos = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
+  const evaluarFila = (h: HotelInput) => {
+    if (esNegociado || !h.nombre.trim()) return null;
+    const idCat = seleccionarCatalogo(entradasHoteles(hotelesFiltrados), h.nombre, h.catalogoHotelId ?? null).id;
+    const cat = hotelPorId(hotelesCatalogo, idCat);
+    const edades = pasajerosConDatos.map((p) => (p.fechaNacimiento ? calcularEdad(p.fechaNacimiento, fechaSalida || null) : p.esInfante ? 0 : null));
+    const c = clasificarPorEdad(edades, cat?.edadInfanteMax ?? 2, cat?.edadNinoMax ?? 10);
+    return evaluarHotel({ nombre: h.nombre, catalogoId: idCat, compra: h.compra, plataforma: h.plataforma, proveedor: h.proveedor, habitaciones: h.habitaciones },
+      { destinoId: destinoId === "" ? null : destinoId, ocupacion: pasajerosConDatos.length ? { adultos: c.adultos + c.sinFecha, ninos: c.ninos, infantes: c.infantes } : null, db: dbHoteles });
+  };
+  const erroresFormulario = esNegociado ? (errFechas ? [errFechas] : []) : [...(destinoId === "" ? ["Elige el destino de la lista del catálogo."] : []), ...(errFechas ? [errFechas] : []), ...hoteles.flatMap((h) => evaluarFila(h)?.errores ?? [])];
+  const bloqueado = erroresFormulario.length > 0;
+  function elegirDestino(id: number | "") {
+    setDestinoId(id);
+    // Un hotel del catálogo que ya no corresponde al destino se quita (vínculo y copia) y se avisa cuál fue: nunca queda uno incompatible en silencio.
+    // Mientras se escribe en el buscador el id pasa por «» un instante: eso NO es elegir otro destino y no toca los hoteles (sin destino, el formulario ya queda bloqueado).
+    const obsoletos = id === "" ? [] : hoteles.filter((h) => h.catalogoHotelId != null && hotelPorId(hotelesCatalogo, h.catalogoHotelId)?.destinoId !== id);
+    if (id !== "" || obsoletos.length) setAvisoDestino(obsoletos.length ? `Se quitó el hotel ${obsoletos.map((h) => `«${h.nombre}»`).join(", ")}: no pertenece al destino elegido. Elige otro hotel del destino o escríbelo como hotel manual.` : "");
+    if (obsoletos.length) setHoteles((arr) => arr.map((h) => (obsoletos.includes(h) ? { ...h, catalogoHotelId: null, nombre: "", categoria: "", alimentacion: "", proveedor: "", ciudad: "" } : h)));   // la ciudad precargada del hotel quitado también se va: si no, el siguiente hotel del destino nuevo la heredaba y quedaba «Hotel de Cartagena · Bogotá»
+  }
+  function setHab(i: number, a: (typeof ACOM_ROOMS)[number], v: string) {
+    setHoteles((arr) => arr.map((h, j) => (j === i ? { ...h, habitaciones: { ...h.habitaciones, [a]: Math.max(0, Math.trunc(Number(v) || 0)) } } : h)));
+  }
+
   function setItem(i: number, patch: Partial<ItemInput>) {
     setItems((arr) => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
   }
@@ -238,12 +278,26 @@ export function NuevoContratoForm({
   // Si el nombre tipeado coincide con un hotel del catálogo (mayorista) y el
   // proveedor todavía está vacío, lo autocompleta -- sin pisar un proveedor
   // que el asesor ya haya escrito a mano.
+  // #95: al coincidir con un hotel del catálogo también se precargan (solo si están vacíos) su categoría, régimen y acomodación cuando el hotel tiene UNA sola opción;
+  // con varias se ofrecen como sugerencias. Todo queda editable y editarlo no toca el catálogo (el formulario guarda texto en el contrato).
+  // B95-3: la elección real se identifica por el ID del catálogo (con homónimos se elige la opción etiquetada con destino y #id); un nombre repetido sin elegir no precarga ni afirma vínculo.
   function elegirHotelNombre(i: number, nombre: string) {
-    const match = hotelesCatalogo.find((h) => h.nombre.toLowerCase() === nombre.trim().toLowerCase());
     setHoteles((arr) => arr.map((h, j) => {
       if (j !== i) return h;
-      const proveedor = !h.proveedor.trim() && match?.proveedor ? match.proveedor : h.proveedor;
-      return { ...h, nombre, proveedor };
+      const sel = seleccionarCatalogo(entradasHoteles(hotelesFiltrados), nombre, h.catalogoHotelId ?? null);
+      const nueva = sel.id !== (h.catalogoHotelId ?? null);
+      const elegido = hotelPorId(hotelesCatalogo, sel.id);
+      // B95-13: la ciudad sale del destino guardado del hotel (solo si estaba vacía; sigue editable) en vez de pedirla otra vez.
+      return { ...h, nombre: sel.texto, catalogoHotelId: sel.id, ...(nueva ? { ...prefillHotelManual(h, elegido), ...(!h.ciudad.trim() && elegido?.destino ? { ciudad: elegido.destino } : {}) } : {}) };
+    }));
+  }
+  // Al elegir un servicio del catálogo solo se precarga el proveedor (si estaba vacío); jamás el precio.
+  function elegirServicioDescripcion(i: number, descripcion: string) {
+    setServicios((arr) => arr.map((s, j) => {
+      if (j !== i) return s;
+      const sel = seleccionarCatalogo(entradasServicios(serviciosParaTipo(serviciosCatalogo, s.tipo)), descripcion, s.catalogoServicioId ?? null);
+      const nueva = sel.id !== (s.catalogoServicioId ?? null);
+      return { ...s, descripcion: sel.texto, catalogoServicioId: sel.id, ...(nueva ? prefillServicioManual(s.proveedor, servicioPorId(serviciosCatalogo, sel.id)) : {}) };
     }));
   }
   function setServicio(i: number, patch: Partial<ServicioInput>) {
@@ -303,7 +357,8 @@ export function NuevoContratoForm({
 
   function enviar(forzarMargen: boolean) {
     const pasajerosOk = pasajeros.filter((p) => p.nombres.trim() !== "" || p.apellidos.trim() !== "");
-    const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "");
+    // El id del catálogo viaja solo si el texto SIGUE siendo esa elección (editar la copia la vuelve texto libre).
+    const hotelesOk = hoteles.filter((h) => h.nombre.trim() !== "").map((h) => ({ ...h, catalogoHotelId: seleccionarCatalogo(entradasHoteles(hotelesFiltrados), h.nombre, h.catalogoHotelId ?? null).id }));
     const vuelosOk = vuelos.filter((v) => v.aerolinea.trim() !== "");
     const serviciosOk = servicios.filter((s) => s.descripcion.trim() !== "");
     const itemsOk = items.filter((it) => it.descripcion.trim() !== "");
@@ -320,6 +375,7 @@ export function NuevoContratoForm({
           clienteTelefono: tel,
           clienteDireccion: dir,
           destino,
+          destinoId: destinoId === "" ? null : destinoId,
           fechaSalida,
           fechaRegreso,
           fechaEmision,
@@ -373,6 +429,7 @@ export function NuevoContratoForm({
       setError("El nombre del cliente es obligatorio.");
       return;
     }
+    if (erroresFormulario.length) { setError(erroresFormulario[0]); return; }
     if (bncModo === "fijo" && (Number(bncFijo) || 0) < (Number(valorTiquetes) || 0)) {
       setError("La BNC fija no puede ser menor al valor de los tiquetes.");
       return;
@@ -578,7 +635,8 @@ export function NuevoContratoForm({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className={labelCls}>Destino</label>
-            <ComboCiudad destinos={destinos} value={destino} onChange={setDestino} modo="nombre" permitirLibre placeholder="Destino…" />
+            <div data-testid="campo-destino"><ComboDestino destinos={destinos} value={destinoId} onChange={elegirDestino} placeholder="Elige el destino…" /></div>
+            {avisoDestino && <p className="mt-1 text-[11px] text-amber-700" role="status" data-testid="aviso-destino">{avisoDestino}</p>}
           </div>
           <div>
             <label className={labelCls}>Fecha de salida (viaje)</label>
@@ -594,7 +652,8 @@ export function NuevoContratoForm({
           </div>
           <div>
             <label className={labelCls}>Fecha de regreso</label>
-            <DateInput aria-label="Fecha de regreso" type="date" value={fechaRegreso} onValueChange={(dateValue) => setFechaRegreso(dateValue)} />
+            <DateInput aria-label="Fecha de regreso" type="date" value={fechaRegreso} min={fechaSalida || undefined} onValueChange={(dateValue) => setFechaRegreso(dateValue)} />
+            {errFechas && <p className="mt-1 text-[11px] text-red-600" role="alert" data-testid="error-fechas">{errFechas}</p>}
           </div>
           <div>
             <label className={labelCls}>Fecha de emisión</label>
@@ -782,7 +841,7 @@ export function NuevoContratoForm({
             className="text-xs font-medium text-[#1D7C9A] hover:underline"
             onClick={() =>
               // #16: el hotel nuevo parte del rango del viaje (editable); cambiar el viaje después no pisa lo ya escrito.
-              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: "", alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: fechaSalida, fechaSalida: fechaRegreso, costo: 0 }])
+              setHoteles((a) => [...a, { nombre: "", categoria: "", proveedor: "", ciudad: destino, alimentacion: "", acomodacion: "", detalleAcomodacion: "", fechaIngreso: fechaSalida, fechaSalida: fechaRegreso, costo: 0 }])
             }
           >
             + Agregar hotel
@@ -790,9 +849,10 @@ export function NuevoContratoForm({
         </div>
         {hotelesCatalogo.length > 0 && (
           <datalist id="hoteles-catalogo">
-            {hotelesCatalogo.map((h) => <option key={h.nombre} value={h.nombre} />)}
+            {hotelesFiltrados.map((h) => <option key={h.id} value={etiquetasHoteles.get(h.id) ?? h.nombre} />)}
           </datalist>
         )}
+        {hotelesCatalogo.length > 0 && destinoId === "" && !esNegociado && <p className="text-[11px] text-gray-500">Elige primero el destino para ver los hoteles del catálogo; también puedes escribir un hotel manual.</p>}
         {proveedoresCatalogo.length > 0 && (
           <datalist id="proveedores-catalogo">
             {proveedoresCatalogo.map((p) => <option key={p} value={p} />)}
@@ -800,13 +860,76 @@ export function NuevoContratoForm({
         )}
         {hoteles.length === 0 && <p className="text-xs text-gray-400">Sin hoteles cargados.</p>}
         {hoteles.map((h, i) => (
-          <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4">
+          <div key={i} className="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 md:grid-cols-4" data-testid="fila-hotel">
+            {(() => {
+              const sel = seleccionarCatalogo(entradasHoteles(hotelesFiltrados), h.nombre, h.catalogoHotelId ?? null);
+              const cat = hotelPorId(hotelesCatalogo, sel.id);
+              const vinc = sel.estado === "catalogo" ? "catalogo" : sel.estado === "vacio" ? "vacio" : "libre";
+              const vp = vinculoProveedor(proveedoresCatalogo, h.proveedor);
+              const rest = restriccionesHotel(cat);
+              const hayMenores = !!cat?.adultsOnly && pasajeros.some((p) => { const e = calcularEdad(p.fechaNacimiento, fechaSalida || null); return e != null && e < 18; });
+              return (
+                <div className="col-span-2 flex flex-wrap items-center gap-1.5 text-[11px] md:col-span-4" data-testid="vinculo-hotel">
+                  {vinc !== "vacio" && sel.estado !== "ambiguo" && <span className={`rounded-full px-2 py-0.5 ${vinc === "catalogo" ? "bg-green-50 text-green-700" : "bg-gray-200 text-gray-600"}`}>{vinc === "catalogo" ? "Hotel del catálogo" : "Hotel manual (no está en el catálogo)"}</span>}
+                  {sel.estado === "ambiguo" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700" role="status">Hay varios hoteles con este nombre: elige uno de la lista (se distinguen por destino y #id)</span>}
+                  {vp !== "vacio" && <span className={`rounded-full px-2 py-0.5 ${vp === "catalogo" ? "bg-green-50 text-green-700" : "bg-gray-200 text-gray-600"}`}>{vp === "catalogo" ? "Proveedor del catálogo" : "Proveedor en texto libre"}</span>}
+                  {rest.map((r) => <span key={r} className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">{r}</span>)}
+                  {hayMenores && <span className="font-medium text-red-600" role="alert">Este hotel es solo para adultos y hay pasajeros menores de 18 años.</span>}
+                </div>
+              );
+            })()}
             <Input placeholder="Hotel" list="hoteles-catalogo" value={h.nombre} onChange={(e) => elegirHotelNombre(i, e.target.value)} />
-            <Input placeholder="Categoría habitación" value={h.categoria} onChange={(e) => setHotel(i, { categoria: e.target.value })} />
-            <Input placeholder="Proveedor del hotel" list="proveedores-catalogo" value={h.proveedor} onChange={(e) => setHotel(i, { proveedor: e.target.value })} />
+            <Input placeholder="Categoría habitación" list={`hotel-cat-${i}`} value={h.categoria} onChange={(e) => setHotel(i, { categoria: e.target.value })} />
+            {!esNegociado && (
+              <select aria-label="Origen de la compra" value={h.compra ?? ""} onChange={(e) => setHotel(i, { compra: e.target.value === "directa" || e.target.value === "plataforma" ? e.target.value : undefined })} className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
+                <option value="">Cómo se compra…</option>
+                <option value="directa">{ETIQUETA_COMPRA.directa}</option>
+                <option value="plataforma">{ETIQUETA_COMPRA.plataforma}</option>
+              </select>
+            )}
+            {!esNegociado && h.compra === "plataforma"
+              ? <Input aria-label="Plataforma (proveedor a pagar)" placeholder="Plataforma (es el proveedor a pagar)" list="proveedores-catalogo" value={h.plataforma ?? ""} onChange={(e) => setHotel(i, { plataforma: e.target.value })} />
+              : <Input placeholder={esNegociado ? "Proveedor del hotel" : "Proveedor del hotel (compra directa)"} list="proveedores-catalogo" value={h.proveedor} onChange={(e) => setHotel(i, { proveedor: e.target.value })} />}
             <ComboCiudad destinos={destinos} value={h.ciudad} onChange={(val) => setHotel(i, { ciudad: val })} modo="nombre" permitirLibre placeholder="Ciudad" />
-            <Input placeholder="Alimentación (P.A, PAM…)" value={h.alimentacion} onChange={(e) => setHotel(i, { alimentacion: e.target.value })} />
-            <Input placeholder="Acomodación (Doble…)" value={h.acomodacion} onChange={(e) => setHotel(i, { acomodacion: e.target.value })} />
+            <Input placeholder="Alimentación (P.A, PAM…)" list={`hotel-reg-${i}`} value={h.alimentacion} onChange={(e) => setHotel(i, { alimentacion: e.target.value })} />
+            {!esNegociado ? (
+              <div className="col-span-2 md:col-span-4" data-testid="habitaciones-hotel">
+                <p className="mb-1 text-xs font-medium text-gray-600">Habitaciones (cantidad por tipo)</p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {(() => {
+                    // Solo los tipos de habitación que ese hotel del catálogo ofrece (los de su configuración); sin hotel del catálogo, o sin configuración, los cuatro. Un tipo ya digitado no se oculta.
+                    const cat = hotelPorId(hotelesCatalogo, seleccionarCatalogo(entradasHoteles(hotelesFiltrados), h.nombre, h.catalogoHotelId ?? null).id);
+                    const ofrecidas = cat && cat.acomodaciones.length ? ACOM_ROOMS.filter((a) => cat.acomodaciones.includes(ACOM_ROOM_LABEL[a]) || !!h.habitaciones?.[a]) : ACOM_ROOMS;
+                    return ofrecidas.map((a) => (
+                      <label key={a} className="text-[11px] text-gray-500">{ACOM_ROOM_LABEL[a]}
+                        <Input type="number" min={0} aria-label={`Habitaciones ${ACOM_ROOM_LABEL[a]}`} value={h.habitaciones?.[a] ? h.habitaciones[a] : ""} onChange={(e) => setHab(i, a, e.target.value)} />
+                      </label>
+                    ));
+                  })()}
+                </div>
+              </div>
+            ) : (
+              <Input placeholder="Acomodación (Doble…)" list={`hotel-aco-${i}`} value={h.acomodacion} onChange={(e) => setHotel(i, { acomodacion: e.target.value })} />
+            )}
+            {(() => {
+              const ev = evaluarFila(h);
+              return ev && (ev.errores.length > 0 || ev.aviso) ? (
+                <div className="col-span-2 space-y-0.5 text-[11px] md:col-span-4" data-testid="errores-hotel">
+                  {ev.errores.map((m) => <p key={m} className="font-medium text-red-600" role="alert">{m}</p>)}
+                  {ev.aviso && <p className="text-amber-700" role="status">{ev.aviso}</p>}
+                </div>
+              ) : null;
+            })()}
+            {(() => {
+              const cat = hotelPorId(hotelesCatalogo, seleccionarCatalogo(entradasHoteles(hotelesFiltrados), h.nombre, h.catalogoHotelId ?? null).id);
+              return cat ? (
+                <>
+                  <datalist id={`hotel-cat-${i}`}>{cat.categorias.map((c) => <option key={c} value={c} />)}</datalist>
+                  <datalist id={`hotel-reg-${i}`}>{cat.regimenes.map((c) => <option key={c} value={c} />)}</datalist>
+                  <datalist id={`hotel-aco-${i}`}>{cat.acomodaciones.map((c) => <option key={c} value={c} />)}</datalist>
+                </>
+              ) : null;
+            })()}
             <Input placeholder="Detalle acomodación" value={h.detalleAcomodacion} onChange={(e) => setHotel(i, { detalleAcomodacion: e.target.value })} />
             {!esNegociado && (
               <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={h.costo ?? ""} onChange={(e) => setHotel(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del hotel (interno)" />
@@ -843,8 +966,21 @@ export function NuevoContratoForm({
             <select className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm" value={s.tipo} onChange={(e) => setServicio(i, { tipo: e.target.value as TipoServicio })}>
               {TIPOS_SERVICIO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
-            <Input placeholder="Descripción (Traslado aeropuerto-hotel…)" className="md:col-span-2" value={s.descripcion} onChange={(e) => setServicio(i, { descripcion: e.target.value })} />
-            <Input placeholder="Proveedor" value={s.proveedor} onChange={(e) => setServicio(i, { proveedor: e.target.value })} />
+            <Input placeholder="Descripción (Traslado aeropuerto-hotel…)" className="md:col-span-2" list={`servicios-catalogo-${i}`} value={s.descripcion} onChange={(e) => elegirServicioDescripcion(i, e.target.value)} />
+            <datalist id={`servicios-catalogo-${i}`}>{(() => { const lista = serviciosParaTipo(serviciosCatalogo, s.tipo); const et = etiquetasCatalogo(entradasServicios(lista)); return lista.map((c) => <option key={c.id} value={et.get(c.id) ?? c.nombre} />); })()}</datalist>
+            <Input placeholder="Proveedor" list="proveedores-catalogo" value={s.proveedor} onChange={(e) => setServicio(i, { proveedor: e.target.value })} />
+            {(() => {
+              const selS = seleccionarCatalogo(entradasServicios(serviciosParaTipo(serviciosCatalogo, s.tipo)), s.descripcion, s.catalogoServicioId ?? null);
+              const vs = selS.estado === "catalogo" ? "catalogo" : selS.estado === "vacio" ? "vacio" : "libre";
+              const vp = vinculoProveedor(proveedoresCatalogo, s.proveedor);
+              return vs !== "vacio" || vp !== "vacio" ? (
+                <div className="col-span-2 flex flex-wrap gap-1.5 text-[11px] md:col-span-4" data-testid="vinculo-servicio">
+                  {selS.estado === "ambiguo" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700" role="status">Hay varios servicios con este nombre: elige uno de la lista</span>}
+                  {vs !== "vacio" && selS.estado !== "ambiguo" && <span className={`rounded-full px-2 py-0.5 ${vs === "catalogo" ? "bg-green-50 text-green-700" : "bg-gray-200 text-gray-600"}`}>{vs === "catalogo" ? "Servicio del catálogo" : "Servicio en texto libre"}</span>}
+                  {vp !== "vacio" && <span className={`rounded-full px-2 py-0.5 ${vp === "catalogo" ? "bg-green-50 text-green-700" : "bg-gray-200 text-gray-600"}`}>{vp === "catalogo" ? "Proveedor del catálogo" : "Proveedor en texto libre"}</span>}
+                </div>
+              ) : null;
+            })()}
             {!esNegociado && (
               <Input type="number" min={0} placeholder={`Costo neto (${monedaEfectiva})`} value={s.costo ?? ""} onChange={(e) => setServicio(i, { costo: Number(e.target.value) || 0 })} title="Costo neto del servicio (interno)" />
             )}
@@ -1091,8 +1227,13 @@ export function NuevoContratoForm({
         </div>
       )}
 
+      {bloqueado && (
+        <ul className="list-disc space-y-0.5 pl-5 text-xs text-red-600" role="alert" data-testid="bloqueo-formulario">
+          {erroresFormulario.slice(0, 4).map((m) => <li key={m}>{m}</li>)}
+        </ul>
+      )}
       <div className="flex items-center gap-3">
-        <Button type="submit" disabled={pending || !netoListo} style={{ backgroundColor: "var(--brand-primary)" }}>
+        <Button type="submit" disabled={pending || !netoListo || bloqueado} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Generando contrato…" : "Generar contrato"}
         </Button>
         <span className="text-xs text-gray-400">

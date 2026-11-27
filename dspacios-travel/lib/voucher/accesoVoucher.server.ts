@@ -28,8 +28,8 @@ function depsReales(): DepsAccesoVoucher {
         : null;
     },
     voucher: async (token) => {
-      const { data } = await admin.from("vouchers").select("id, numero_contrato, tipo, contenido").eq("share_token", token).maybeSingle();
-      return data ? { id: data.id as number, numero_contrato: data.numero_contrato as string, tipo: (data.tipo as string | null) ?? null, contenido: data.contenido } : null;
+      const { data } = await admin.from("vouchers").select("id, numero_contrato, tipo, contenido, estado").eq("share_token", token).maybeSingle();
+      return data ? { id: data.id as number, numero_contrato: data.numero_contrato as string, tipo: (data.tipo as string | null) ?? null, contenido: data.contenido, estado: (data.estado as string | null) ?? null } : null;
     },
     visibleParaInterno: async (token) => {
       const sb = await createClient(); // identidad:n/a — lectura de la sesión: la RLS de `vouchers` decide

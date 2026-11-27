@@ -48,9 +48,15 @@ export function saldoVista(f: FilaGestion): Vista {
 export function voucherGeneracionVista(f: FilaGestion): Vista {
   const v = f.voucher;
   if (v.n === 0) return { texto: "No generado", tono: "neutral", detalle: "Todavía no se ha generado ningún voucher." };
+  if ((v.aereoNoVigente ?? 0) > 0) {
+    return {
+      texto: `Generado (${v.n}): vuelo desactualizado`, tono: "warn",
+      detalle: `${v.aereoNoVigente} voucher(s) de vuelo ya no corresponden a los tramos guardados (cambiaron o el servicio se retiró). Su enlace no muestra el itinerario anterior: vuelve a generar los vouchers de vuelo del contrato.`,
+    };
+  }
   return {
     texto: `Generado (${v.n})`, tono: "info",
-    detalle: v.acuseAnterior ? "Incluye un voucher nuevo generado después de la entrega registrada." : "Preparado en el sistema; haberlo generado no prueba que se haya entregado.",
+    detalle: v.actualizado ? "Incluye un voucher actualizado (mismo enlace) después de la entrega registrada." : v.acuseAnterior ? "Incluye un voucher nuevo generado después de la entrega registrada." : "Preparado en el sistema; haberlo generado no prueba que se haya entregado.",
   };
 }
 
@@ -60,6 +66,7 @@ export function voucherEntregaVista(f: FilaGestion): Vista {
   switch (v.entrega) {
     case "sin_voucher": return { texto: "Sin voucher", tono: "neutral", detalle: "No hay voucher cuya entrega registrar." };
     case "pendiente":
+      if (v.actualizado) return { texto: "Voucher actualizado: comunicación pendiente", tono: "warn", detalle: `Un voucher de vuelo cambió de contenido o de estado (mismo enlace; p. ej. quedó retirado) después de la entrega registrada (${acuseTexto(v.en, v.actor, v.canal)}). Esa entrega sigue en el historial; registra la comunicación del cambio. Señal interna: no indica que el cliente haya recibido, leído ni aceptado el cambio.` };
       return v.acuseAnterior
         ? { texto: "Entrega sin registrar (voucher nuevo)", tono: "warn", detalle: `Se generó un voucher después de la entrega registrada (${acuseTexto(v.en, v.actor, v.canal)}). Esa entrega sigue en el historial; registra la del voucher nuevo.` }
         : { texto: "Entrega sin registrar", tono: "warn", detalle: "No consta que se haya entregado." };

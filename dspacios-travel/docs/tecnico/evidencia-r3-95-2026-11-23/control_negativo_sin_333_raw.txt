@@ -1,0 +1,265 @@
+  migración previa 308 aplicada
+  migración previa 309 aplicada
+  migración previa 310 aplicada
+  migración previa 311 aplicada
+  migración previa 312 aplicada
+  migración previa 313 aplicada
+  migración previa 314 aplicada
+  migración previa 315 aplicada
+  migración previa 316 aplicada
+  migración previa 317 aplicada
+  migración previa 318 aplicada
+  migración previa 319 aplicada
+  migración previa 322 aplicada
+  migración previa 323 aplicada
+  migración previa 324 aplicada
+  migración previa 325 aplicada
+  migración previa 326 aplicada
+  migración 331 aplicada
+  migración 332 aplicada
+== PostgREST pgrstr2_ee6ca16068f2 en http://127.0.0.1:50685 contra r2a_r3neg ==
+(node:11528) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoaderRelativo.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoaderRelativo.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:11528) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:11528) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+(node:11528) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\95-bloque-copia-pagos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+generarTarifario: medicion paquete_id=9501 generacion=1 resultado=ok etapa=publicar ms_etapa=22 ms_total=219 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=95ms,lectura_paquete=13ms,lectura_fuentes=29ms,lectura_grupos_servicio=26ms,lectura_bernalo=0ms,lectura_hoteles=20ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=1ms,calculo=13ms]
+[personas42] origen=reservar etapa=sello cotizacion=1 codigo=sello_no_admitido
+▶ R2-2 · un servicio incluido en la reserva no se vuelve editable por una selección nueva
+  ✔ la reserva deja la asistencia INCLUIDA (30.000 × 2 pax = 60.000) en costo_asistencia, con su obligación y la bandera de asistencia (1367.6857ms)
+  ℹ reserva DTM-0001: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+generarTarifario: medicion paquete_id=9501 generacion=2 resultado=ok etapa=publicar ms_etapa=21 ms_total=130 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=20ms,lectura_paquete=13ms,lectura_fuentes=14ms,lectura_grupos_servicio=31ms,lectura_bernalo=0ms,lectura_hoteles=21ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=10ms]
+[personas42] origen=reservar etapa=sello cotizacion=2 codigo=sello_no_admitido
+generarTarifario: medicion paquete_id=9501 generacion=3 resultado=ok etapa=publicar ms_etapa=14 ms_total=91 filas_calculadas=7 filas_por_modulo=[porcion_terrestre:5,servicios:2] etapas_previas=[inicio=0ms,iniciar_generacion=14ms,lectura_paquete=8ms,lectura_fuentes=9ms,lectura_grupos_servicio=21ms,lectura_bernalo=0ms,lectura_hoteles=18ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=7ms]
+  ✔ AUDITORÍA: el paquete reclasifica la asistencia como opcional DESPUÉS de reservar → elegirla como opcional se RECHAZA y no cambia nada; quitar la selección la conserva (3204.0079ms)
+  ℹ antes: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ℹ elegir la asistencia como opcional → {"ok":false,"error":"No se puede agregar como opcional «Asistencia médica 95»: este contrato ya tiene una obligación con ese servicio (quedó incluido al reservar). Se conserva tal cual para no duplicar ni perder ese costo. No se cambió nada."}
+  ℹ quitar la selección → resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+generarTarifario: medicion paquete_id=9501 generacion=4 resultado=ok etapa=publicar ms_etapa=12 ms_total=85 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=14ms,lectura_paquete=8ms,lectura_fuentes=8ms,lectura_grupos_servicio=20ms,lectura_bernalo=0ms,lectura_hoteles=16ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=1ms,calculo=6ms]
+[personas42] origen=reservar etapa=sello cotizacion=3 codigo=sello_no_admitido
+generarTarifario: medicion paquete_id=9501 generacion=5 resultado=ok etapa=publicar ms_etapa=19 ms_total=89 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=14ms,lectura_paquete=7ms,lectura_fuentes=8ms,lectura_grupos_servicio=21ms,lectura_bernalo=0ms,lectura_hoteles=13ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=7ms]
+  ✔ el servicio incluido se QUITA del paquete después de reservar: el tour opcional se agrega y se quita y la asistencia histórica (60.000, bandera) sobrevive en cada paso (2831.9656ms)
+  ℹ con el tour: resumen=926000|80000|60000|true|Tour clasificado 95 · obligaciones=9502:asistencia:60000,9503:receptivo:80000 · líneas servicio=Servicio · Tour clasificado 95
+  ℹ sin el tour: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+✔ R2-2 · un servicio incluido en la reserva no se vuelve editable por una selección nueva (7404.8886ms)
+▶ R3 · comparativa → hija elegida → contrato → documento del cliente (exactitud y copia del hotel)
+  ✖ cop_impar_nino_gratis_y_pago · opción A: el contrato suma EXACTAMENTE 1330455 COP y conserva niño, titular y la copia editada del hotel (1379.6184ms)
+  ℹ contrato DTM-0004: precio=1330455 · pagado=770455 (exigido 770455) · plan="Hotel A" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,665228,0]]
+  ✖ cop_impar_nino_gratis_y_pago · opción B: el contrato suma EXACTAMENTE 1580455 COP y conserva niño, titular y la copia editada del hotel (1384.6387ms)
+  ℹ contrato DTM-0005: precio=1580455 · pagado=800455 (exigido 800455) · plan="Hotel B" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,715228,150000]]
+  ✖ cop_par · opción A: el contrato suma EXACTAMENTE 1330000 COP y conserva niño, titular y la copia editada del hotel (1417.5241ms)
+  ℹ contrato DTM-0006: precio=1330000 · pagado=770000 (exigido 770000) · plan="Hotel A" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,665000,0]]
+  ✖ cop_par · opción B: el contrato suma EXACTAMENTE 1580000 COP y conserva niño, titular y la copia editada del hotel (1347.4964ms)
+  ℹ contrato DTM-0007: precio=1580000 · pagado=800000 (exigido 800000) · plan="Hotel B" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,715000,150000]]
+  ✖ cop_tres_adultos · opción A: el contrato suma EXACTAMENTE 1330456 COP y conserva niño, titular y la copia editada del hotel (1384.7031ms)
+  ℹ contrato DTM-0008: precio=1330456 · pagado=770455.3 (exigido 770455.3) · plan="Hotel A" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,443485,0]]
+  ✖ cop_tres_adultos · opción B: el contrato suma EXACTAMENTE 1580455 COP y conserva niño, titular y la copia editada del hotel (1332.1633ms)
+  ℹ contrato DTM-0009: precio=1580455 · pagado=800455 (exigido 800455) · plan="Hotel B" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,476818,150000]]
+  ✖ usd_centavos · opción A: el contrato suma EXACTAMENTE 1331 USD y conserva niño, titular y la copia editada del hotel (1277.3388ms)
+  ℹ contrato DTM-0010: precio=1331 · pagado=770.3 (exigido 770.3) · plan="Hotel A" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,444,0]]
+  ✖ usd_centavos · opción B: el contrato suma EXACTAMENTE 1582.55 USD y conserva niño, titular y la copia editada del hotel (1231.8873ms)
+  ℹ contrato DTM-0011: precio=1582.55 · pagado=800.6 (exigido 800.6) · plan="Hotel B" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,477,150.55]]
+  ✖ cotización SIMPLE (no comparativa): misma conversión, mismas líneas exactas (cop_tres_adultos) y la copia editada del hotel (927.1833ms)
+  ℹ simple DTM-0012: plan="Hotel A" líneas=[["PAQUETE TURÍSTICO A CA",443485]]
+  ✔ conversión repetida (reintento): no duplica la línea de ajuste ni cambia nada (1770.7848ms)
+  ✔ los contratos HISTÓRICOS no se reescriben: un contrato anterior con líneas que suman +1 queda tal cual tras nuevas conversiones (1143.0154ms)
+✖ R3 · comparativa → hija elegida → contrato → documento del cliente (exactitud y copia del hotel) (14597.5341ms)
+ℹ tests 14
+ℹ suites 2
+ℹ pass 5
+ℹ fail 9
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 22906.8848
+
+✖ failing tests:
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ cop_impar_nino_gratis_y_pago · opción A: el contrato suma EXACTAMENTE 1330455 COP y conserva niño, titular y la copia editada del hotel (1379.6184ms)
+  AssertionError [ERR_ASSERTION]: las líneas por persona + ajuste suman EXACTAMENTE el precio del contrato
+  + actual - expected
+  
+  + 133045600
+  - 133045500
+          ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:346:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 133045600,
+    expected: 133045500,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ cop_impar_nino_gratis_y_pago · opción B: el contrato suma EXACTAMENTE 1580455 COP y conserva niño, titular y la copia editada del hotel (1384.6387ms)
+  AssertionError [ERR_ASSERTION]: las líneas por persona + ajuste suman EXACTAMENTE el precio del contrato
+  + actual - expected
+  
+  + 158045600
+  - 158045500
+          ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:346:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 158045600,
+    expected: 158045500,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ cop_par · opción A: el contrato suma EXACTAMENTE 1330000 COP y conserva niño, titular y la copia editada del hotel (1417.5241ms)
+  AssertionError [ERR_ASSERTION]: la copia EDITADA (no la del catálogo «Estandar/Desayuno/doble») llega al contrato
+  + actual - expected
+  
+  + 'Hotel A'
+  - 'Hotel A · Superior · PAM · Triple'
+            ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:362:36)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Hotel A',
+    expected: 'Hotel A · Superior · PAM · Triple',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ cop_par · opción B: el contrato suma EXACTAMENTE 1580000 COP y conserva niño, titular y la copia editada del hotel (1347.4964ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'Hotel B'
+  - 'Hotel B · Estándar · PC · Doble'
+            ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:363:21)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Hotel B',
+    expected: 'Hotel B · Estándar · PC · Doble',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ cop_tres_adultos · opción A: el contrato suma EXACTAMENTE 1330456 COP y conserva niño, titular y la copia editada del hotel (1384.7031ms)
+  AssertionError [ERR_ASSERTION]: las líneas por persona + ajuste suman EXACTAMENTE el precio del contrato
+  + actual - expected
+  
+  + 133045500
+  - 133045600
+          ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:346:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 133045500,
+    expected: 133045600,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ cop_tres_adultos · opción B: el contrato suma EXACTAMENTE 1580455 COP y conserva niño, titular y la copia editada del hotel (1332.1633ms)
+  AssertionError [ERR_ASSERTION]: las líneas por persona + ajuste suman EXACTAMENTE el precio del contrato
+  + actual - expected
+  
+  + 158045400
+  - 158045500
+          ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:346:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 158045400,
+    expected: 158045500,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ usd_centavos · opción A: el contrato suma EXACTAMENTE 1331 USD y conserva niño, titular y la copia editada del hotel (1277.3388ms)
+  AssertionError [ERR_ASSERTION]: las líneas por persona + ajuste suman EXACTAMENTE el precio del contrato
+  
+  133200 !== 133100
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:346:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 133200,
+    expected: 133100,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:336:7
+✖ usd_centavos · opción B: el contrato suma EXACTAMENTE 1582.55 USD y conserva niño, titular y la copia editada del hotel (1231.8873ms)
+  AssertionError [ERR_ASSERTION]: las líneas por persona + ajuste suman EXACTAMENTE el precio del contrato
+  
+  158155 !== 158255
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:346:16)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 158155,
+    expected: 158255,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\r2Acciones95.pg.ts:380:3
+✖ cotización SIMPLE (no comparativa): misma conversión, mismas líneas exactas (cop_tres_adultos) y la copia editada del hotel (927.1833ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 133045500
+  - 133045600
+          ^
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:394:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 133045500,
+    expected: 133045600,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

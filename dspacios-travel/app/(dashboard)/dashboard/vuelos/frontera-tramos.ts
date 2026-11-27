@@ -40,8 +40,11 @@ export type TramoInput = {
   horaSalida: string;
   horaLlegada: string;
   servicios: string;
+  /** 338 (ADL-042): servicio aéreo del tramo. "" = el que ya tenía (o, si es nuevo, el único del guardado); uuid de un servicio de ESTE contrato; o «nuevo:N» (N = 1..9) para separar/crear un servicio. */
+  servicio: string;
 };
 
+export const RE_SERVICIO = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|nuevo:[1-9])$/;
 export const MAX_TRAMOS = 20;
 export const MAX_NUMERO_CONTRATO = 30;
 export const MAX_NOTA = 500;
@@ -107,7 +110,7 @@ export function parsearTextoTramo(v: unknown): { ok: true; valor: string } | { o
 
 export const CAMPOS_TEXTO_TRAMO = [
   "aerolinea", "record", "origenCodigo", "origenCiudad", "destinoCodigo",
-  "destinoCiudad", "numeroVuelo", "fecha", "horaSalida", "horaLlegada", "servicios",
+  "destinoCiudad", "numeroVuelo", "fecha", "horaSalida", "horaLlegada", "servicios", "servicio",
 ] as const;
 
 export function parsearTramo(v: unknown): { ok: true; tramo: TramoInput } | { ok: false; error: string } {
@@ -142,6 +145,7 @@ export function parsearTramo(v: unknown): { ok: true; tramo: TramoInput } | { ok
       horaSalida: textos.horaSalida,
       horaLlegada: textos.horaLlegada,
       servicios: textos.servicios,
+      servicio: textos.servicio,
     },
   };
 }
@@ -193,6 +197,7 @@ export function validarTramos(tramos: TramoInput[]): string | null {
     if (t.origenCiudad.length > 80 || t.destinoCiudad.length > 80) return "El nombre de una ciudad es demasiado largo.";
     if (t.numeroVuelo.length > 15) return "El número de vuelo es demasiado largo.";
     if (t.servicios.length > 500) return "El campo de servicios es demasiado largo.";
+    if (t.servicio && !RE_SERVICIO.test(t.servicio.trim())) return "El servicio aéreo de un tramo no es válido.";
 
     const vacio = !oNull(t.aerolinea) && !oNull(t.record) && !t.direccion && !origen && !destino
       && !oNull(t.numeroVuelo) && !oNull(t.fecha) && !oNull(t.horaSalida) && !oNull(t.horaLlegada) && !oNull(t.servicios);

@@ -425,9 +425,10 @@ select set_config('request.jwt.claims', null, true);
 --    INACTIVO (0 filas, aunque su rol guardado SÍ tendría acceso) · perfil
 --    AUSENTE (0 filas) · anon (0 filas o rechazado antes de RLS).
 -- ═════════════════════════════════════════════════════════════════════════
-insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values
-  ('99-9992', 'Cliente dinámico mayorista', 'mayorista', 'dinamico'),
-  ('99-9991', 'Cliente dinámico minorista', 'minorista', 'dinamico');
+-- #37 (migración 335): un dinámico solo aparece en la vista con evidencia de componente aéreo; estos fixtures traen la aerolínea de la venta.
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete, aerolinea) values
+  ('99-9992', 'Cliente dinámico mayorista', 'mayorista', 'dinamico', 'JetSMART'),
+  ('99-9991', 'Cliente dinámico minorista', 'minorista', 'dinamico', 'Avianca');
 insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete, empaquetado_ref_id) values
   ('99-9990', 'Cliente empaquetado mayorista', 'mayorista', 'bloqueo', 9310);
 
@@ -608,8 +609,8 @@ select set_config('request.jwt.claims', null, true);
 --    tramos"). Se agrega 99-9989 (dinámico, mayorista) para probar que dos
 --    contratos nunca se mezclan.
 -- ═════════════════════════════════════════════════════════════════════════
-insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete) values
-  ('99-9989', 'Cliente dinámico mayorista 2', 'mayorista', 'dinamico');
+insert into public.ventas (numero_contrato, cliente, tenant, tipo_paquete, aerolinea) values
+  ('99-9989', 'Cliente dinámico mayorista 2', 'mayorista', 'dinamico', 'LATAM');
 
 -- 99-9992: contrato dinámico FUTURO con tramos ida/regreso reales (lo que
 -- inserta el paso 7 de reservar/actions.ts, origen.tipo === "salida") — MÁS

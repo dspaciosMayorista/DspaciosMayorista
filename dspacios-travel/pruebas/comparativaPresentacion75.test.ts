@@ -140,7 +140,7 @@ describe("presentación editable (solo texto)", () => {
 describe("comparativa MANUAL: presentación por opción", () => {
   const entrada = (extra: Partial<EntradaComparativaManual> = {}): EntradaComparativaManual => ({
     cliente: { nombres: "Ana", apellidos: "Pérez", tipoDoc: "CC", numeroDoc: "1", telefono: "3001112233", email: "", nacimiento: "" },
-    destino: "Cartagena", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax: 2, moneda: "COP", ninos: 1, tarifaNino: 150_000, recobro: 0, recobroAliado: 0,
+    destino: "Cartagena", fechaIda: "2030-03-01", fechaRegreso: "2030-03-04", pax: 2, moneda: "COP", ninos: 1, tarifaNino: 0, tarifaNinoPorOpcion: { A: 150_000, B: 150_000 }, recobro: 0, recobroAliado: 0,
     tipoAsesor: "interno", asesorInterno: "Asesora", agenciaNombre: "", freelanceNombre: "", plazo: "", vigenciaHasta: "", observaciones: "", incluye: "", noIncluye: "",
     servicios: [
       { tipo: "aereo", plataforma: "", nombre: "Avianca", proveedor: "", costoNeto: 500_000, modo: "ta", pctMarkup: 0, ta: 30_455 },

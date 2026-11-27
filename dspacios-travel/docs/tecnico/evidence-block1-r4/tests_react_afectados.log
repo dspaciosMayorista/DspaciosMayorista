@@ -1,0 +1,50 @@
+(node:15228) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+Received `false` for a non-boolean attribute `prefetch`.
+
+If you want to write it to the DOM, pass a string instead: prefetch="false" or prefetch={value.toString()}.
+
+If you used to conditionally omit it with prefetch={condition && value}, pass prefetch={condition ? value : undefined} instead.
+(node:15228) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:15228) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+✔ voucher no generado: paso Generación «No generado» y sin botón de registrar entrega (43.6886ms)
+✔ voucher generado sin acuse: Generado (2) + «Entrega sin registrar» + botón para registrar (6.0292ms)
+✔ entrega registrada: se rotula manual y no afirma recepción (10.0267ms)
+(node:15228) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/app/(dashboard)/dashboard/gestion-contratos/actions.ts?node-test-mock=0 is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ factura: pendiente de validación DIAN · emitida sin envío · envío registrado manualmente (41.4241ms)
+✔ voucher de reemplazo: historial y entrega nueva sin registrar (8.8867ms)
+✔ disposición: contenedor + fechas en líneas propias, sin breakpoints de viewport (10.1652ms)
+(node:25920) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ sin voucher_contacto (null, vacío o solo espacios) el voucher no revela el contacto interno (11.9458ms)
+✔ con voucher_contacto, el voucher usa ese número (y solo ese) (1.0729ms)
+✔ la consulta del paquete no pide proveedores.contacto; el contacto sale solo de la tabla sensible (0.8358ms)
+(node:28876) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ VoucherVueloDocumento
+  ✔ datos guardados SIN PNR guardado: vuelo, horas HH:mm, pasajeros, y ni rastro de record/PNR (la ausencia no se rotula como dato faltante) (45.273ms)
+  ✔ ADL-041: con PNR guardado (contrato pagado) el voucher lo muestra; sin él, no hay celda ni «No registrado» (5.7027ms)
+  ✔ ADL-041: contrato sin pagar en la vista interna: sin PNR y con la nota interna (no se imprime) (10.775ms)
+  ✔ dato ausente: «No registrado» visible y ninguna hora inventada (3.7593ms)
+  ✔ sin pasajeros: lo dice, no inventa una lista (9.1325ms)
+✔ VoucherVueloDocumento (77.5342ms)
+▶ #17 — el contrato no muestra horarios ni número de vuelo en ninguna forma de fila; la cotización sí
+  ✔ contrato · fila de un tramo: sin número de vuelo ni horas, con aerolínea y ruta (21.6387ms)
+  ✔ cotización · fila de un tramo: conserva número de vuelo y horas HH:mm (12.5881ms)
+  ✔ contrato · fila anterior a la 135 (ida+regreso): sin número de vuelo ni horas, con aerolínea y ruta (8.5006ms)
+  ✔ cotización · fila anterior a la 135 (ida+regreso): conserva número de vuelo y horas HH:mm (11.2574ms)
+✔ #17 — el contrato no muestra horarios ni número de vuelo en ninguna forma de fila; la cotización sí (54.635ms)
+ℹ tests 18
+ℹ suites 2
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3627.6436

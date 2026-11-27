@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { validarFechasViaje, validarFechasAlEditar } from "@/lib/reglas/duracionViaje";
+import { validarOrdenFechasVuelo } from "@/lib/vuelos/duplicarVuelo";
 import { parseIdentidad, mensajeSiIdentidad, type IdentidadContrato } from "@/lib/contrato/identidad";
 import { candidatosNumeroContrato, normalizarReferenciaManual } from "@/lib/vuelos/contratoManual";
 import { revalidatePath } from "next/cache";
@@ -84,6 +85,8 @@ export async function crearBloqueo(input: BloqueoInput): Promise<Result> { // id
   if (!monedaOk.ok) return { ok: false, error: monedaOk.error };
   const cupos = Number(input.cuposTotal);
   if (!Number.isInteger(cupos) || cupos < 0) return { ok: false, error: "Los cupos deben ser un número entero mayor o igual a 0." };
+  const vOrden = validarOrdenFechasVuelo(input.fechaIda, input.fechaRegreso); // #41: el regreso no puede ser anterior a la ida
+  if (!vOrden.ok) return vOrden;
   const vNoches = validarFechasViaje(input.fechaIda, input.fechaRegreso); // entrega L: estadía máxima del viaje
   if (!vNoches.ok) return vNoches;
   const sb = await createClient(); // identidad:n/a — crea un record nuevo con sillas libres; no toca contratos

@@ -114,9 +114,12 @@ export function expandirTramos(filas: TramoFila[]): TramoFila[] {
   const out: TramoFila[] = [];
   for (const f of filas) {
     const legacy = !f.direccion && (f.vuelo_ida || f.vuelo_regreso || f.hora_salida_ida || f.hora_salida_reg || f.fecha_regreso);
-    if (!legacy) { out.push(f); continue; }
-    out.push({ ...f, direccion: "ida", numero_vuelo: f.vuelo_ida ?? null, hora_salida: f.hora_salida_ida ?? null, hora_llegada: f.hora_llegada_ida ?? null });
-    if (f.vuelo_regreso || f.hora_salida_reg || f.hora_llegada_reg || f.fecha_regreso) {
+    const hayRegreso = !!(f.vuelo_regreso || f.hora_salida_reg || f.hora_llegada_reg || f.fecha_regreso);
+    // RC-2: una fila heredada editada solo en su ida (el editor operativo le pone dirección y número de vuelo) conserva su regreso guardado.
+    if (!legacy && !hayRegreso) { out.push(f); continue; }
+    if (legacy) out.push({ ...f, direccion: "ida", numero_vuelo: f.vuelo_ida ?? null, hora_salida: f.hora_salida_ida ?? null, hora_llegada: f.hora_llegada_ida ?? null });
+    else out.push(f);
+    if (hayRegreso) {
       out.push({
         ...f, direccion: "regreso", origen_codigo: f.destino_codigo, destino_codigo: f.origen_codigo, origen_ciudad: f.destino_ciudad, destino_ciudad: f.origen_ciudad,
         numero_vuelo: f.vuelo_regreso ?? null, hora_salida: f.hora_salida_reg ?? null, hora_llegada: f.hora_llegada_reg ?? null, fecha_salida: f.fecha_regreso ?? null,

@@ -3,6 +3,7 @@ import { uidEmbebido } from "@/lib/contrato/uidEmbebido";
 import { createClient } from "@/lib/supabase/server";
 import { getTenant } from "@/lib/tenant.server";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
+import Link from "next/link";
 import { PagosList, type PagoRow } from "./PagosList";
 
 export const dynamic = "force-dynamic";
@@ -103,6 +104,7 @@ export default async function PagosPage() {
     <div className="mx-auto max-w-6xl p-4 md:p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Proveedores — por pagar</h1>
+        <p className="mt-1 text-sm"><Link href="/dashboard/pagos/avisos" className="font-medium text-[var(--brand-primary)] underline">Avisar pagos a proveedores por correo</Link></p>
         <p className="mt-1 text-sm text-gray-500">
           Cuentas por pagar con su saldo. Registra pagos, configura la factura del proveedor
           (IRT / Costo + base gravable) y consulta el estado de cuenta de cada proveedor.

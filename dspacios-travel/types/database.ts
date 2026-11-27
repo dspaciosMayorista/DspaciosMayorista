@@ -950,11 +950,29 @@ export type Database = {
           reemplaza_id: number | null;
           retirado_en: string | null;
           retirado_por: string | null;
-          motivo_retiro: "reemplazo" | "retiro" | null;
+          motivo_retiro: "reemplazo" | "retiro" | "rechazo" | null;
           nota_retiro: string | null;
           archivado_en: string | null;
+          /** 345: soporte rechazado que esta fila corrige. */
+          corrige_id: number | null;
         };
         /** Solo lectura: se escribe únicamente con las funciones soporte_* (migración 281). */
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      /** 345: estado del correo al aliado por un soporte rechazado. Solo lectura: se escribe con soporte_rechazar / soporte_rechazo_aviso_*. */
+      soporte_rechazo_aviso: {
+        Row: {
+          soporte_id: number;
+          estado: "pendiente" | "enviando" | "enviado" | "fallido" | "sin_destinatario";
+          intentos: number;
+          destinatarios: number | null;
+          ultimo_intento_en: string | null;
+          enviado_en: string | null;
+          error: string | null;
+          creado_en: string;
+        };
         Insert: never;
         Update: never;
         Relationships: [];
@@ -1938,6 +1956,9 @@ export type Database = {
           // nunca trajo `ref`) — nunca se confunde con "cero condiciones"
           // (eso se guarda como `[]`). Ver lib/calc/condicionesTarifa.ts.
           condiciones_tarifa: Json | null;
+          // Migración 346 (B95-15): cómo se compró el hotel (directa | plataforma; NULL = no registrado) y la plataforma (el proveedor a pagar cuando es por plataforma).
+          compra_origen: string | null;
+          plataforma: string | null;
         };
         Insert: {
           id?: number;
@@ -1953,6 +1974,8 @@ export type Database = {
           proveedor?: string | null;
           orden?: number;
           condiciones_tarifa?: Json | null;
+          compra_origen?: string | null;
+          plataforma?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["contrato_hoteles"]["Insert"]>;
         Relationships: [];
@@ -1981,10 +2004,13 @@ export type Database = {
           hora_llegada: string | null;
           direccion: string | null;
           orden: number;
+          /** 338 (ADL-042): servicio aéreo contratado al que pertenece el tramo (independiente del PNR; null = sin asociar). */
+          servicio_aereo: string | null;
         };
         Insert: {
           id?: number;
           numero_contrato: string;
+          servicio_aereo?: string | null;
           aerolinea?: string | null;
           origen_codigo?: string | null;
           origen_ciudad?: string | null;
@@ -4069,6 +4095,13 @@ export type Database = {
           contenido: Json;
           share_token: string;
           created_at: string;
+          /** 338: identidad del servicio aéreo (solo tipo vuelo). */
+          servicio_clave: string | null;
+          /** 338: cambios REALES de contenido tras la generación (0 = nunca). */
+          revision: number;
+          actualizado_en: string | null;
+          /** 338: vigente | revisar (los tramos del servicio cambiaron) | retirado (el servicio ya no existe). */
+          estado: "vigente" | "revisar" | "retirado";
         };
         Insert: {
           id?: number;
@@ -4078,6 +4111,10 @@ export type Database = {
           contenido: Json;
           share_token?: string;
           created_at?: string;
+          servicio_clave?: string | null;
+          revision?: number;
+          actualizado_en?: string | null;
+          estado?: "vigente" | "revisar" | "retirado";
         };
         Update: Partial<Database["public"]["Tables"]["vouchers"]["Insert"]>;
         Relationships: [];
@@ -4104,6 +4141,52 @@ export type Database = {
         Row: { id: number; hotel_id: number; fecha_inicio: string; fecha_fin: string; total: boolean; acomodaciones: string[] | null; categorias: string[] | null; motivo: string | null; created_at: string };
         Insert: { id?: number; hotel_id: number; fecha_inicio: string; fecha_fin: string; total?: boolean; acomodaciones?: string[] | null; categorias?: string[] | null; motivo?: string | null; created_at?: string };
         Update: Partial<Database["public"]["Tables"]["hotel_blackouts"]["Insert"]>;
+        Relationships: [];
+      };
+      solicitudes_proveedor: {
+        // 328: solicitud de servicio (tipo solicitud, de UN contrato) o aviso de pago a proveedor (tipo pago), enviados por correo. Escrituras solo service_role.
+        Row: { id: number; tipo: "solicitud" | "pago"; tenant: string; numero_contrato: string | null; contrato_uid: string | null; hotel_id: number | null; codigo_id: number | null; codigo_texto: string | null; codigo_promocion: string | null; sin_promocion: boolean; referencia: string | null; snapshot: Json; payload: Json; ambiguo: boolean; proveedor: string | null; destinatarios: string[]; asunto: string; token_respuesta: string; clave_envio: string; estado: "enviando" | "incierta" | "enviada" | "entregada" | "respondida" | "confirmada" | "rechazada" | "fallida"; mensaje_id: string | null; error_envio: string | null; envio_iniciado_en: string; intentos: number; enviada_en: string | null; entregada_en: string | null; respondida_en: string | null; confirmada_en: string | null; confirmacion: "confirmada" | "rechazada" | null; creado_por: string | null; created_at: string; updated_at: string };
+        Insert: { id?: number; tipo?: "solicitud" | "pago"; tenant?: string; numero_contrato?: string | null; contrato_uid?: string | null; hotel_id?: number | null; codigo_id?: number | null; codigo_texto?: string | null; codigo_promocion?: string | null; sin_promocion?: boolean; referencia?: string | null; snapshot?: Json; payload?: Json; ambiguo?: boolean; proveedor?: string | null; destinatarios: string[]; asunto: string; token_respuesta: string; clave_envio: string; estado?: "enviando" | "incierta" | "enviada" | "entregada" | "respondida" | "confirmada" | "rechazada" | "fallida"; mensaje_id?: string | null; error_envio?: string | null; envio_iniciado_en?: string; intentos?: number; enviada_en?: string | null; entregada_en?: string | null; respondida_en?: string | null; confirmada_en?: string | null; confirmacion?: "confirmada" | "rechazada" | null; creado_por?: string | null; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["solicitudes_proveedor"]["Insert"]>;
+        Relationships: [];
+      };
+      hotel_codigos_promocion: {
+        // 328: código de promoción que el hotel exige en la solicitud, POR VIGENCIA (hotel_temporadas). codigo null = exigido pero aún no digitado.
+        Row: { id: number; hotel_id: number; vigencia_id: number; requerido: boolean; codigo: string | null; nota: string | null; creado_por: string | null; created_at: string; updated_at: string };
+        Insert: { id?: number; hotel_id: number; vigencia_id: number; requerido?: boolean; codigo?: string | null; nota?: string | null; creado_por?: string | null; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["hotel_codigos_promocion"]["Insert"]>;
+        Relationships: [];
+      };
+      cxp_pago_soportes: {
+        // 329: evidencia (PDF/JPG/PNG) de un pago a proveedor. Escrituras solo service_role.
+        Row: { id: number; cxp_pago_id: number; tenant: string; nombre: string; path: string; content_type: string; size_bytes: number; sha256: string; subido_por: string | null; created_at: string };
+        Insert: { id?: number; cxp_pago_id: number; tenant: string; nombre: string; path: string; content_type: string; size_bytes: number; sha256: string; subido_por?: string | null; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["cxp_pago_soportes"]["Insert"]>;
+        Relationships: [];
+      };
+      solicitud_proveedor_pagos: {
+        Row: { solicitud_id: number; cxp_pago_id: number };
+        Insert: { solicitud_id: number; cxp_pago_id: number };
+        Update: Partial<Database["public"]["Tables"]["solicitud_proveedor_pagos"]["Insert"]>;
+        Relationships: [];
+      };
+      solicitud_proveedor_eventos: {
+        Row: { id: number; solicitud_id: number; tipo: "envio" | "error_envio" | "envio_incierto" | "entrega" | "rebote" | "respuesta" | "confirmacion" | "rechazo"; dedupe: string; externo_id: string | null; resumen: Json; created_at: string };
+        Insert: { id?: number; solicitud_id: number; tipo: "envio" | "error_envio" | "envio_incierto" | "entrega" | "rebote" | "respuesta" | "confirmacion" | "rechazo"; dedupe: string; externo_id?: string | null; resumen?: Json; created_at?: string };
+        Update: Partial<Database["public"]["Tables"]["solicitud_proveedor_eventos"]["Insert"]>;
+        Relationships: [];
+      };
+      solicitud_proveedor_avisos: {
+        Row: { id: number; solicitud_id: number; evento_id: number; user_id: string; creado_en: string; leido_en: string | null };
+        Insert: { id?: number; solicitud_id: number; evento_id: number; user_id: string; creado_en?: string; leido_en?: string | null };
+        Update: Partial<Database["public"]["Tables"]["solicitud_proveedor_avisos"]["Insert"]>;
+        Relationships: [];
+      };
+      conjuntos_fechas: {
+        // 327: conjuntos de fechas con nombre y año (catálogo global, sin vínculo con las vigencias: aplicar un conjunto COPIA sus noches).
+        Row: { id: number; nombre: string; anio: number; tipo: string; rangos: Json; nota: string | null; creado_por: string | null; created_at: string; updated_at: string };
+        Insert: { id?: number; nombre: string; anio: number; tipo?: string; rangos?: Json; nota?: string | null; creado_por?: string | null; created_at?: string; updated_at?: string };
+        Update: Partial<Database["public"]["Tables"]["conjuntos_fechas"]["Insert"]>;
         Relationships: [];
       };
       hotel_reglas_descuento: {
@@ -4370,6 +4453,7 @@ export type Database = {
           hora_llegada: string | null;
           servicios: string | null;
           orden: number;
+          servicio_aereo: string | null;
         };
         Relationships: [];
       };
@@ -4458,6 +4542,23 @@ export type Database = {
         Args: { p_id: number; p_actor: string; p_nota: string | null };
         Returns: Json;
       };
+      // Migración 345 (S339-02): rechazo interno, corrección del aliado y estado del aviso por correo.
+      soporte_rechazar: {
+        Args: { p_id: number; p_actor: string; p_motivo: string };
+        Returns: Json;
+      };
+      soporte_corregir: {
+        Args: { p_id: number; p_actor: string; p_path: string; p_nombre: string; p_mime: string; p_size: number; p_sha: string };
+        Returns: Json;
+      };
+      soporte_rechazo_aviso_reclamar: {
+        Args: { p_id: number };
+        Returns: Json | null;
+      };
+      soporte_rechazo_aviso_cerrar: {
+        Args: { p_id: number; p_estado: string; p_destinatarios: number; p_error: string | null };
+        Returns: undefined;
+      };
       avisos_reclamar: {
         Args: { p_usuario: string; p_limite?: number };
         Returns: { id: number; tipo: string; numero_contrato: string; creado_en: string }[];
@@ -4522,6 +4623,14 @@ export type Database = {
       soy_asesor_del_contrato: {
         Args: { num: string };
         Returns: boolean;
+      };
+      reclamar_envio_solicitud_proveedor: {
+        Args: { p_solicitud: number; p_estado_visto: string; p_visto: string; p_segundos: number };
+        Returns: number;
+      };
+      registrar_evento_solicitud_proveedor: {
+        Args: { p_solicitud: number; p_tipo: string; p_dedupe: string; p_externo: string | null; p_resumen: Json; p_avisar: string[] | null };
+        Returns: { nuevo: boolean; estado_nuevo: string | null; id_evento: number | null }[];
       };
       mi_rol: {
         Args: Record<PropertyKey, never>;
@@ -4975,6 +5084,20 @@ export type Database = {
         Args: { p_tenant: string };
         Returns: { numero: string; token: string | null }[];
       };
+      // Migración 336 (#40): reclamo de la conversión de una cotización (solo service_role). Devuelve el token, o null si otro reclamo está vigente.
+      reclamar_conversion_cotizacion: {
+        Args: { p_cotizacion: number; p_ttl_segundos?: number };
+        Returns: string | null;
+      };
+      liberar_conversion_cotizacion: {
+        Args: { p_cotizacion: number; p_token: string };
+        Returns: boolean;
+      };
+      // Migración 338 (ADL-041): vouchers aéreos POR SERVICIO, atómicos e idempotentes (misma fila/token en cada regeneración; la revisión solo sube con un cambio real). Reemplaza guardar_voucher_vuelo (337).
+      guardar_vouchers_vuelo: {
+        Args: { p_numero: string; p_servicios: Json };
+        Returns: { id: number; share_token: string; servicio_clave: string; creado: boolean; actualizado: boolean; retirado: boolean }[];
+      };
       // Migración 287: motivos por los que un DTM pendiente NO puede liberarse para reutilización (solo superadmin; vacío = candidato).
       contrato_reuso_preview: {
         Args: { p_numero: string };
@@ -5120,6 +5243,11 @@ export type Database = {
           p_tramos: Json;
         };
         Returns: Database["public"]["Tables"]["contrato_vuelos"]["Row"][];
+      };
+      // Migración 338: servicios aéreos guardados del contrato (uuid + ids de tramo; el uuid null agrupa los tramos sin asociar).
+      servicios_aereos_contrato: {
+        Args: { p_numero: string };
+        Returns: { servicio: string | null; tramos: number[]; huella: string }[];
       };
       // Migración 157. Estado de emisión 1:1 del contrato (no por tramo) +
       // historial, mismo patrón que actualizar_control_empaquetado.
@@ -5472,6 +5600,14 @@ export type Database = {
       fn_dashboard_cupos_resumen: {
         Args: Record<PropertyKey, never>;
         Returns: { capacidad: number; ocupados: number; disponibles: number; criticos: number }[];
+      };
+      fn_actividad_reciente: {
+        Args: { p_dias?: number };
+        Returns: { usuario_id: string; nombre: string | null; email: string | null; rol: string; tenant: string | null; aliado: string | null; visto_en: string | null; ultima_actividad: string | null; eventos_ventana: number; eventos_24h: number; ultimo_ingreso: string | null; total: number }[];
+      };
+      registrar_presencia: {
+        Args: Record<string, never>;
+        Returns: boolean;
       };
       fn_dashboard_cupos_activos: {
         Args: { p_hoy: string };

@@ -321,8 +321,13 @@ describe("R294-5 · los costos de servicio cuadran con las CxP creadas", () => {
   });
   test("actualizarServiciosContrato escribe las dos columnas de servicio desde el conjunto editado (#75)", () => {
     const cuerpo = cuerpoFuncion(contratosActions, "export async function actualizarServiciosContrato(");
-    assert.match(cuerpo, /\.\.\.costosServicioPorColumna\(objetivo\.map\(\(o\) => \(\{ tipoCxp: o\.tipoProveedor, costo: o\.costoNeto \}\)\)\)/);
+    // #51: las columnas se escriben con los opcionales editados MÁS el costo de los servicios INCLUIDOS que se conservan (antes solo los opcionales: editar un opcional borraba el costo de lo incluido).
+    assert.match(cuerpo, /\.\.\.costosServicioPorColumna\(\[\.\.\.objetivo\.map\(\(o\) => \(\{ tipoCxp: o\.tipoProveedor, costo: o\.costoNeto \}\)\), \.\.\.costosIncluidos\]\)/);
     assert.doesNotMatch(cuerpo, /costo_receptivo: costoReceptivo/);
+    // …y los incluidos nunca entran al plan de reconciliación (no se eliminan sus obligaciones).
+    // B95-2: la clasificación sale del contrato (sus líneas «Servicio · …» y su propia obligación), no solo del catálogo vivo: lo CONSERVADO nunca entra al plan.
+    assert.match(cuerpo, /clasificarObligacionesServicio\(\{\s*existentes: existentesCxp, incluidosCatalogo: incluidosIds/);
+    assert.match(cuerpo, /planReconciliacionCxpServicios\(clasif\.editables, objetivo\)/);
   });
 });
 

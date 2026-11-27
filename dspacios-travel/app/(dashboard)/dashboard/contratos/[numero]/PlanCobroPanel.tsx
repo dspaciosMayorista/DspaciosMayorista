@@ -4,10 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { formatCOP, formatFechaLarga } from "@/lib/utils";
+import { formatMonedaDocumento, formatFechaLarga, formatFechaCorta } from "@/lib/utils";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { generarPlanCobro } from "./cobros-actions";
-import type { FrecuenciaCuota } from "@/lib/calc/cuotas";
+import { estadoDeCuotas, type FrecuenciaCuota } from "@/lib/calc/cuotas";
 
 export type CuotaRow = { id: number; orden: number; tipo: string; fecha_limite: string; monto: number };
 
@@ -17,7 +17,8 @@ const TIPO_LABEL: Record<string, string> = { abono: "Abono inicial", cuota: "Cuo
 // consulta el plan de pagos (es lo que le pregunta el cliente) pero no lo
 // genera ni lo regenera. La escritura sobre `cuotas` ya está limitada a
 // contratos propios por RLS desde la migración 147.
-export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true, identidad }: { numero: string; cuotas: CuotaRow[]; pagado: number; puedeEditar?: boolean; identidad: IdentidadContrato }) {
+export function PlanCobroPanel({ numero, cuotas, pagado, moneda = "COP", puedeEditar = true, identidad }: { numero: string; cuotas: CuotaRow[]; pagado: number; moneda?: string; puedeEditar?: boolean; identidad: IdentidadContrato }) {
+  const mon = (moneda ?? "COP").toUpperCase() === "USD" ? "USD" : "COP";
   const router = useRouter();
   const [frecuencia, setFrecuencia] = useState<FrecuenciaCuota>("mensual");
   const [pending, start] = useTransition();
@@ -27,16 +28,18 @@ export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true, ide
     setMsg("");
     start(async () => {
       const r = await generarPlanCobro(numero, frecuencia, identidad);
-      if (r.ok) { setMsg(`✓ Plan de ${r.n} pago(s)`); router.refresh(); }
+      if (r.ok) {
+        const aplicado = (r.pagado ?? 0) > 0 ? ` Ya aplicado: ${formatMonedaDocumento(r.pagado ?? 0, mon)}.` : "";
+        setMsg(r.pendiente === 0 ? `✓ Plan de ${r.n} pago(s). Contrato pagado por completo: no hay saldo por cobrar.` : `✓ Plan de ${r.n} pago(s).${aplicado} Saldo por cobrar: ${formatMonedaDocumento(r.pendiente ?? 0, mon)}.`);
+        router.refresh();
+      }
       else setMsg(r.error);
     });
   }
 
-  // Marca como cubiertas las cuotas que el total pagado ya alcanza (acumulado).
-  const filas = cuotas.map((c, i) => {
-    const acum = cuotas.slice(0, i + 1).reduce((s, x) => s + x.monto, 0);
-    return { c, cubierta: pagado >= acum };
-  });
+  // Los pagos reales se aplican a las filas en orden (acumulado, con la tolerancia de la moneda): cubierta, parcial (falta una parte) o pendiente.
+  const estados = estadoDeCuotas(cuotas.map((c) => c.monto), pagado, mon);
+  const filas = cuotas.map((c, i) => ({ c, ...estados[i] }));
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -72,28 +75,28 @@ export function PlanCobroPanel({ numero, cuotas, pagado, puedeEditar = true, ide
       </div>
       {msg && <p className={`mt-1 text-xs ${msg.startsWith("✓") ? "text-green-600" : "text-red-600"}`}>{msg}</p>}
       {cuotas.length > 0 ? (
-        <table className="mt-3 w-full text-sm">
+        <div className="mt-3 overflow-x-auto"><table className="w-full text-sm">
           <thead><tr className="text-left text-xs uppercase text-gray-400">
             <th className="py-1">Concepto</th><th className="py-1">Fecha límite</th>
             <th className="py-1 text-right">Monto</th><th className="py-1 text-right">Estado</th>
           </tr></thead>
           <tbody>
-            {filas.map(({ c, cubierta }) => {
+            {filas.map(({ c, cubierta, parcial, faltante }) => {
               return (
                 <tr key={c.id} className="border-t border-gray-50">
                   <td className="py-1.5 text-gray-700">{TIPO_LABEL[c.tipo] ?? c.tipo}</td>
-                  <td className="py-1.5 text-gray-500">{formatFechaLarga(c.fecha_limite)}</td>
-                  <td className="py-1.5 text-right tabular-nums">{formatCOP(c.monto)}</td>
-                  <td className="py-1.5 text-right">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${cubierta ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                      {cubierta ? "Cubierta" : "Pendiente"}
+                  <td className="py-1.5 pr-2 text-gray-500"><span className="hidden sm:inline">{formatFechaLarga(c.fecha_limite)}</span><span className="whitespace-nowrap sm:hidden">{formatFechaCorta(c.fecha_limite)}</span></td>
+                  <td className="whitespace-nowrap py-1.5 pr-2 text-right tabular-nums">{formatMonedaDocumento(c.monto, mon)}</td>
+                  <td className="whitespace-nowrap py-1.5 text-right">
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${cubierta ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`} data-testid="estado-cuota">
+                      {cubierta ? "Cubierta" : parcial ? `Parcial · falta ${formatMonedaDocumento(faltante, mon)}` : "Pendiente"}
                     </span>
                   </td>
                 </tr>
               );
             })}
           </tbody>
-        </table>
+        </table></div>
       ) : (
         <p className="mt-2 text-xs text-gray-400">
           {puedeEditar

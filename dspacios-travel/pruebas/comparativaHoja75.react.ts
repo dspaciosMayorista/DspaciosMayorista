@@ -10,7 +10,7 @@ import { AGENCIA_PRUEBA } from "./support/agenciaPrueba.ts";
 import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { construirComparativaManual, menoresDeOpcion, menoresNoDesglosables, agruparPorHotel, resumenDeOpcion, type EntradaComparativaManual, type OpcionVista } from "@/lib/cotizacion/comparativa";
+import { construirComparativaManual, lineaEditable, menoresDeOpcion, menoresNoDesglosables, agruparPorHotel, resumenDeOpcion, type EntradaComparativaManual, type OpcionVista } from "@/lib/cotizacion/comparativa";
 import { ComparativaHoja, type MadreHoja } from "@/components/cotizacion/ComparativaHoja";
 import type { ResumenHotelUI } from "@/lib/cotizacion/comparativaAcciones";
 
@@ -49,7 +49,7 @@ const cuenta = (s: string, t: string) => s.split(t).length - 1;
 const COP = (n: number) => new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(n);
 
 test("manual con un niño: muestra su tarifa real (no la de adulto) en CADA opción", () => {
-  const { opciones, grupos, resumenes } = armar({ ninos: 1, tarifaNino: 150000 });
+  const { opciones, grupos, resumenes } = armar({ ninos: 1, tarifaNinoPorOpcion: { A: 150000, B: 150000 } });
   for (const o of opciones) {
     assert.deepEqual(menoresDeOpcion(o.resumen_publico, o.plantilla_hija, o.etiqueta), [{ descripcion: "Niño", cantidad: 1, tarifa: 150000 }]);
     assert.notEqual(o.tarifa_persona, 150000);
@@ -110,7 +110,7 @@ test("Incluye/No incluye: igual en todas → UNA sola vez; distinto → dentro d
 });
 
 test("cada opción con SU total, sin total global, y sin costos, proveedores, plataformas ni NETO", () => {
-  const { opciones, grupos, resumenes } = armar({ ninos: 1, tarifaNino: 150000 });
+  const { opciones, grupos, resumenes } = armar({ ninos: 1, tarifaNinoPorOpcion: { A: 150000, B: 150000 } });
   const s = html(grupos, resumenes);
   assert.match(s, /Opción A/); assert.match(s, /Opción B/);
   for (const o of opciones) assert.match(s, new RegExp(COP(o.total)));
@@ -233,4 +233,75 @@ test("el total se rotula «de esta opción» cuando incluye vuelos o servicios, 
   assert.equal(cuenta(s, "Total de esta opción"), 1);
   assert.equal(cuenta(s, "Total de este hotel"), 2);
   for (const n of [600_000, 900_000, 700_000]) assert.match(s, new RegExp(COP(n)));
+});
+
+// ── #33: el beneficio de niño gratis llega PLEGADO en la tarifa del niño; nunca como renglón de promoción negativa ni con el niño a precio completo ──
+const NG_LIBRE = "Hotel X — CARTAGENA · Niño gratis por habitación · PROMO (hab. 1: niño de 8 años (Niño 1))";
+const detalleCarrito = (ng: { adultos: number; tarifa_adulto: number } | null, tarifaNino = 300_000) => ({
+  detalle: {
+    items: [
+      { descripcion: "Hotel X — CARTAGENA · Adultos · Estándar / PC", adultos: 2, ninos: 0, tarifa_adulto: 400_000, tarifa_nino: 0, modo_precio: "persona" },
+      { descripcion: "Hotel X — CARTAGENA · Niño 1 · Estándar / PC", adultos: 0, ninos: 1, tarifa_adulto: 0, tarifa_nino: tarifaNino, modo_precio: "persona" },
+      ...(ng ? [{ descripcion: NG_LIBRE, adultos: ng.adultos, ninos: 0, tarifa_adulto: ng.tarifa_adulto, tarifa_nino: 0, modo_precio: "persona" }] : []),
+    ],
+  },
+});
+
+test("#33 niño gratis (beneficio = toda su tarifa): una fila «Niño gratis» sin costo, nunca el niño a precio completo", () => {
+  const m = menoresDeOpcion({}, detalleCarrito({ adultos: 1, tarifa_adulto: -300_000 }), "Hotel X");
+  assert.deepEqual(m, [{ descripcion: "Niño gratis · Estándar / PC", cantidad: 1, tarifa: 0 }]);
+});
+
+test("#33 beneficio parcial de un solo niño: paga la diferencia (347.000 − 253.000 = 94.000), no la tarifa completa", () => {
+  const m = menoresDeOpcion({}, detalleCarrito({ adultos: 1, tarifa_adulto: -253_000 }, 347_000), "Hotel X");
+  assert.deepEqual(m, [{ descripcion: "Niño 1 · Estándar / PC", cantidad: 1, tarifa: 94_000 }]);
+});
+
+test("#33 sin beneficio la tarifa del niño es la liquidada (sin cambios)", () => {
+  assert.deepEqual(menoresDeOpcion({}, detalleCarrito(null, 300_000), "Hotel X"), [{ descripcion: "Niño 1 · Estándar / PC", cantidad: 1, tarifa: 300_000 }]);
+});
+
+test("#33 la línea firmada del niño gratis no es texto editable y no se muestra como viñeta en pantalla ni en el documento", () => {
+  assert.equal(lineaEditable(NG_LIBRE), false);
+  assert.equal(lineaEditable("Niño gratis por habitación · PROMO (hab. 1: niño de 8 años (Niño 1))"), false);
+  assert.equal(lineaEditable("Hotel X — CARTAGENA · Adultos · Estándar / PC"), true);
+  // Comparativas YA guardadas con la línea dentro de `resumen_publico.items`: el documento la filtra al leerla.
+  const resumenes = { A: { items: [{ descripcion: "Hotel X — CARTAGENA · Adultos · Estándar / PC" }, { descripcion: NG_LIBRE }], incluye: "", noIncluye: "" } } as unknown as Record<string, ResumenHotelUI>;
+  const grupos = [{ opcionRef: "A", etiqueta: "Hotel X", moneda: "COP", acomodaciones: [vista("A", "doble", 1_000_000)] }];
+  const s = html(grupos as never, resumenes);
+  assert.match(s, /Adultos · Estándar/);
+  assert.doesNotMatch(s, /Niño gratis por habitación|PROMO|hab\. 1/);
+});
+
+test("#33 niño gratis en la hoja: se muestra «Niño gratis» con «Sin costo» y ningún importe negativo", () => {
+  const m = menoresDeOpcion({}, detalleCarrito({ adultos: 1, tarifa_adulto: -300_000 }), "Hotel X");
+  const resumenes = { A: { menores: m, incluye: "", noIncluye: "" } } as unknown as Record<string, ResumenHotelUI>;
+  const grupos = [{ opcionRef: "A", etiqueta: "Hotel X", moneda: "COP", acomodaciones: [vista("A", "doble", 800_000)] }];
+  const s = html(grupos as never, resumenes);
+  assert.match(s, /1 × Niño gratis/);
+  assert.match(s, /Sin costo/);
+  assert.doesNotMatch(s, /-\s?\$|−/);
+});
+
+test("#33 contenido distinto por opción y opción sin datos: cada una muestra lo suyo; la vacía no toma prestado nada", () => {
+  const resumenes = {
+    "A/doble": { incluye: "Desayuno buffet", noIncluye: "Propinas", menores: [{ descripcion: "Niño 1", cantidad: 1, tarifa: 94_000 }] },
+    "B/doble": { incluye: "", noIncluye: "" },
+    A: { incluye: "Desayuno buffet", noIncluye: "Propinas", menores: [{ descripcion: "Niño 1", cantidad: 1, tarifa: 94_000 }] }, B: { incluye: "", noIncluye: "" },
+  } as unknown as Record<string, ResumenHotelUI>;
+  const grupos = [
+    { opcionRef: "A", etiqueta: "Hotel A", moneda: "COP", acomodaciones: [vista("A", "doble", 900_000)] },
+    { opcionRef: "B", etiqueta: "Hotel B", moneda: "COP", acomodaciones: [vista("B", "doble", 700_000)] },
+  ];
+  const s = html(grupos as never, resumenes);
+  const a = s.slice(s.indexOf('data-testid="opcion-A"'), s.indexOf('data-testid="opcion-B"'));
+  const b = s.slice(s.indexOf('data-testid="opcion-B"'));
+  assert.match(a, /Desayuno buffet/); assert.match(a, /1 × Niño 1/); assert.match(a, new RegExp(COP(94_000)));
+  assert.doesNotMatch(b, /Desayuno buffet|Propinas|× Niño/);
+});
+
+test("#33 opción NETO: no muestra las líneas de menores a PVP ni la línea del niño gratis (solo el total exigible)", () => {
+  const plantilla = detalleCarrito({ adultos: 1, tarifa_adulto: -300_000 });
+  assert.deepEqual(menoresDeOpcion({ total_exigible: 900_000 }, plantilla, "Hotel X"), []);
+  assert.equal(menoresNoDesglosables({ total_exigible: 900_000 }, plantilla, "Hotel X"), true);
 });

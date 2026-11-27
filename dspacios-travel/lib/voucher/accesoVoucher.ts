@@ -11,7 +11,8 @@ import { accesoDocumentoContrato, type PerfilAcceso } from "@/lib/auth/accesoDoc
 
 export const ROLES_PREPARACION_VOUCHER = ["superadmin", "gerencia", "administracion", "operaciones", "venta"] as const;
 
-export type VoucherFila = { id: number; numero_contrato: string; tipo: string | null; contenido: unknown };
+// `estado` (338): vigente | revisar | retirado. Solo un voucher AÉREO sale de «vigente» (sus tramos cambiaron o el servicio ya no existe). Ausente (versiones sin la 338) = vigente.
+export type VoucherFila = { id: number; numero_contrato: string; tipo: string | null; contenido: unknown; estado?: string | null };
 export type ContratoVoucher = { tenant: string | null; b2b_usuario_id: string | null; aliado_id: number | null; agencia_nombre: string | null; freelance_nombre: string | null };
 
 export type DepsAccesoVoucher = {
@@ -29,10 +30,14 @@ export type DepsAccesoVoucher = {
   pagadoCompleto: (numero: string) => Promise<boolean>;
 };
 
-export type MotivoDenegado = "sin_sesion" | "no_existe" | "sin_permiso" | "pago_incompleto" | "error";
+export type MotivoDenegado = "sin_sesion" | "no_existe" | "sin_permiso" | "pago_incompleto" | "no_vigente" | "error";
+
+/** ¿El voucher corresponde a lo guardado hoy? Un voucher «revisar» / «retirado» NO se sirve como vigente (338, ADL-042). */
+export const esVoucherVigente = (v: { estado?: string | null }) => !v.estado || v.estado === "vigente";
 export type ResultadoAccesoVoucher =
   | { ok: true; modo: "interno" | "aliado"; voucher: VoucherFila; tenant: string | null }
-  | { ok: false; motivo: MotivoDenegado };
+  | { ok: false; motivo: Exclude<MotivoDenegado, "no_vigente"> }
+  | { ok: false; motivo: "no_vigente"; estado: "revisar" | "retirado" };
 
 export async function resolverAccesoVoucher(token: string, d: DepsAccesoVoucher): Promise<ResultadoAccesoVoucher> {
   try {
@@ -60,6 +65,8 @@ export async function resolverAccesoVoucher(token: string, d: DepsAccesoVoucher)
     });
     if (!acceso.permitido || !acceso.esDueno || acceso.esInterno) return { ok: false, motivo: "sin_permiso" };
     if (!(await d.pagadoCompleto(v.numero_contrato))) return { ok: false, motivo: "pago_incompleto" };
+    // Dueño y pagado: recién aquí se dice que el documento no está vigente (no se revela nada antes de la autorización). Su itinerario viejo NO se entrega.
+    if (!esVoucherVigente(v)) return { ok: false, motivo: "no_vigente", estado: v.estado === "retirado" ? "retirado" : "revisar" };
     return { ok: true, modo: "aliado", voucher: v, tenant: c.tenant };
   } catch {
     return { ok: false, motivo: "error" };

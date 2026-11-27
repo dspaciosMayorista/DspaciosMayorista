@@ -1,0 +1,5 @@
+Comparison by test NAME against a clean origin/main worktree (cd9bb1946)
+test:unit   branch 10604 tests / 29 failing · origin/main 10579 / 29 · failing names identical (diff empty)
+test:react  branch 2148 / 26 failing · origin/main 2148 / 26 · failing names identical (diff empty)
+test:react:o1o4 45/45 · test:react:resto 62/62 · test:calendar 43/43
+(the failing names listed in the *_failing_names_*.txt files already fail on origin/main; they were not investigated)

@@ -72,3 +72,4 @@ queda pendiente es lo que se vaya descubriendo/tocando de aquí en adelante:
 
 Si vas a investigar algo a fondo que no esté cubierto arriba, considera dejar la hoja técnica
 escrita antes de cerrar — así la próxima vez no hay que volver a investigar lo mismo.
+- [solicitudes-proveedor-103.md](solicitudes-proveedor-103.md) — correos a proveedores (solicitud estructurada, códigos de promoción, avisos de pago), identidad de contrato, envío con arrendamiento/`incierta`, deuda de regeneración persistida (#103).

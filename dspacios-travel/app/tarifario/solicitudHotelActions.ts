@@ -7,6 +7,7 @@ import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { altaPersonasDeCotizacionGuardada } from "@/lib/personas/altaGuardada";
+import { avisarYRegistrar } from "@/lib/avisos/cotizacionPublica";
 import { paqueteVendibleHoy } from "@/lib/tarifario/datosSolicitud";
 import { acreditarSeleccionCatalogo, claveSolicitudHotel, validarEntradaSolicitudHotel, type SolicitudHotelEntrada } from "@/lib/reservar/solicitudHotelEntrada";
 import { ESTADO_PENDIENTE_TARIFA, TEXTO_BAJO_SOLICITUD, contieneImportes } from "@/lib/reservar/solicitudHotel";
@@ -182,6 +183,8 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
     // del autor no quedó, lo recupera para el usuario con sesión; la base solo lo concede al mismo autor (creado_por = su correo, < 15 min, sin sello previo).
     const reparada = await altaPersonasDeCotizacionGuardada(admin, cotizacionId, user?.id ?? null, !!user);
     if (!reparada.ok) console.error(logPersonasCotizacion("solicitud_hotel", cotizacionId, reparada));
+    // #78: una solicitud repetida de un VISITANTE repara también su aviso interno (idempotente).
+    if (!user) await avisarYRegistrar(admin, cotizacionId);
   } else {
     const { data: row, error } = await admin.from("cotizaciones").insert({
       tenant: "mayorista", estado: ESTADO_PENDIENTE_TARIFA, payload: payload as unknown as Json, detalle: detalle as unknown as Json,
@@ -202,6 +205,8 @@ export async function crearSolicitudHotel(raw: unknown): Promise<SolicitudHotelR
       usuarioId: user?.id ?? null, sellar: !!user,
     });
     if (!alta.ok) console.error(logPersonasCotizacion("solicitud_hotel", cotizacionId, alta));
+    // #78: el visitante SIN sesión avisa al equipo dentro de la plataforma (la base re-verifica que sea un visitante).
+    if (!user) await avisarYRegistrar(admin, cotizacionId);
     // Además, el contacto auxiliar de campañas (efecto aparte, como en el checkout: nunca bloquea la solicitud).
     try {
       const datos = datosContactoTarifario({ nombres: input.cliente.nombres, apellidos: input.cliente.apellidos, numeroDoc: input.cliente.numeroDoc, telefono: input.cliente.telefono, email: input.cliente.email }, input.cliente.tipoDoc);

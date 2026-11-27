@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearEmpaquetado } from "../empaquetados-actions";
+import type { InicialEmpaquetado } from "@/lib/vuelos/duplicarVuelo";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
 import { MonedaTarifas, etiquetasSospechosas } from "@/components/vuelos/MonedaTarifas";
@@ -16,17 +17,18 @@ const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 const selCls = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm";
 
-export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [] }: { proveedores?: ProveedorOpt[]; destinos?: DestinoOpt[] }) {
+export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [], inicial = null, copiaDe = null }: { proveedores?: ProveedorOpt[]; destinos?: DestinoOpt[]; inicial?: InicialEmpaquetado | null; copiaDe?: string | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
-  const [proveedorId, setProveedorId] = useState<number | "">("");
-  const [destinoId, setDestinoId] = useState<number | "">("");
-  const [origenId, setOrigenId] = useState<number | "">("");
+  // #41: al duplicar, arranca con la CONFIGURACIÓN del vuelo origen (sin record, vínculos con paquetes ni historial); todo sigue editable.
+  const [proveedorId, setProveedorId] = useState<number | "">(inicial?.proveedorId ?? "");
+  const [destinoId, setDestinoId] = useState<number | "">(inicial?.destinoId ?? "");
+  const [origenId, setOrigenId] = useState<number | "">(inicial?.origenId ?? "");
   const [estadoEmision, setEstadoEmision] = useState<EstadoEmision | "">("pendiente");
   const [estadoPago, setEstadoPago] = useState<EstadoPago | "">("pendiente");
 
-  const [f, setF] = useState({
+  const [f, setF] = useState(inicial?.f ?? {
     record: "", aerolinea: "",
     vueloIda: "", fechaIda: "", horaSalidaIda: "", horaLlegadaIda: "",
     vueloRegreso: "", fechaRegreso: "", horaSalidaReg: "", horaLlegadaReg: "",
@@ -35,7 +37,7 @@ export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [] }: { prov
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
   // 230: moneda de las tarifas. COP con un valor menor a 1.000 se trata como USD y bloquea el guardado hasta corregirlo.
-  const [moneda, setMoneda] = useState<MonedaVuelo>("COP");
+  const [moneda, setMoneda] = useState<MonedaVuelo>((inicial?.moneda as MonedaVuelo | undefined) ?? "COP");
   const camposMoneda = [
     { etiqueta: "La tarifa proveedor/sistema", valor: f.tarifaProveedor },
     { etiqueta: "La tarifa para empaquetar", valor: f.tarifaParaEmpaquetar },
@@ -73,6 +75,11 @@ export function NuevoEmpaquetadoForm({ proveedores = [], destinos = [] }: { prov
 
   return (
     <form onSubmit={guardar} className="space-y-5">
+      {inicial && (
+        <p className="rounded-lg border border-[var(--brand-accent)] bg-[rgba(38,187,217,0.06)] px-4 py-3 text-sm text-gray-700" data-testid="aviso-duplicado">
+          Duplicando el empaquetado <b className="font-mono">{copiaDe}</b>: se copió solo la configuración (sin record, sin vínculos con paquetes y sin historial). Revisa las fechas de ida y regreso y la vigencia de compra antes de guardar; el original no cambia.
+        </p>
+      )}
       <section className={card}>
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Datos del empaquetado</p>
         <p className="text-xs text-gray-500">

@@ -1,5 +1,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { enviarEmail } from "@/lib/email/resend";
+import { recordatoriosDeCuotas } from "@/lib/cobros/recordatorioCuotas";
+import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { formatMonedaDocumento } from "@/lib/utils";
+import { fechaNegocio, sumarDiasIso } from "@/lib/fechaNegocio";
 
 function fmtCOP(n: number): string {
   return "$ " + Math.round(n || 0).toLocaleString("es-CO");
@@ -11,10 +15,9 @@ type Seccion = { titulo: string; cols: [string, string, string]; filas: Fila[] }
 // Recopila las fechas límite próximas (dentro de `dias`) para el digest.
 async function recopilar(dias: number, flags: { cxp: boolean; cuotas: boolean; bloqueos: boolean }): Promise<Seccion[]> {
   const admin = createAdminClient();
-  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-  const limite = new Date(hoy); limite.setDate(limite.getDate() + Math.max(0, dias));
-  const hoyISO = hoy.toISOString().slice(0, 10);
-  const limISO = limite.toISOString().slice(0, 10);
+  // Día de NEGOCIO (Bogotá): el servidor corre en UTC y desde las 7 p. m. ya marca el día siguiente. El límite se calcula sobre la fecha calendario (en UTC, sin horario de verano).
+  const hoyISO = fechaNegocio();
+  const limISO = sumarDiasIso(hoyISO, Math.max(0, dias));
   const secciones: Seccion[] = [];
 
   if (flags.cxp) {
@@ -33,10 +36,27 @@ async function recopilar(dias: number, flags: { cxp: boolean; cuotas: boolean; b
     const { data } = await admin.from("cuotas")
       .select("numero_contrato, tipo, fecha_limite, monto")
       .lte("fecha_limite", limISO).order("fecha_limite");
-    const filas = (data ?? []).map((r) => ({
-      c1: `${r.fecha_limite}${r.fecha_limite < hoyISO ? " ⚠ vencida" : ""}`,
-      c2: `${r.tipo === "abono" ? "Abono" : r.tipo === "total" ? "Pago total" : "Cuota"} · ${r.numero_contrato}`,
-      c3: fmtCOP(r.monto ?? 0),
+    // #42: no se le recuerda al cliente lo que YA pagó. Los pagos reales (abonos) cubren las cuotas de cada contrato EN ORDEN, así que se necesita el plan completo del contrato,
+    // lo pagado y la moneda de cobro; cada recordatorio muestra solo lo que aún falta de esa cuota.
+    const contratos = [...new Set((data ?? []).map((r) => r.numero_contrato as string))];
+    const planes = new Map<string, { orden: number; tipo: string; fecha_limite: string; monto: number }[]>();
+    const pagados = new Map<string, number>();
+    const ventasMon = new Map<string, "COP" | "USD">();
+    if (contratos.length) {
+      const [{ data: todas }, { data: abs }, { data: vs }] = await Promise.all([
+        admin.from("cuotas").select("numero_contrato, orden, tipo, fecha_limite, monto").in("numero_contrato", contratos).order("orden"),
+        admin.from("abonos").select("numero_contrato, valor_abono").in("numero_contrato", contratos),
+        admin.from("ventas").select("numero_contrato, precio_venta, moneda, moneda_cobro, trm_cobro, total_cobro").in("numero_contrato", contratos),
+      ]);
+      for (const c of todas ?? []) planes.set(c.numero_contrato as string, [...(planes.get(c.numero_contrato as string) ?? []), { orden: c.orden as number, tipo: c.tipo as string, fecha_limite: c.fecha_limite as string, monto: Number(c.monto ?? 0) }]);
+      for (const a of abs ?? []) pagados.set(a.numero_contrato as string, (pagados.get(a.numero_contrato as string) ?? 0) + Number(a.valor_abono ?? 0));
+      for (const v of vs ?? []) ventasMon.set(v.numero_contrato as string, cobroDeVenta(v).moneda === "USD" ? "USD" : "COP");
+    }
+    const planesPlano = [...planes.entries()].flatMap(([numero, cs]) => cs.map((c) => ({ numero_contrato: numero, ...c })));
+    const filas = recordatoriosDeCuotas(planesPlano, pagados, ventasMon, limISO).map((r) => ({
+      c1: `${r.fecha}${r.fecha < hoyISO ? " ⚠ vencida" : ""}`,
+      c2: `${r.tipo === "abono" ? "Abono" : r.tipo === "total" ? "Pago total" : "Cuota"} · ${r.numero}${r.parcial ? " (saldo de la cuota)" : ""}`,
+      c3: formatMonedaDocumento(r.faltante, r.moneda),
     }));
     if (filas.length) secciones.push({ titulo: "Cobros a clientes por vencer", cols: ["Vence", "Concepto", "Monto"], filas });
   }

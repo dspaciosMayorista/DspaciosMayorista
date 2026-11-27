@@ -46,6 +46,9 @@ function cliente() {
 
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => cliente() } });
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => cliente() } });
+// F6 (B95-13/14/15/20): la validación del catálogo manual (destino, hoteles, compra y acomodación) tiene su propia prueba (validacionManual95f6.test.ts y el recorrido real contra Postgres,
+// supabase/scripts/test_f6_95_formularios.sh). Aquí NO se prueba esa regla: se la deja pasar para probar lo que este archivo prueba (aliado, RPC, vigencia, paridad…).
+mock.module("@/lib/catalogo/prepararManual", { namedExports: { prepararServiciosManual: async (_c: unknown, i: { servicios: unknown[]; destinoId?: unknown }) => ({ ok: true, destino: "Cartagena", destinoId: undefined, servicios: i.servicios }) } });
 mock.module("@/lib/cotizacion/acceso", {
   namedExports: {
     contextoCotizacion: async () => ({ ok: true, superadmin: false, interno: true, tenant: "mayorista" }),

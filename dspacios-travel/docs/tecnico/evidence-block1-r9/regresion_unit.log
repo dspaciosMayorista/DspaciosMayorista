@@ -1,0 +1,310 @@
+(node:13244) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ nadie en la app escribe movimientos_silla ni operaciones_vuelo (fase E) (158.8912ms)
+✔ nadie en la app inserta ni borra sillas o records directamente (fase C) (86.8736ms)
+✔ con sesión, sillas solo se actualiza en la carga masiva: datos del pasajero en sillas sin contrato (84.0584ms)
+✔ los UPDATE de bloqueos_vuelo con sesión nunca tocan cupos_total ni id (0.2466ms)
+✔ las demás escrituras de sillas (copia de datos al reservar, W8) usan el cliente admin, exento hasta la fase D (1.8514ms)
+✔ la edición manual del pasajero manda el contrato que la pantalla mostraba (migración 201) (0.5784ms)
+✔ Borrar y asignar contrato manual usan SOLO las firmas con versión (las viejas quedan para compatibilidad de despliegue) (0.49ms)
+(node:13244) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/cierreEscrituraVuelos.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:20156) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ #25 historial de una ficha de aliado
+  ✔ un cambio interno: quién, cuándo, campo y valores (porcentajes en %, sí/no) (3.6704ms)
+  ✔ la edición del portal deja dos filas gemelas (disparador + explícita con _via): se muestra UNA, la del portal (2.1542ms)
+  ✔ dos cambios distintos a la misma hora NO se fusionan; sin actor aparece «Sistema» (0.3893ms)
+  ✔ el número de cuenta se enmascara y las marcas de tiempo no cuentan como cambio (0.4435ms)
+  ✔ alta y baja se listan sin detalle de campos; orden: lo más reciente primero (0.2521ms)
+✔ #25 historial de una ficha de aliado (8.6002ms)
+(node:20156) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/historialAliado25.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15468) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ H25-1 el aliado A ve SOLO el historial de su ficha y de su nombre; nada de B (5.2327ms)
+✔ H25-2 el aliado B ve lo suyo y no lo de A (simétrico) (0.784ms)
+✔ H25-3 la cuenta bancaria solo con los últimos cuatro dígitos y no se filtra ningún valor completo (0.5005ms)
+✔ H25-4 sin identidad del personal interno y sin campos internos (comisión, retención, activo, rol, correo de la cuenta) (0.4835ms)
+✔ H25-5 el origen se distingue: portal (_via) frente a interno; las filas gemelas del portal cuentan una vez (0.5607ms)
+✔ H25-6 no aplica a agentes, cuentas inactivas, roles internos, sin ficha pero con cuenta ni usuario inexistente; nunca se consulta auditoría (0.7794ms)
+✔ H25-7 un fallo de lectura se avisa como error, nunca como «sin cambios» (0.5108ms)
+✔ H25-8 acotado: máximo 100 filas por lectura y exactamente 3 lecturas por apertura (usuario + ficha + cuenta), sin sondeo (1.4568ms)
+(node:15468) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/historialPropio25.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:22008) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ el cron y liberar_vencidas siguen atendiendo SOLO contratos pendientes (2.5847ms)
+✔ la acción Liberar manda la versión que mostró la pantalla (2.3999ms)
+✔ el record identifica las vencidas con la misma regla y ofrece Liberar solo en ellas (1.3963ms)
+✔ el aviso de Vuelos cuenta con la misma regla que la base (0.7214ms)
+✔ capturar sin contrato exige pasajero y plazo antes de llamar a la base (1.2428ms)
+✔ una retención acepta contrato manual (lo confirma) en la base y en la pantalla (0.5708ms)
+✔ una retención VENCIDA no recibe contrato hasta actualizar el plazo (base y pantalla, misma regla) (0.7874ms)
+✔ las firmas sin versión quedan registradas para poder retirarlas con evidencia (0.2429ms)
+(node:22008) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/retencionVuelos.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:27392) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ labelModalidad: null/valor desconocido cae en 'Sin definir', nunca inventa un estado (1.5892ms)
+✔ labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pendiente' (0.2945ms)
+✔ los type guards solo aceptan los valores exactos del enum (0.1455ms)
+✔ crearBloqueo exige modalidad de emisión y arranca los dos estados en 'pendiente' (0.3042ms)
+✔ BloqueoEditInput (editar bloqueo general) NO incluye modalidad: ese campo solo se toca desde Control (0.1421ms)
+✔ actualizarControlBloqueo valida los tres campos y delega TODO en el RPC atómico (0.1946ms)
+✔ actualizarControlBloqueo NO vuelve a hacer un UPDATE + INSERT sueltos de bloqueos_vuelo/bloqueo_cambios (0.2515ms)
+✔ actualizarControlBloqueo revalida rutas SOLO después de comprobar que el RPC no devolvió error (0.2521ms)
+✔ actualizar_control_bloqueo() bloquea la fila, actualiza e inserta el historial en la MISMA función, sin security definer (0.3226ms)
+✔ actualizar_control_bloqueo() permite registrar una nota sin cambios de estado (0.2868ms)
+✔ cargarBloqueosMasivo exige modalidad_emision por fila y valida estado_emision/estado_pago (0.2313ms)
+✔ los parsers CSV de estado_emision/estado_pago solo defaultean a 'pendiente' cuando la celda viene VACÍA (0.1938ms)
+✔ la alerta de fecha límite de emisión se apaga si el record ya quedó 'emitido', pero la de devolución no (0.2218ms)
+✔ migración 152: las columnas nuevas no nacen con default — un registro viejo no puede quedar falsamente 'pendiente' (0.2502ms)
+(node:27392) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosControl.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21324) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ tonoModalidad('serie') = neutral (1.4569ms)
+✔ tonoModalidad('grupo') = warn (0.2795ms)
+✔ tonoModalidad(null) [Sin definir] = neutral (0.181ms)
+✔ tonoModalidad(valor inválido, incluido el 'individual' pre-155) = neutral (0.168ms)
+✔ tonoEstadoEmision('pendiente') = warn (0.2412ms)
+✔ tonoEstadoEmision('emitido') = ok (0.2989ms)
+✔ tonoEstadoEmision(null) [Por confirmar] = orange (0.3472ms)
+✔ tonoEstadoEmision(valor inválido) = orange (0.1991ms)
+✔ tonoEstadoPago('pendiente') = warn (0.1977ms)
+✔ tonoEstadoPago('pagado') = ok (0.2521ms)
+✔ tonoEstadoPago(null) [Por confirmar] = orange (0.1786ms)
+✔ tonoEstadoPago(valor inválido) = orange (0.1279ms)
+✔ 'Por confirmar' (null, inválido, string vacío) nunca es tono ok — ni en emisión ni en pago (0.2697ms)
+✔ EstadoBadge: se agregó un tono 'orange' explícito con las clases pedidas (0.3716ms)
+✔ EstadoBadge: inferir() NO cambió — nunca devuelve 'orange' por inferencia de texto (no se tocó la interpretación global) (0.4193ms)
+✔ ControlVuelosTabla pasa el tono EXPLÍCITO desde los helpers centralizados (no un tono fijo, no inferencia) (0.4151ms)
+✔ ControlBadges pasa el tono EXPLÍCITO desde los MISMOS helpers centralizados que ControlVuelosTabla (0.3115ms)
+✔ ControlVuelosTabla y ControlBadges importan tonoModalidad/tonoEstadoEmision/tonoEstadoPago del MISMO módulo compartido (0.3986ms)
+✔ labelModalidad/labelEstadoEmision/labelEstadoPago (los TEXTOS) no cambiaron (1.2129ms)
+✔ ControlVuelosTabla: los filtros de emisión/pago no se tocaron (siguen usando matchControl/SIN_DEFINIR_VAL); el de modalidad ahora contempla 'sistema' (0.3277ms)
+(node:21324) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosControlColores.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:16908) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vuelos/[id]/page.tsx — enlace 'Editar en contrato' autorizado en lote
+  ✔ importa la autorización del módulo compartido + el componente cliente + tenantContext (server surface correcta) (1.1667ms)
+  ✔ cada renglón de infante resuelve su enlace con el selector puro y su PROPIO numeroContrato contra el conjunto autorizado (0.4299ms)
+  ✔ el renglón renderiza EnlaceEditarContrato pasándole numeroContrato, tenant REAL y tenant activo (0.3621ms)
+  ✔ el enlace vive en el renglón informativo del infante, que sigue sin asignar silla ni acciones de silla (0.5154ms)
+✔ vuelos/[id]/page.tsx — enlace 'Editar en contrato' autorizado en lote (4.0961ms)
+▶ vuelos/pasajeros/page.tsx — el servidor autoriza y el objeto {numeroContrato, tenant} baja al cliente
+  ✔ importa la autorización del MISMO módulo compartido + tenantContext y la resuelve en lote (server surface correcta) (0.2557ms)
+  ✔ cada fila de infante lleva enlaceEditarContrato = enlaceContratoEnVuelo(...) — objeto resuelto por el servidor, nunca un booleano (0.2416ms)
+  ✔ pasa el tenant ACTIVO a PasajerosBuscador para que el cliente sepa si hay que cambiar de agencia (0.1822ms)
+✔ vuelos/pasajeros/page.tsx — el servidor autoriza y el objeto {numeroContrato, tenant} baja al cliente (0.966ms)
+▶ PasajerosBuscador.tsx — el cliente renderiza SOLO lo que el servidor ya autorizó
+  ✔ usa el componente reutilizable EnlaceEditarContrato y le pasa numeroContrato, tenant REAL y tenant activo (0.3973ms)
+  ✔ el enlace está CONDICIONADO a que el servidor haya autorizado el objeto enlaceEditarContrato (0.1667ms)
+  ✔ el cliente NO autoriza ni decide cambiar de agencia: solo delega en EnlaceEditarContrato (0.4543ms)
+  ✔ el infante sigue sin ocupar silla ni tener acciones de silla en esta superficie (0.2759ms)
+✔ PasajerosBuscador.tsx — el cliente renderiza SOLO lo que el servidor ya autorizó (1.6525ms)
+▶ EnlaceEditarContrato.tsx — el cliente reutilizable decide SOLO la mecánica de navegación
+  ✔ recibe numeroContrato + tenantContrato + tenantActivo y decide si hace falta cambiar de agencia (0.387ms)
+  ✔ mismo tenant activo → navegación NORMAL (no intercepta el clic ni toca la cookie) (0.1513ms)
+  ✔ el prefetch del Link queda DESACTIVADO solo cuando el contrato es cross-tenant (no precarga la ficha con la cookie de la agencia ANTERIOR); en el mismo tenant se deja el default (0.1323ms)
+  ✔ tenant distinto → llama (y espera) a la Server Action existente cambiarTenant y navega con recarga COMPLETA solo si responde ok (0.2227ms)
+  ✔ si cambiarTenant responde ok:false o lanza, NO navega y muestra un error discreto (0.1155ms)
+  ✔ el componente NO autoriza por rol ni usa un cliente admin — solo ejecuta el cambio cuando el servidor ya lo permitió (0.1716ms)
+✔ EnlaceEditarContrato.tsx — el cliente reutilizable decide SOLO la mecánica de navegación (1.4749ms)
+(node:16908) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosEnlaceInfanteContrato.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:31376) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vuelos/[id]/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada
+  ✔ importa resolverManifiestoAutorizado (no la variante vulnerable ni una reimplementación inline) (1.1435ms)
+  ✔ pasa los contratos ORGÁNICOS de todas las sillas del bloqueo (no solo unas pocas) al resolver autorizado (0.4453ms)
+  ✔ NO consulta contrato_pasajeros ni ventas directamente en este archivo — esa lectura vive en el módulo autorizado (0.5909ms)
+  ✔ NO escribe/actualiza sillas.contrato_manual en ningún punto de este archivo (solo lectura) (0.4927ms)
+  ✔ REQUERIDO: contratosOrganicosDelBloqueo está deduplicado (Set) y el manifiesto de infantes se resuelve con el módulo compartido de agrupación (0.1595ms)
+  ✔ REQUERIDO: el renglón subordinado del infante (interpolado junto a su silla) no ocupa silla ni tiene acciones de silla (0.267ms)
+✔ vuelos/[id]/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada (5.024ms)
+▶ vuelos/pasajeros/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada
+  ✔ importa resolverManifiestoAutorizado y normalizarReferenciaManual — MISMO módulo que vuelos/[id]/page.tsx, no una reimplementación paralela (0.3531ms)
+  ✔ consulta contrato_manual de las sillas (antes esta página no lo leía en absoluto) (0.25ms)
+  ✔ pasa los contratos ORGÁNICOS de todas las sillas del listado (no solo las que tienen pasajero con nombre) al resolver autorizado (0.6799ms)
+  ✔ NO consulta contrato_pasajeros ni ventas directamente en este archivo — esa lectura vive en el módulo autorizado (0.3944ms)
+  ✔ el emparejamiento infante↔silla usa el contrato EFECTIVO de cada silla (si no, el infante nunca hereda vuelo/hotel/asesor cuando el adulto está en una silla manual) — delegado en emparejarInfantesConSilla (0.1965ms)
+  ✔ el infante muestra su propio numero_contrato interno (no el de la silla, que para un contrato manual resuelto queda vacío) (0.2344ms)
+  ✔ NO escribe/actualiza sillas.contrato_manual en ningún punto de este archivo (solo lectura) (0.1469ms)
+  ✔ REQUERIDO: el infante nunca ocupa silla (sillaId: null) y aparece a lo sumo una vez (particionado por emparejarInfantesConSilla, nunca duplicado entre sillas) (0.2145ms)
+✔ vuelos/pasajeros/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada (3.0894ms)
+▶ Sin cambios de comportamiento fuera de alcance
+  ✔ ninguna de las dos páginas antepone 'MIN-' a ciegas por su cuenta (toda la resolución vive en lib/vuelos/contratoManual.ts) (2.615ms)
+  ✔ ninguna de las dos páginas construye un cliente admin/service-role directamente — solo lib/vuelos/contratoManual.ts puede hacerlo (1.4714ms)
+✔ Sin cambios de comportamiento fuera de alcance (4.3364ms)
+▶ lib/vuelos/contratoManual.ts — el cliente admin es exclusivamente server-only
+  ✔ usa createAdminClient() (server-only, ver lib/supabase/admin.ts) y no expone la instancia fuera de resolverManifiestoAutorizado (0.1798ms)
+  ✔ resolverManifiestoAutorizado autoriza con el cliente de SESIÓN antes de construir el cliente admin (0.1802ms)
+  ✔ usuarioAutorizadoParaVuelos reutiliza LECTURA_MODULO.vuelos (no duplica la lista de roles del módulo) (0.1346ms)
+✔ lib/vuelos/contratoManual.ts — el cliente admin es exclusivamente server-only (0.7233ms)
+(node:31376) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosInfanteContratoManual.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:18816) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vuelos/[id]/page.tsx — infante subordinado a su silla responsable
+  ✔ REQUERIDO 1/2: el renglón del infante se interpola DENTRO del mismo .map de sillas, inmediatamente después de la fila de su silla (agrupa consecutivamente si hay varios) (1.1135ms)
+  ✔ REQUERIDO 3: el infante se agrupa por responsable_id (documento), nunca por nombre — el emparejamiento viene de emparejarInfantesConSilla, no de comparar pasajero_nombres (0.4315ms)
+  ✔ REQUERIDO 4: los infantes no alteran la numeración ni el conteo de sillas (conteo/totalReal siguen derivándose solo de `sillas`) (0.1574ms)
+  ✔ REQUERIDO 5: NO queda ninguna tabla ni sección independiente para infantes (una sola <table> en la pestaña Pasajeros, sin encabezado propio de infantes) (0.2398ms)
+  ✔ el renglón del infante no tiene estado ni acciones de silla (sin SillaEstado/PasajeroAcciones/SillaContrato) y no ocupa silla (sin sillaId) (0.1708ms)
+  ✔ REQUERIDO 6: responsable ausente en este bloqueo genera una advertencia compacta (no una tabla, no una fila normal) (0.181ms)
+  ✔ REQUERIDO: la línea del renglón muestra nombre, tipo+número de documento y edad/fecha (todo junto, antes de 'No ocupa silla') (0.1142ms)
+  ✔ mantiene intacta la solución cross-tenant del PR #289 (resolverManifiestoAutorizado sigue siendo el único punto de lectura de contrato_pasajeros/ventas) (0.1421ms)
+  ✔ diseño compacto: el renglón del infante usa texto pequeño (text-xs) y ocupa todo el ancho de la tabla vía colSpan (se mantiene legible dentro del mismo contenedor overflow-x-auto ya usado para escritorio/móvil) (0.1762ms)
+✔ vuelos/[id]/page.tsx — infante subordinado a su silla responsable (4.2011ms)
+▶ vuelos/pasajeros/page.tsx — resolución de infante↔silla vía responsable_id (la presentación vive en PasajerosBuscador.tsx)
+  ✔ REQUERIDO 3: usa emparejarInfantesConSilla (responsable_id → documento), nunca compara por nombre (0.4306ms)
+  ✔ cada infante lleva padreId apuntando a la fila (silla) de su responsable — es la clave que usa PasajerosBuscador para subordinarlo (0.1874ms)
+  ✔ REQUERIDO 6: los infantes sin responsable ubicable se pasan aparte (advertenciasInfantes), nunca como fila normal (0.1271ms)
+✔ vuelos/pasajeros/page.tsx — resolución de infante↔silla vía responsable_id (la presentación vive en PasajerosBuscador.tsx) (1.0835ms)
+▶ PasajerosBuscador.tsx — renderizado subordinado (Client Component, cubre escritorio y móvil vía el mismo contenedor con scroll)
+  ✔ REQUERIDO 1/2: agrupa infantes por padreId (Map) y los renderiza dentro del mismo Fragment/.map que su adulto, inmediatamente después de su <tr> (0.3956ms)
+  ✔ REQUERIDO 5: no hay una tabla ni sección propia para infantes — una sola <table>, sin columna 'Infante' aparte (0.1598ms)
+  ✔ el renglón del infante no ocupa silla ni expone acciones — solo texto informativo con el ícono conector y 'No ocupa silla' (0.1829ms)
+  ✔ REQUERIDO: la línea del renglón muestra nombre, tipo+número de documento y edad/fecha (todo junto, un solo <span> inline-flex, antes de 'No ocupa silla') (0.1704ms)
+  ✔ REQUERIDO 6: advertencia compacta (no tabla) para infantes sin responsable ubicable, con ícono de alerta (0.1724ms)
+  ✔ REQUERIDO 4: los infantes no alteran la numeración/orden — el ordenamiento (sort) sigue aplicándose solo sobre los adultos (0.1146ms)
+  ✔ diseño compacto: texto pequeño (text-xs) en el renglón subordinado, dentro del mismo contenedor con scroll horizontal ya usado por la tabla (0.1266ms)
+✔ PasajerosBuscador.tsx — renderizado subordinado (Client Component, cubre escritorio y móvil vía el mismo contenedor con scroll) (1.673ms)
+(node:18816) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosInfantesSubordinados.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:2700) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ modo de mover y operación
+  ✔ solo los dos modos exactos; nada por defecto (0.5973ms)
+  ✔ identificador de operación: uuid (3.511ms)
+  ✔ ids positivos enteros (0.1354ms)
+✔ modo de mover y operación (5.1649ms)
+▶ errores de la base
+  ✔ lock timeout → reintentar, sin afirmar que se aplicó (0.2591ms)
+  ✔ deadlock y función inexistente (0.1708ms)
+  ✔ tarifa distinta: se marca y se quita el prefijo técnico (0.554ms)
+  ✔ mensaje de negocio tal cual; vacío → genérico (0.1121ms)
+✔ errores de la base (1.3317ms)
+▶ matriz DIR-1 (interfaz; la base la vuelve a validar)
+  ✔ Disponible (y cambio_entrante) → No vendida o Devuelta (0.2821ms)
+  ✔ No vendida → Disponible, o Devuelta SOLO con devolución real (0.116ms)
+  ✔ Devuelta es definitiva; en plazo, confirmada, cambio y retirada no tienen cambio manual (0.1641ms)
+  ✔ solo tres estados son manuales (0.1077ms)
+✔ matriz DIR-1 (interfaz; la base la vuelve a validar) (0.8665ms)
+▶ dos cifras: cupos activos y movimientos históricos
+  ✔ cambio y retirada son historial, no cupos (0.1308ms)
+  ✔ el historial se agrupa por operación, va del más reciente al más antiguo y conserva cupos antes/después y el detalle por silla (0.4079ms)
+  ✔ el texto depende del record desde el que se mira (0.2279ms)
+  ✔ la operación se nombra por lo guardado (tipo), nunca por el motivo en texto libre (0.1612ms)
+  ✔ fechas ilegibles o iguales conservan el orden recibido y quedan al final (0.1269ms)
+  ✔ movimientos por record: cuentan en origen y destino, nunca dos veces en el mismo (0.1365ms)
+✔ dos cifras: cupos activos y movimientos históricos (1.3646ms)
+(node:2700) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosOperaciones.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24244) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ acumularSilla
+  ✔ las filas cambio y retirada no suman en ningún contador, total incluido (0.9592ms)
+  ✔ los estados activos siguen contando igual que antes (0.1431ms)
+  ✔ estado nulo o desconocido sigue sumando al total (sin cambio de criterio) (0.1029ms)
+✔ acumularSilla (2.1179ms)
+▶ conteo por record con el legado del traslado antiguo
+  ✔ Y cuenta 8 sillas activas (no 10): las 2 que salieron no son suyas (0.2111ms)
+  ✔ X cuenta 8 (6 propias + 2 que entraron) (0.1195ms)
+  ✔ Y + X suman 16 sillas: ninguna se cuenta dos veces (0.0933ms)
+  ✔ la ocupación y el % de venta de Y se calculan sobre 8, no sobre 10 (0.1286ms)
+  ✔ un record solo con filas cambio queda en 0 y no divide entre cero (0.1508ms)
+✔ conteo por record con el legado del traslado antiguo (0.9404ms)
+(node:24244) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosStats.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:19260) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ BloqueosTabla (Inventario) no importa ni renderiza ControlBadges (1.2341ms)
+✔ BloqueosTabla (Inventario) no tiene un encabezado 'Control' (0.1985ms)
+✔ BloqueoFila (Inventario) ya no incluye modalidad_emision/estado_emision/estado_pago (0.1258ms)
+✔ Inventario ya no tiene filtros de modalidad/emisión/pago (solo ruta y mes) (0.1278ms)
+✔ BloqueosTabla (Inventario): el tfoot ajustó su colSpan final tras quitar Control (2, no 3) (0.1695ms)
+✔ BloqueosTabla (Inventario): thead y tbody conservan el mismo número de columnas (0.2658ms)
+✔ ControlVuelosTabla tiene tres <th> SEPARADOS para Modalidad/Emisión/Pago (no un badge combinado) (0.1515ms)
+✔ ControlVuelosTabla no incluye columnas de sillas ni fila de totales (0.2118ms)
+✔ ControlVuelosTabla no incluye acción de eliminar (esa acción es solo de Inventario) (0.1444ms)
+✔ ControlVuelosTabla: el record enlaza al detalle correcto según su origen (bloqueo vs sistema/empaquetado) (0.2378ms)
+✔ ControlVuelosTabla: mismo número de encabezados y celdas, EN EL MISMO ORDEN (0.95ms)
+✔ ControlVuelosTabla: cada valor va en la celda de SU columna, por posición (0.7316ms)
+✔ ControlVuelosTabla pasa SIEMPRE por label*() antes de mostrar el badge — nunca el valor crudo de la BD (0.2488ms)
+✔ ControlVuelosTabla reutiliza EstadoBadge (mismos badges/colores de siempre), no un componente nuevo (0.3231ms)
+✔ ControlVuelosTabla tiene sus 5 filtros propios (ruta, mes, modalidad, emisión, pago), en useState separados (0.1932ms)
+✔ Inventario y Control Vuelos son componentes DISTINTOS (estado de filtros no puede cruzarse) (0.1647ms)
+✔ matchControl/mesKey/mesLabel viven en un helper puro compartido, sin lógica de React (0.2361ms)
+✔ /dashboard/vuelos: filasControl (lo que recibe ControlVuelosTabla) se arma SOLO desde activos/empActivos, nunca pasados/todos (0.4784ms)
+✔ /dashboard/vuelos: BloqueosTabla recibe SOLO activos, nunca pasados ni todos (0.2176ms)
+✔ /dashboard/vuelos/historico: filasControl se arma SOLO desde pasados/empPasados, nunca activos/todos (0.1714ms)
+✔ /dashboard/vuelos/historico: BloqueosTabla recibe SOLO pasados, nunca activos ni todos (0.2727ms)
+✔ VistaTabs usa <Link href='?vista=...'> — la pestaña vive en la URL, no en useState (0.1887ms)
+✔ vistaDeParam: 'control-vuelos'/'empaquetados' explícitos activan su vista; CUALQUIER OTRO valor (ausente, inválido) cae en 'inventario' (0.2386ms)
+✔ page.tsx y historico/page.tsx resuelven la pestaña desde searchParams (servidor), no desde el cliente (0.2943ms)
+✔ Inventario debe ser la vista por defecto: page.tsx y historico/page.tsx importan vistaDeParam de VistaTabs, no reimplementan el fallback (0.1521ms)
+✔ VistaTabs: el texto del tab de Control es EXACTAMENTE 'CONTROL VUELOS' (0.1714ms)
+✔ page.tsx: el título (tituloVista) es 'Inventario de vuelos' / 'Empaquetados' / 'Control vuelos' según la vista (0.2169ms)
+✔ page.tsx: el subtítulo (subtituloVista) también cambia según la vista, incluida Empaquetados (0.2257ms)
+✔ historico/page.tsx: tituloVista es 'Histórico de vuelos' / 'Empaquetados histórico' / 'Control vuelos histórico' según la vista (0.1416ms)
+✔ historico/page.tsx: el subtítulo también cambia según la vista, incluida Empaquetados (0.0817ms)
+✔ page.tsx: el botón 'Histórico' conserva el ?vista= actual (no un link estático) (0.0783ms)
+✔ page.tsx: el link del estado vacío de Inventario (bloqueos ya pasados) conserva ?vista= (0.0901ms)
+✔ historico/page.tsx: el link de regreso a Inventario conserva el ?vista= actual (no un link estático) (0.0987ms)
+✔ Round-trip: control-vuelos → historico?vista=control-vuelos → vuelos?vista=control-vuelos (mismo criterio para inventario) (0.0862ms)
+✔ page.tsx: la consulta de sillas está condicionada a vistaInventario (no corre en Control Vuelos) (0.0755ms)
+✔ page.tsx: conteo/tot/ocup NO se calculan en Control Vuelos (solo si vistaInventario) (0.144ms)
+✔ historico/page.tsx: la consulta de sillas está condicionada a vistaInventario (no corre en Control Vuelos) (0.1806ms)
+✔ historico/page.tsx: gen/totPas NO se calculan en Control Vuelos (solo si vistaInventario) (0.145ms)
+✔ page.tsx y historico/page.tsx: bloqueos_vuelo Y empaquetados se consultan UNA sola vez cada una (nunca duplicadas) (0.2889ms)
+✔ ControlVuelosTabla en ambas páginas no referencia conteo ni campos de sillas en su mapeo de filas (0.2186ms)
+(node:19260) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosVistaTabs.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ℹ tests 182
+ℹ suites 18
+ℹ pass 182
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 626.5369

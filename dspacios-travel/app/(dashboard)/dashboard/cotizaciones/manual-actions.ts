@@ -8,6 +8,8 @@ import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { ROLES_CONTRATO_COMPLETO } from "@/lib/roles";
 import { abiertaConSalidaPasada, cotizacionVencida, hoyBogota, MENSAJE_COTIZACION_VENCIDA, MENSAJE_SALIDA_PASADA, resolverVigenciaCotizacion } from "@/lib/cotizacion/vigencia";
 import type { Json } from "@/types/database";
+import { verificarRestriccionesHotelCatalogo } from "@/lib/catalogo/restriccionesHotel";
+import { prepararServiciosManual } from "@/lib/catalogo/prepararManual";
 import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import {
   construirComparativaManual, mensajeErrorComparativa, validarClaveIdempotencia, type EntradaComparativaManual,
@@ -65,7 +67,7 @@ export async function crearCotizacionManual(
   // La liquidación (servicios, recobro, niños, documento) es la fórmula única de
   // lib/cotizacion/liquidacionManual.ts; la RPC vuelve a exigir que el total cuadre.
   const armado = construirCotizacionManual(input, { vigencia: vigenciaRes.ok ? vigenciaRes.vigencia : "" });
-  if (!armado.ok) return armado;
+  if (!armado.ok) return armado; // solo para validar la forma y el precio antes de pedir sesión; lo que se guarda se arma de nuevo con los servicios resueltos (armadoFinal)
   if (!vigenciaRes.ok) return { ok: false, error: vigenciaRes.error };
 
   // Acción INTERNA (clasificación explícita, ver revisión de PR #267): único
@@ -111,12 +113,20 @@ export async function crearCotizacionManual(
   // SECURITY DEFINER, que estampa el autor estable (`creado_por_id`): la API ya
   // no escribe esa columna (211) ni, tras la 217, los servicios.
   const admin = createAdminClient(); // identidad:n/a — cotización por id (la guarda deja editar la cotización por id); no escribe tablas de contrato
+  // #95 (B95-3): restricción ESTABLECIDA de los hoteles del catálogo elegidos por id (Adults Only con niños): la comprueba el servidor antes de crear nada.
+  const verifHoteles = await verificarRestriccionesHotelCatalogo(admin, (input.servicios ?? []).filter((s) => s.tipo === "hotel").map((s) => s.catalogoId), (Number(input.ninos) || 0) > 0 || (Number(input.infantes) || 0) > 0);
+  if (!verifHoteles.ok) return { ok: false, error: verifHoteles.error };
+  // B95-13/14/15/20: destino del catálogo, orden de fechas, hotel ↔ destino, compra directa/plataforma (proveedor a pagar) y acomodación estructurada, todo leído y decidido aquí.
+  const prep = await prepararServiciosManual(admin, { destinoId: input.destinoId, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, pax: input.pax, ninos: input.ninos, infantes: input.infantes, servicios: input.servicios ?? [] });
+  if (!prep.ok) return { ok: false, error: prep.error };
+  const armadoFinal = construirCotizacionManual({ ...input, destino: prep.destino, destinoId: prep.destinoId, servicios: prep.servicios }, { vigencia: vigenciaRes.ok ? vigenciaRes.vigencia : "" });
+  if (!armadoFinal.ok) return armadoFinal;
   // #97: una dinámica B2B nace con su ACUERDO de comisión (aliado del catálogo por id + BNC explícita), en la misma transacción que la cotización.
   const argsBase = {
     p_usuario_id: usuario.id,
     p_tenant: tenantCotizacion,
-    p_cabecera: armado.cabecera as unknown as Json,
-    p_servicios: armado.servicios as unknown as Json,
+    p_cabecera: armadoFinal.cabecera as unknown as Json,
+    p_servicios: armadoFinal.servicios as unknown as Json,
   };
   const { data: id, error } = neto
     ? await admin.rpc("crear_cotizacion_manual_neto", { ...argsBase, p_aliado_id: neto.aliadoId, p_reconoce: neto.reconoce, p_autorizar: neto.autorizar })
@@ -130,7 +140,7 @@ export async function crearCotizacionManual(
   // cantidades nunca crean personas; la 216 ya estampó el autor). La cotización ya quedó
   // guardada: un fallo deja el aviso persistente de la ficha y un log sin datos personales.
   const alta = await altaPersonasCotizacion(admin, {
-    fila: { id: Number(id), tenant: tenantCotizacion, tipo: "manual", payload: armado.cabecera.payload, creado_por_id: usuario.id },
+    fila: { id: Number(id), tenant: tenantCotizacion, tipo: "manual", payload: armadoFinal.cabecera.payload, creado_por_id: usuario.id },
     usuarioId: usuario.id,
     sellar: false,
   });
@@ -488,8 +498,15 @@ export async function crearComparativaManual(
       freelanceNombre: input.tipoAsesor === "freelance" ? aliado.nombre : "",
     };
   }
+  // B95-13/14/15/20: mismo candado servidor que la cotización simple, sobre CADA hotel de las opciones (cada opción valida su acomodación contra el mismo grupo de viaje).
+  const prep = await prepararServiciosManual(admin, { destinoId: input.destinoId, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso, pax: input.pax, ninos: input.ninos, infantes: input.infantes, servicios: entrada.servicios ?? [] });
+  if (!prep.ok) return { ok: false, error: prep.error };
+  entrada = { ...entrada, destino: prep.destino, destinoId: prep.destinoId, servicios: prep.servicios };
   const r = construirComparativaManual(entrada, { creadoPorEmail: user.email ?? null });
   if (!r.ok) return r;
+  // #95 (B95-3): mismo candado servidor que la cotización simple, sobre cada hotel elegido de las opciones.
+  const verifHoteles = await verificarRestriccionesHotelCatalogo(admin, (entrada.servicios ?? []).filter((s) => s.tipo === "hotel").map((s) => s.catalogoId), (Number(entrada.ninos) || 0) > 0 || (Number(entrada.infantes) || 0) > 0);
+  if (!verifHoteles.ok) return { ok: false, error: verifHoteles.error };
 
   const { data: id, error } = await admin.rpc("crear_cotizacion_comparativa", {
     p_usuario_id: user.id,

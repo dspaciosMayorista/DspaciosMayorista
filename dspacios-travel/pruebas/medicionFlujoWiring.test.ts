@@ -374,10 +374,12 @@ describe("validacion_negocio/validacion_programa registran 'rechazado' en CADA r
   // mostrada y margen NETO < 6 %), todos antes de numerar y envueltos igual:
   // 7 → 13.
   // #43/#60 entrega L agrega 1: estadía máxima de un contrato manual nuevo (antes de numerar, envuelto igual): 18 → 19.
-  test("crearContratoInterno: 19 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
+  // #95 (B95-3) agrega 1: restricción Adults Only de los hoteles del catálogo elegidos (antes de numerar, envuelto igual): 19 → 20.
+  // F6 (B95-13/15/20) agrega 1: destino del catálogo, hotel ↔ destino, origen de la compra y acomodación estructurada de un contrato manual nuevo (prepararHotelesContrato; antes de numerar, envuelto igual): 20 → 21.
+  test("crearContratoInterno: 21 puntos de rechazo pasan por _rechazarValidacion(); el log de éxito ('ok') aparece UNA sola vez", () => {
     const cuerpo = cuerpoDeFuncion(leer(CONTRATOS_ARCHIVO), "crearContratoInterno");
     const usos = [...cuerpo.matchAll(/return _rechazarValidacion\(/g)];
-    assert.equal(usos.length, 19, `se esperaban 19 puntos de rechazo envueltos, hubo ${usos.length}`);
+    assert.equal(usos.length, 21, `se esperaban 21 puntos de rechazo envueltos, hubo ${usos.length}`);
     const logsOk = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "ok"\)/g)];
     assert.equal(logsOk.length, 1, "el log de éxito de validacion_negocio debe aparecer exactamente una vez (al final de la sección)");
     const logsRechazado = [...cuerpo.matchAll(/registrarEtapa\("crear_contrato", flujoId, "validacion_negocio", Math\.round\(performance\.now\(\) - _tValidacion0\), "rechazado"\)/g)];

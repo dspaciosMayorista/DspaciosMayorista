@@ -4,6 +4,9 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { aprobarSolicitudB2B, rechazarSolicitudB2B } from "./actions";
+import { decidirCandidatoAction } from "@/app/(crm)/crm/referidos/actions";
+import { DecisionCandidato } from "@/components/referidos/DecisionReferido";
+import type { CandidatoReferido, DecisionReferido } from "@/lib/referidos/reglas";
 
 export type Solicitud = {
   id: number; tipo: string; nombre: string; nit: string | null; tipo_documento: string | null;
@@ -16,23 +19,40 @@ export type AliadoOpt = { id: number; nombre: string; nit: string | null; tipo_d
 
 const BADGE: Record<string, string> = { pendiente: "#C99A2E", aprobada: "var(--brand-success)", rechazada: "#C0392B" };
 
-export function SolicitudesClient({ solicitudes, aliados = [] }: { solicitudes: Solicitud[]; aliados?: AliadoOpt[] }) {
+export function SolicitudesClient({ solicitudes, aliados = [], candidatos = {}, referidores = [], vigentePorAliado = {}, gestionaReferidos = false }: {
+  solicitudes: Solicitud[]; aliados?: AliadoOpt[]; candidatos?: Record<number, CandidatoReferido>; referidores?: { id: number; nombre: string }[];
+  vigentePorAliado?: Record<number, string>; gestionaReferidos?: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
+  const [aviso, setAviso] = useState("");
+  // #76: decisión (solo superadmin/gerencia) sobre el CÓDIGO que la persona escribió al registrarse. Nunca se escribe una tarifa: se elige entre lo resuelto de la regla guardada y 1 % / 2 %.
+  const [decisiones, setDecisiones] = useState<Record<number, DecisionReferido | null>>({});
   // Ficha del catálogo elegida por solicitud. Arranca en la sugerida (por
   // coincidencia de documento) o en "nueva" si no hubo ninguna.
   const [vinculo, setVinculo] = useState<Record<number, string>>({});
   const valorVinculo = (s: Solicitud) => vinculo[s.id] ?? (s.aliado_sugerido_id ? String(s.aliado_sugerido_id) : "nueva");
 
   function aprobar(s: Solicitud) {
-    setMsg("");
+    setMsg(""); setAviso("");
     const v = valorVinculo(s);
     const arg = v === "nueva" ? "nueva" : v === "ninguna" ? null : Number(v);
     start(async () => {
-      const r = await aprobarSolicitudB2B(s.id, arg);
-      if (r.ok) router.refresh();
+      const r = await aprobarSolicitudB2B(s.id, arg, gestionaReferidos ? decisiones[s.id] ?? undefined : undefined);
+      if (r.ok) { if (r.aviso) setAviso(r.aviso); router.refresh(); }
       else setMsg(r.error ?? "Error");
+    });
+  }
+
+  // Registro YA aprobado cuyo código quedó por confirmar: la decisión se aplica aquí (la base exige que esté aprobado y enlazado).
+  function decidir(s: Solicitud) {
+    const d = decisiones[s.id]; if (!d) return;
+    setMsg(""); setAviso("");
+    start(async () => {
+      const r = await decidirCandidatoAction({ solicitudId: s.id, decision: d });
+      if (r.ok) { setAviso(r.estado === "ya_decidida" ? "Ese código ya tenía una decisión." : "Decisión aplicada. Rige solo para las compras futuras del aliado."); router.refresh(); }
+      else setMsg(r.error);
     });
   }
 
@@ -50,6 +70,7 @@ export function SolicitudesClient({ solicitudes, aliados = [] }: { solicitudes: 
   return (
     <div className="space-y-3">
       {msg && <p className="text-sm text-red-600">{msg}</p>}
+      {aviso && <p role="status" className="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800">{aviso}</p>}
       {solicitudes.map((s) => {
         const sugerido = aliados.find((a) => a.id === s.aliado_sugerido_id);
         const doc = `${s.tipo_documento ?? "Doc"} ${s.nit ?? "—"}`;
@@ -113,6 +134,26 @@ export function SolicitudesClient({ solicitudes, aliados = [] }: { solicitudes: 
                 )}
               </div>
             )}
+
+            {/* #76 — código de referido escrito en el registro: CANDIDATO. Todos los aprobadores lo ven; solo superadmin/gerencia deciden (ver DecisionCandidato). */}
+            {(() => {
+              const c = candidatos[s.id];
+              if (!c) return null;
+              const fichaElegida = s.estado === "pendiente" ? Number(valorVinculo(s)) : NaN;
+              const vista: CandidatoReferido = s.estado === "pendiente" && Number.isInteger(fichaElegida) && vigentePorAliado[fichaElegida] ? { ...c, vigente_referidor: vigentePorAliado[fichaElegida], vigente_pct: null } : c;
+              const puedeDecidir = gestionaReferidos && s.estado !== "rechazada";
+              return (
+                <>
+                  <DecisionCandidato candidato={vista} referidores={referidores} gestiona={puedeDecidir} disabled={pending} onChange={(d) => setDecisiones((p) => (p[s.id] === d ? p : { ...p, [s.id]: d }))} />
+                  {puedeDecidir && s.estado === "aprobada" && c.referido_estado === "candidato" && (
+                    <div className="mt-2">
+                      {c.aliado_id === null && <p className="mb-1 text-[11px] text-amber-700">Este registro se aprobó sin enlazar una ficha de aliado: no hay a quién asignar el referido.</p>}
+                      <Button disabled={pending || !decisiones[s.id] || c.aliado_id === null} onClick={() => decidir(s)} variant="secondary">Aplicar decisión</Button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         );
       })}

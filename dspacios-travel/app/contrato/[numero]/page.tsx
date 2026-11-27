@@ -11,6 +11,7 @@ import { Eye } from "lucide-react";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { leerResumenContrato } from "@/lib/contrato/resumenPreciosContrato";
+import { inclusionesDeContrato } from "@/lib/contrato/inclusionesContrato";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { netoTotalExigibleDeContrato } from "@/lib/contrato/netoContrato.server";
 import { cargarAcuerdoMinimo } from "@/lib/contrato/acuerdoMinimo";
@@ -118,9 +119,11 @@ export default async function ContratoImprimiblePage({
   // #30: la modalidad se pregunta DESPUÉS de que la RLS ya autorizó este
   // contrato (la consulta de arriba). Solo vuelve el total exigible de un
   // contrato NETO (o null), nunca la comisión del aliado.
-  const [agencia, netoTotalExigible] = await Promise.all([
+  const [agencia, netoTotalExigible, inclusiones] = await Promise.all([
     agenciaDe((venta.tenant as Tenant | null) ?? undefined),
     netoTotalExigibleDeContrato(numero),
+    // B95-18: «Incluye / No incluye» de la cotización de origen (la opción elegida); solo después de autorizado el contrato.
+    inclusionesDeContrato(numero),
   ]);
 
   const totalPagado = (abonos ?? []).reduce(
@@ -188,6 +191,8 @@ export default async function ContratoImprimiblePage({
             resumenPrecios={resumenContrato}
             netoTotalExigible={netoTotalExigible}
             estancia={estancia}
+            incluye={inclusiones.incluye}
+            noIncluye={inclusiones.noIncluye}
           />
         </div>
       </div>

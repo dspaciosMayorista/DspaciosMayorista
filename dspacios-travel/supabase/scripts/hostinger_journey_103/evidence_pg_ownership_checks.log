@@ -1,0 +1,34 @@
+OK   0.1 init generates credentials outside the repository
+OK   A1.0 control container fixture: roles, databases, data and a held session on a template-named database  — 1 session(s)
+OK   A1.1 up         against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 seed       against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 down       against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 pg-destroy against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 pg-create  against an unowned container is refused  — harness: pg-create makes only the dedicated container hj103_pg; unset HJ_PG_CONTAINER.
+OK   A1.2 …and the control's role verifiers, databases, data and held template session are UNCHANGED  — {"roles":"anon:-;authenticator:SCRAM-SHA-256$4096:o7GpcIKgutahW+5JNpfF4w==$A/RKQ…
+OK   A1.3 …and the harness created nothing: no harness container/network exists
+OK   A2.1 up         on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.1 seed       on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.1 down       on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.1 pg-destroy on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.2 pg-create refuses to replace/touch an existing container named hj103_pg  — harness: Refused: a container named hj103_pg already exists; it is not touched. If it is the harness
+OK   A2.3 a record with a DIFFERENT container id is refused  — harness: Refused: container hj103_pg is not the one this work folder created (container id differs f
+OK   A2.4 …even then the container holding NON-harness databases is refused (defence in depth)  — harness: Refused: the dedicated container holds non-harness databases (ctl_data); the harness will not change cluster-wi
+OK   A2.5 seed is refused for the same reason
+OK   A2.6 the look-alike's role verifiers, databases, data and held template session are UNCHANGED
+OK   B1 pg-create builds the dedicated container and loads the template read-only  — 79 s; dedicated PostgreSQL container hj103_pg ready (ownership recorded in C:\Users\Usuario\AppD
+OK   B2 ownership record = the container's full id; harness labels set; no published port  — 9a886c4d1bae
+OK   B3 up    refuses an owned container that holds a non-harness database  — harness: Refused: the dedicated container holds non-harness databases (foreign_db); the harness will
+OK   B3 seed  refuses an owned container that holds a non-harness database  — harness: Refused: the dedicated container holds non-harness databases (foreign_db); the harness will
+OK   B3.1 …and the cluster roles were not touched by those refusals
+OK   B4 seed on a database the harness did not create (unmarked) is refused with data unchanged  — harness: Refused: database hj103_unmarked_chk exists but is NOT marked as a disposable har
+OK   B4 up   on a database the harness did not create (unmarked) is refused with data unchanged  — harness: Refused: database hj103_unmarked_chk exists but is NOT marked as a disposable har
+OK   B4 down on a database the harness did not create (unmarked) is refused with data unchanged  — harness: Refused: database hj103_unmarked_chk exists but is NOT marked as a disposable har
+OK   B5 up SUCCEEDS on the owned container (template → database → roles → migrations → Mailpit/GoTrue/PostgREST/gateway)  — 25 s
+OK   B6 seed SUCCEEDS on the harness-marked database  — seeded: 4 users, 2 contracts, 8 requests
+OK   B7 the database carries the harness marker and the cluster roles changed ONLY inside the owned container
+OK   B8 down removes the stack and drops the marked database; the template stays
+OK   B9 pg-destroy removes exactly the verified dedicated container and its record
+OK   C1 the source container (template donor) kept its role verifiers and database list through the whole run
+
+PG OWNERSHIP CHECKS PASSED: 32/32

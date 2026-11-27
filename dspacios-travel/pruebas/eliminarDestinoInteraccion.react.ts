@@ -52,6 +52,8 @@ const SIN_USO = {
   empaquetados: 0, paquetes: 0, temporadas: 0, itinerarios: 0, inclusiones: 0,
   // 275 (#82): tablas del paquete dinámico total (se cuentan con la función uso_destino_din).
   paquete_din: 0, paquete_din_vuelos: 0, paquete_din_servicios: 0,
+  // 334 (#29): destinos aéreos alternativos de un paquete (tabla sin FK, también bloquea el borrado directo).
+  armado_paquete_destinos_aereos: 0,
 };
 type Conteos = Record<keyof typeof SIN_USO, number | null>;
 type Permiso = "si" | "no" | "desconocido";

@@ -14,10 +14,13 @@ import { liquidarServicioPuntual } from "@/lib/reservar/cotizar";
 import { liquidarCostoTour } from "@/lib/reservar/costosObligacionesCarrito";
 import { formatearHora, parseHora } from "@/lib/calc/trasladoFranjas";
 import { planReconciliacionCxpServicios, type ServicioObjetivo } from "@/lib/reservar/cxpCobertura";
+import { clasificarObligacionesServicio, categoriaDesdeTipoProveedor } from "@/lib/reservar/clasificacionServiciosContrato";
 import { asegurarCuentasPorPagar } from "@/lib/reservar/asegurarCuentasPorPagar";
 import { idsCxpMaterializadas, postearAsientosDeObligaciones } from "@/lib/reservar/asientosObligaciones";
 import { mensajeErrorRpc } from "@/lib/vuelos/operaciones";
-import { formatMoneda } from "@/lib/utils";
+import { formatMoneda, calcularEdad } from "@/lib/utils";
+import { verificarRestriccionesHotelCatalogo } from "@/lib/catalogo/restriccionesHotel";
+import { prepararHotelesContrato } from "@/lib/catalogo/prepararManual";
 import { fechaElegidaONegocio, fechaNegocio } from "@/lib/fechaNegocio";
 import { siguienteNumeroContrato } from "@/lib/contrato/numeracion";
 import { contextoCrearContrato } from "@/lib/contrato/contexto";
@@ -163,6 +166,17 @@ export type HotelInput = {
   fechaIngreso: string;
   fechaSalida: string;
   costo?: number;   // costo neto del hotel (alimenta costo_hotel + CxP al proveedor)
+  /** #95 (B95-3): id del hotel del catálogo ELEGIDO en el formulario (null/ausente = texto libre). Solo sirve para comprobar sus restricciones establecidas; no se guarda en el contrato. */
+  catalogoHotelId?: number | null;
+  /** B95-15: cómo se compró el hotel (obligatorio en un contrato dinámico/empaquetado nuevo). «plataforma»: la plataforma es el proveedor a pagar; «directa»: el proveedor del hotel. */
+  compra?: "directa" | "plataforma";
+  /** B95-15: nombre de la plataforma cuando la compra es por plataforma. */
+  plataforma?: string;
+  /** B95-20: cantidad de habitaciones por tipo; `acomodacion` se DERIVA de aquí en el servidor (ya no se escribe a mano). */
+  habitaciones?: Partial<Record<"sencilla" | "doble" | "triple" | "multiple", number>>;
+  /** Derivados por el servidor (lo que llegue del navegador se descarta): origen de la compra y plataforma que se guardan en contrato_hoteles. */
+  compraOrigen?: string | null;
+  plataformaCompra?: string | null;
 };
 
 // Un tramo/trayecto = una sola dirección de vuelo (aerolínea, origen→destino,
@@ -215,6 +229,8 @@ export type ServicioInput = {
   descripcion: string;
   proveedor: string;
   costo?: number;
+  /** #95 (B95-3): servicio del catálogo ELEGIDO por id (null/ausente = texto libre). Solo lo usa la pantalla para distinguir la elección real; no se guarda. */
+  catalogoServicioId?: number | null;
 };
 
 export type ContratoInput = {
@@ -228,6 +244,8 @@ export type ContratoInput = {
   clienteTelefono: string;
   clienteDireccion: string;
   destino: string;
+  /** B95-13: destino elegido del catálogo (id). Obligatorio en un contrato dinámico/empaquetado nuevo; su nombre canónico pisa `destino`. */
+  destinoId?: number | null;
   fechaSalida: string;
   fechaRegreso: string;
   fechaEmision: string;
@@ -432,6 +450,28 @@ async function crearContratoInterno(
     if (![it.adultos, it.ninos, it.tarifaAdulto, it.tarifaNino].every((n) => Number.isFinite(n) && n >= 0)) {
       return _rechazarValidacion({ ok: false, error: "Cantidades o tarifas inválidas en los ítems del contrato." });
     }
+  }
+
+  // #95 (B95-3): restricción ESTABLECIDA de los hoteles del catálogo que el asesor eligió por id (Adults Only): la comprueba el servidor, no solo el aviso de la pantalla.
+  {
+    const edadMenor = (p: PasajeroInput) => p.esInfante || (() => { const e = calcularEdad(p.fechaNacimiento, input.fechaSalida || null); return e != null && e < 18; })();
+    const hayMenores = items.some((it) => it.ninos > 0) || (input.pasajeros ?? []).some(edadMenor);
+    const idsCatalogo = (input.hoteles ?? []).map((h) => h.catalogoHotelId);
+    // Sin hoteles del catálogo no hay nada que comprobar: no se crea el cliente de servicio (un negociado sin llave debe rechazarse con SU mensaje, más abajo, antes de numerar).
+    if (idsCatalogo.some((id) => id != null)) {
+      const verif = await verificarRestriccionesHotelCatalogo(createAdminClient(), idsCatalogo, hayMenores); // identidad:n/a — solo lectura del catálogo de hoteles
+      if (!verif.ok) return _rechazarValidacion({ ok: false, error: verif.error });
+    }
+  }
+  // B95-13/15/20: destino del catálogo, hotel ↔ destino, compra directa/plataforma (proveedor a pagar) y acomodación estructurada contra los pasajeros reales; el servidor decide.
+  // Un producto NEGOCIADO del tarifario no pasa por aquí: su hotel y su precio salen del paquete (no hay captura manual que validar).
+  if (!negociado) {
+    const prep = await prepararHotelesContrato(createAdminClient(), { // identidad:n/a — solo lectura del catálogo (destinos, hoteles y su proveedor)
+      destinoId: input.destinoId, fechaSalida: input.fechaSalida, fechaRegreso: input.fechaRegreso, negociado,
+      pasajeros: (input.pasajeros ?? []).map((p) => ({ fechaNacimiento: p.fechaNacimiento, esInfante: p.esInfante })), hoteles: input.hoteles ?? [],
+    });
+    if (!prep.ok) return _rechazarValidacion({ ok: false, error: prep.error });
+    input = { ...input, destino: prep.destino ?? input.destino, hoteles: prep.hoteles };
   }
 
   const precioVenta = items.reduce(
@@ -683,7 +723,9 @@ async function crearContratoInterno(
     ...(tipoCliente.tipo && { cliente_tipo_documento: tipoCliente.tipo }),
     cliente_telefono: oNull(input.clienteTelefono),
     cliente_direccion: oNull(input.clienteDireccion),
-    asistencia_medica: input.asistenciaMedica,
+    // #51: el documento lee SOLO esta bandera. Un servicio de asistencia cargado (con su costo y su obligación con el proveedor) no puede convivir con «Asistencia médica: No»:
+    // si hay fila de asistencia la bandera se enciende aunque la casilla no se marcara. (La casilla sola, sin fila, sigue siendo válida: asistencia incluida sin costo propio.)
+    asistencia_medica: input.asistenciaMedica || servicios.some((s) => s.tipo === "asistencia" && s.descripcion.trim().length > 0),
     plan_nombre: oNull(input.planNombre),
     tours_traslados: oNull(input.toursTraslados),
     asesor_firma_nombre: oNull(input.asesorNombre),
@@ -836,6 +878,8 @@ async function crearContratoInterno(
         alimentacion: oNull(h.alimentacion),
         acomodacion: oNull(h.acomodacion),
         detalle_acomodacion: oNull(h.detalleAcomodacion),
+        compra_origen: h.compraOrigen ?? null,   // migración 346
+        plataforma: h.plataformaCompra ?? null,
         fecha_ingreso: oNull(h.fechaIngreso),
         fecha_salida: oNull(h.fechaSalida),
         orden: i,
@@ -1478,7 +1522,7 @@ export async function actualizarServiciosContrato(
   const sb = await createClient(id);
   const { data: venta } = await sb
     .from("ventas")
-    .select("estado, pax, precio_venta, paquete_armado_id, fecha_salida, fecha_regreso, comision_estado")
+    .select("estado, pax, precio_venta, paquete_armado_id, fecha_salida, fecha_regreso, comision_estado, moneda")
     .eq("numero_contrato", numeroContrato)
     .maybeSingle();
   if (!venta) return { ok: false, error: "Contrato no encontrado." };
@@ -1490,6 +1534,14 @@ export async function actualizarServiciosContrato(
   }
   if (venta.estado !== "pendiente") return { ok: false, error: "Solo se pueden editar servicios en contratos pendientes." };
   if (!venta.paquete_armado_id) return { ok: false, error: "El contrato no está enlazado a un paquete." };
+  // Nunca se mezclan monedas: un servicio en otra moneda que la del contrato (la obligación prevista nace en la moneda del contrato) se rechaza antes de calcular o escribir nada.
+  if (serviciosIds.length) {
+    const { data: monedas, error: monedasErr } = await sb.from("servicios_adicionales").select("id, nombre, moneda").in("id", serviciosIds);
+    if (monedasErr) return { ok: false, error: "No se pudo verificar la moneda de los servicios. No se cambió nada. Inténtalo de nuevo." };
+    const monedaContrato = String(venta.moneda ?? "COP").toUpperCase();
+    const distinto = (monedas ?? []).find((s) => String(s.moneda ?? "COP").toUpperCase() !== monedaContrato);
+    if (distinto) return { ok: false, error: `El servicio «${distinto.nombre}» está en ${String(distinto.moneda ?? "COP").toUpperCase()} y este contrato es en ${monedaContrato}: no se mezclan monedas. No se cambió nada.` };
+  }
 
   const pax = Number(venta.pax) || 0;
 
@@ -1583,7 +1635,7 @@ export async function actualizarServiciosContrato(
   }
   const { data: cxpFilas, error: cxpErr } = await admin
     .from("cuentas_por_pagar")
-    .select("id, servicio_id, valor_total")
+    .select("id, servicio_id, valor_total, servicio, tipo_proveedor")
     .eq("numero_contrato", numeroContrato)
     .not("servicio_id", "is", null);
   if (cxpErr) return { ok: false, error: "No se pudieron consultar las cuentas por pagar del contrato. Inténtalo de nuevo." };
@@ -1600,21 +1652,55 @@ export async function actualizarServiciosContrato(
   }
   // 288 (#75): este contrato está PENDIENTE → sus obligaciones nuevas viven como PREVISTAS (no son CxP exigibles). Entran al mismo plan con id NEGATIVO
   // (-id de la prevista) para distinguirlas de las CxP reales de contratos pendientes anteriores a la 288 (que se reconcilian como siempre, sin tocar históricos).
-  const { data: prevFilas } = await admin
+  const { data: prevFilas, error: prevErr } = await admin
     .from("contrato_obligaciones_previstas")
     .select("id, payload")
     .eq("numero_contrato", numeroContrato).eq("clase", "cxp").is("materializada_en", null);
+  // B95-2: sin poder leer las obligaciones previstas no se sabe qué hay que conservar: fallo cerrado antes de tocar nada.
+  if (prevErr) return { ok: false, error: "No se pudieron consultar las obligaciones previstas del contrato. No se cambió nada. Inténtalo de nuevo." };
   const prevComoCxp = (prevFilas ?? [])
-    .map((p) => ({ id: -p.id, payload: (p.payload ?? {}) as { servicio_id?: number | string | null; valor_total?: number | string | null } }))
+    .map((p) => ({ id: -p.id, payload: (p.payload ?? {}) as { servicio_id?: number | string | null; valor_total?: number | string | null; servicio?: string | null; tipo_proveedor?: string | null } }))
     .filter((p) => p.payload.servicio_id != null)
-    .map((p) => ({ id: p.id, servicio_id: Number(p.payload.servicio_id), valor_total: Number(p.payload.valor_total) || 0, tieneMovimientos: false }));
-  const plan = planReconciliacionCxpServicios(
-    [
-      ...(cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id) })),
-      ...prevComoCxp,
-    ],
-    objetivo
-  );
+    .map((p) => ({ id: p.id, servicio_id: Number(p.payload.servicio_id), valor_total: Number(p.payload.valor_total) || 0, tieneMovimientos: false, servicio: p.payload.servicio ?? null, tipo_proveedor: p.payload.tipo_proveedor ?? null }));
+  // #51: los servicios INCLUIDOS del paquete NO son parte de la selección editable (el editor solo lista y guarda los opcionales). La reserva dejó su obligación (prevista o CxP con su
+  // `servicio_id`) y su costo en las columnas; si entraran al plan como «existentes que no están en el objetivo» se ELIMINARÍAN sus obligaciones y, al reescribir las columnas de costo solo
+  // con los opcionales, el contrato perdería su costo (margen inflado). Quedan fuera del plan y sus costos se conservan abajo.
+  const { data: catRows, error: catErr } = await admin
+    .from("armado_servicios")
+    .select("servicio_id, incluido, servicios_adicionales(nombre, categoria)")
+    .eq("paquete_id", venta.paquete_armado_id);
+  // B95-2: si el catálogo no se pudo leer NO se supone «ningún servicio incluido» (borraría obligaciones y costos incluidos): fallo cerrado antes de cualquier escritura.
+  if (catErr) return { ok: false, error: "No se pudo consultar el paquete del contrato. No se cambió nada. Inténtalo de nuevo." };
+  // Las líneas «Servicio · …» del contrato son la prueba propia de qué servicios fueron opcionales elegidos (el catálogo se puede editar después de reservar).
+  const { data: oldItems, error: oldItemsErr } = await sb
+    .from("contrato_items")
+    .select("id, descripcion, adultos, ninos, tarifa_adulto, tarifa_nino")
+    .eq("numero_contrato", numeroContrato);
+  if (oldItemsErr) return { ok: false, error: "No se pudieron consultar las líneas del contrato. No se cambió nada. Inténtalo de nuevo." };
+  const catPorServicio = new Map<number, { nombre: string | null; categoria: string | null }>();
+  for (const r of catRows ?? []) {
+    const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null } | null;
+    catPorServicio.set(r.servicio_id, { nombre: srv?.nombre ?? null, categoria: srv?.categoria ?? null });
+  }
+  const incluidosIds = new Set<number>((catRows ?? []).filter((r) => r.incluido).map((r) => r.servicio_id));
+  const existentesCxp = [
+    ...(cxpFilas ?? []).map((r) => ({ id: r.id, servicio_id: r.servicio_id, valor_total: r.valor_total, tieneMovimientos: conMovimiento.has(r.id), servicio: r.servicio ?? null, tipo_proveedor: r.tipo_proveedor ?? null })),
+    ...prevComoCxp,
+  ];
+  const clasif = clasificarObligacionesServicio({
+    existentes: existentesCxp, incluidosCatalogo: incluidosIds, objetivoIds: new Set(objetivo.map((o) => o.servicioId)),
+    descripcionesItems: (oldItems ?? []).map((it) => it.descripcion),
+    catalogoNombres: new Map([...catPorServicio].map(([id, c]) => [id, c.nombre])),
+  });
+  // R2-2: elegir como opcional un servicio que ya tiene una obligación conservada (incluido en la reserva y reclasificado o quitado del paquete después) duplicaría esa obligación y su cobro.
+  // No se resuelve en silencio ni se reescribe el costo histórico: se rechaza la edición completa antes de escribir nada.
+  if (clasif.conflictos.length) {
+    const nombres = [...new Set(clasif.conflictos.map((c) => c.servicio ?? "Servicio"))].join(", ");
+    return { ok: false, error: `No se puede agregar como opcional «${nombres}»: este contrato ya tiene una obligación con ese servicio (quedó incluido al reservar). Se conserva tal cual para no duplicar ni perder ese costo. No se cambió nada.` };
+  }
+  const plan = planReconciliacionCxpServicios(clasif.editables, objetivo);
+  // Costo de lo CONSERVADO (por columna del tipo de proveedor guardado en su propia obligación, no del catálogo vivo): se suma al de los opcionales al reescribir `costo_receptivo`/`costo_asistencia`.
+  const costosIncluidos = clasif.conservadas.map((e) => ({ tipoCxp: e.tipo_proveedor ?? tipoProveedorCxpServicio(normalizarCategoriaServicio(catPorServicio.get(Number(e.servicio_id))?.categoria)), costo: Number(e.valor_total) || 0 }));
   // Fallo cerrado ANTES de tocar nada: quitar un servicio cuya cuenta ya
   // tiene pagos/retenciones exigiría borrar dinero ya movido. Se rechaza la
   // edición completa con un mensaje accionable, en vez de dejar el contrato
@@ -1627,10 +1713,6 @@ export async function actualizarServiciosContrato(
   }
 
   // Quitar ítems de servicio actuales (y su total) para recalcular el precio.
-  const { data: oldItems } = await sb
-    .from("contrato_items")
-    .select("id, descripcion, adultos, ninos, tarifa_adulto, tarifa_nino")
-    .eq("numero_contrato", numeroContrato);
   let oldTotal = 0;
   const oldServiceIds: number[] = [];
   for (const it of oldItems ?? []) {
@@ -1654,17 +1736,15 @@ export async function actualizarServiciosContrato(
   // La categoría real de los opcionales ya se resolvió al armar `objetivo`
   // (tipoProveedor), pero el resumen necesita la categoría del catálogo tal
   // cual — se vuelve a leer junto con los incluidos en una sola consulta.
-  const { data: catRows } = await admin
-    .from("armado_servicios")
-    .select("servicio_id, incluido, servicios_adicionales(nombre, categoria)")
-    .eq("paquete_id", venta.paquete_armado_id);
-  const catPorServicio = new Map<number, { nombre: string | null; categoria: string | null }>();
   for (const r of catRows ?? []) {
     const srv = r.servicios_adicionales as unknown as { nombre: string | null; categoria: string | null } | null;
-    catPorServicio.set(r.servicio_id, { nombre: srv?.nombre ?? null, categoria: srv?.categoria ?? null });
     if (r.incluido) {
       efectivos.push({ servicioId: r.servicio_id, nombre: srv?.nombre ?? "Servicio", categoria: srv?.categoria ?? null, incluido: true });
     }
+  }
+  for (const c of clasif.conservadas) {
+    if (c.servicio_id == null || efectivos.some((e) => e.servicioId === Number(c.servicio_id))) continue;
+    efectivos.push({ servicioId: Number(c.servicio_id), nombre: c.servicio ?? "Servicio", categoria: categoriaDesdeTipoProveedor(c.tipo_proveedor), incluido: true });
   }
   for (const e of efectivos) {
     if (e.categoria == null && !e.incluido) e.categoria = catPorServicio.get(e.servicioId)?.categoria ?? null;
@@ -1702,7 +1782,7 @@ export async function actualizarServiciosContrato(
     p_items_borrar: oldServiceIds,
     p_items_nuevos: itemsNuevos as unknown as Json,
     // Cada costo de servicio en la columna de su CxP (asistencia → costo_asistencia). Las dos columnas se escriben siempre: el conjunto editado es completo.
-    p_ventas: { precio_venta: nuevoPrecio, ...costosServicioPorColumna(objetivo.map((o) => ({ tipoCxp: o.tipoProveedor, costo: o.costoNeto }))), tours_traslados: resumen.toursTraslados, asistencia_medica: resumen.asistenciaMedica } as unknown as Json,
+    p_ventas: { precio_venta: nuevoPrecio, ...costosServicioPorColumna([...objetivo.map((o) => ({ tipoCxp: o.tipoProveedor, costo: o.costoNeto })), ...costosIncluidos]), tours_traslados: resumen.toursTraslados, asistencia_medica: resumen.asistenciaMedica } as unknown as Json,
     p_prev_eliminar: eliminarPrev,
     p_prev_actualizar: actualizarPrev as unknown as Json,
     p_prev_insertar: insertarPrev as unknown as Json,

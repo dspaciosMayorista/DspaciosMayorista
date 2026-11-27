@@ -191,10 +191,20 @@ export type VueloContenido = {
 export async function guardarVuelosContrato(numero: string, vuelos: VueloContenido[], identidad: IdentidadContrato): Promise<Result> {
   const guard = await soloSuperadmin(identidad);
   if (!guard.ok) return guard;
+  // 338 (ADL-042): este editor recrea los tramos (ids nuevos) sin saber a qué servicio pertenece cada uno. Si el contrato tiene UN solo servicio aéreo guardado, los tramos nuevos lo heredan
+  // (se conserva su enlace de voucher). Con varios servicios, o con tramos sin servicio mezclados, NO se adivina: se rechaza antes de tocar nada y se usa el editor de vuelos (que asigna el servicio de cada tramo).
+  const { data: previos, error: ePrev } = await guard.sb.from("contrato_vuelos").select("servicio_aereo").eq("numero_contrato", numero);
+  if (ePrev) return { ok: false, error: mensajeSiIdentidad(ePrev) ?? ePrev.message };
+  const servicios = Array.from(new Set((previos ?? []).map((p) => p.servicio_aereo).filter((s): s is string => !!s)));
+  const sinServicio = (previos ?? []).some((p) => !p.servicio_aereo);
+  if (servicios.length > 1 || (servicios.length === 1 && sinServicio)) {
+    return { ok: false, error: "Este contrato tiene varios servicios aéreos (o tramos sin servicio asociado): edita los vuelos en el editor de vuelos del contrato, donde se elige el servicio de cada tramo. No se cambió nada." };
+  }
   const filas = vuelos
     .filter((v) => v.aerolinea.trim() || v.numeroVuelo.trim())
     .map((v, i) => ({
       numero_contrato: numero,
+      ...(servicios.length === 1 ? { servicio_aereo: servicios[0] } : {}),
       aerolinea: oNull(v.aerolinea),
       record: oNull(v.record),
       direccion: oNull(v.direccion),

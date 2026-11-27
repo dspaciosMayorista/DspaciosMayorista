@@ -64,7 +64,7 @@ describe("hallazgo 2 — update/delete derivan hotel_id de la FILA afectada, nun
         `${nombre} no deriva "hotelId" desde la fila devuelta por la mutación`
       );
       assert.match(cuerpo, /revalidatePath\(`\/dashboard\/producto\/hoteles\/\$\{hotelId\}`\)/, `${nombre} no revalida con el hotelId derivado`);
-      assert.match(cuerpo, /regenerarTarifariosDeHotel\(hotelId\)/, `${nombre} no regenera con el hotelId derivado`);
+      assert.match(cuerpo, /(regenerarTarifariosDeHotel|regenerarHotelDespues)\(hotelId[,)]/, `${nombre} no regenera con el hotelId derivado`);
     });
   }
 
@@ -75,7 +75,7 @@ describe("hallazgo 2 — update/delete derivan hotel_id de la FILA afectada, nun
       assert.match(cuerpo, /void _hotelIdSolicitado;/, `${nombre} no marca el parámetro como deliberadamente sin usar`);
       // Nunca debe usarse el parámetro para revalidar/regenerar — solo el
       // texto exacto `hotelId)` (derivado) puede aparecer en esas llamadas.
-      assert.doesNotMatch(cuerpo, /regenerarTarifariosDeHotel\(_hotelIdSolicitado\)/, `${nombre} regenera con el parámetro suministrado, no con el de la fila`);
+      assert.doesNotMatch(cuerpo, /(regenerarTarifariosDeHotel|regenerarHotelDespues)\(_hotelIdSolicitado/, `${nombre} regenera con el parámetro suministrado, no con el de la fila`);
     });
   }
 
@@ -83,7 +83,7 @@ describe("hallazgo 2 — update/delete derivan hotel_id de la FILA afectada, nun
     const cuerpo = cuerpoDeFuncion("eliminarTemporada");
     assert.match(cuerpo, /_hotelIdSolicitado: number/);
     assert.match(cuerpo, /void _hotelIdSolicitado;/);
-    assert.doesNotMatch(cuerpo, /regenerarTarifariosDeHotel\(_hotelIdSolicitado\)/);
+    assert.doesNotMatch(cuerpo, /(regenerarTarifariosDeHotel|regenerarHotelDespues)\(_hotelIdSolicitado/);
   });
 });
 
@@ -151,9 +151,14 @@ describe("hallazgo 3 — cobertura: los 10 puntos reales que escriben tarifa_hot
   for (const nombre of PUNTOS_DE_ESCRITURA) {
     test(`${nombre} llama a regenerarTarifariosDeHotel`, () => {
       const cuerpo = cuerpoDeFuncion(nombre);
-      assert.match(cuerpo, /regenerarTarifariosDeHotel\(/, `${nombre} no llama a regenerarTarifariosDeHotel — un cambio real de tarifa/temporada quedaría sin regenerar los paquetes que lo usan`);
+      assert.match(cuerpo, /(regenerarTarifariosDeHotel|regenerarHotelDespues)\(/, `${nombre} no llama a regenerarTarifariosDeHotel — un cambio real de tarifa/temporada quedaría sin regenerar los paquetes que lo usan`);
     });
   }
+
+  test("regenerarHotelDespues (las 3 acciones de vigencia) solo difiere regenerarTarifariosDeHotel: misma regeneración, después de responder", () => {
+    assert.match(src, /const regenerarHotelDespues = \(hotelId: number, inicioMs: number\) => despuesDeResponder\([^\n]*regenerarTarifariosDeHotel\(hotelId, inicioMs\)\)/, "regenerarHotelDespues debe envolver regenerarTarifariosDeHotel(hotelId, inicioMs) con despuesDeResponder");
+    for (const nombre of ["crearTemporada", "actualizarTemporada", "eliminarTemporada"]) assert.match(cuerpoDeFuncion(nombre), /regenerarHotelDespues\(/, nombre);
+  });
 
   test("no hay un onceavo punto de escritura sin cubrir (guarda contra divergencia futura)", () => {
     // Cuenta cuántas funciones exportadas del archivo insertan/actualizan/eliminan

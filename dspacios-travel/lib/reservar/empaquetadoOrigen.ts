@@ -37,9 +37,8 @@
 // en vez de los $400.000 que realmente se le deben al proveedor — se le
 // estaba pagando (en el registro contable) la reventa, no el neto.
 // `costo_neto` es ahora el campo AUTORITATIVO para costo_aereo/CxP en TODOS
-// los orígenes: para bloqueo/salida, que no tienen un campo "neto" separado
-// del "para empaquetar"/"tiquete", `costo_neto` es el mismo valor de
-// siempre (sin cambio de comportamiento ahí). `tarifa_para_empaquetar` se
+// los orígenes: bloqueo = `tarifa_neta` (obligatoria, sin respaldo a la
+// reventa); salida manual = `valor_tiquete` (no tiene campo "neto" aparte). `tarifa_para_empaquetar` se
 // CONSERVA en el tipo — sigue siendo la base de la que se deriva el PVP del
 // vuelo en `generarTarifario()` (`aporteVuelo()`, decisión de negocio
 // confirmada: el margen del paquete SÍ se aplica de nuevo sobre la reventa
@@ -74,8 +73,7 @@ export type DatosVueloOrigen = {
   // ventas.costo_aereo y la CxP aérea. NUNCA usar tarifa_para_empaquetar
   // para esto.
   costo_neto: number;
-  // Reventa (informativa en este flujo) — bloqueo/salida no tienen un
-  // campo "neto" separado, así que aquí queda igual a costo_neto.
+  // Reventa (informativa en este flujo). En bloqueo difiere de costo_neto; en salida manual son iguales.
   tarifa_para_empaquetar: number;
   fee_infante: number;
   /**
@@ -97,12 +95,15 @@ export async function datosVueloBloqueo(sb: ClienteSb, bloqueoId: number): Promi
   const { data: b, error } = await sb
     .from("bloqueos_vuelo")
     .select(
-      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_para_empaquetar, fee_infante, proveedores(nombre, aplica_retencion, pct_retencion)"
+      "aerolinea, record, ruta, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, tarifa_neta, tarifa_para_empaquetar, fee_infante, proveedores(nombre, aplica_retencion, pct_retencion)"
     )
     .eq("id", bloqueoId)
     .maybeSingle();
   if (error) return { ok: false, error: `No se pudo leer el vuelo negociado: ${error.message}` };
   if (!b) return { ok: false, error: "El vuelo negociado seleccionado ya no existe." };
+  // Costo/CxP a la aerolínea = tarifa NETA. Sin neta cargada no se cae a la reventa ni a 0: se rechaza.
+  const neta = Number(b.tarifa_neta);
+  if (!(neta > 0)) return { ok: false, error: `El bloqueo ${b.record ?? ""} no tiene tarifa neta cargada; cárgala en Vuelos antes de reservar.` };
   return {
     ok: true,
     data: {
@@ -111,9 +112,8 @@ export async function datosVueloBloqueo(sb: ClienteSb, bloqueoId: number): Promi
       vuelo_ida: b.vuelo_ida, vuelo_regreso: b.vuelo_regreso,
       hora_salida_ida: b.hora_salida_ida, hora_llegada_ida: b.hora_llegada_ida,
       hora_salida_reg: b.hora_salida_reg, hora_llegada_reg: b.hora_llegada_reg,
-      // bloqueos_vuelo no tiene un campo "neto" separado del "para
-      // empaquetar" — el mismo valor de siempre sirve para ambos.
-      costo_neto: Number(b.tarifa_para_empaquetar) || 0,
+      // Neto real (`tarifa_neta`) para costo/CxP; la reventa queda solo informativa (PVP comercial).
+      costo_neto: neta,
       tarifa_para_empaquetar: Number(b.tarifa_para_empaquetar) || 0,
       // Fee de infante del bloqueo (migración 226, 0 a 1,99 años): el infante no
       // ocupa silla y paga solo esto (precio = costo). `not null default 0`.

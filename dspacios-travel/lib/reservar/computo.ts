@@ -615,7 +615,8 @@ export async function computarReserva(
     petCostoDesc = hotelRowF?.pet_costo_desc ?? null;
     petNotaTxt = hotelRowF?.pet_nota ?? null;
 
-    const { data: acomCfgF } = await sb
+    // Reglas de capacidad (solo columnas de ocupación, sin precios ni proveedor): la política de lectura (027) exige sesión, así que un visitante anónimo recibía los defaults (0 niños). Se leen con el cliente de servicio, como en solicitudHotelServidor/datos.
+    const { data: acomCfgF } = await admin
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
       .eq("hotel_id", input.hotelId);
@@ -903,7 +904,9 @@ export async function computarReserva(
     petCostoDesc = hotelRow?.pet_costo_desc ?? null;
     petNotaTxt = hotelRow?.pet_nota ?? null;
 
-    const { data: acomCfg } = await leerCompartida(lecturas, `sb:hotel_acomodaciones:${input.hotelId}`, () => sb
+    // Idem ruta por fechas: configuración de ocupación (sin precios ni proveedor) con el cliente de servicio para que el visitante anónimo no reciba los defaults.
+    const lectorAcom = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : sb; // identidad:n/a — lectura de configuración; no escribe tablas de contrato
+    const { data: acomCfg } = await leerCompartida(lecturas, `admin:hotel_acomodaciones:${input.hotelId}`, () => lectorAcom
       .from("hotel_acomodaciones")
       .select("acomodacion, pax_tarifa, pax_max, adt_min, adt_max, chd_min, chd_max, inf_min, inf_max")
       .eq("hotel_id", input.hotelId));

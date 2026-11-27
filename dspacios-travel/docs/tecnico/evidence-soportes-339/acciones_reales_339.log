@@ -1,0 +1,42 @@
+  aplicada: 20260601000339_soportes_pago_cupo_adicional.sql
+PostgREST en http://127.0.0.1:55717 contra tpg_a702cf17f11d
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+▶ 339 · contrato SIN pagos registrados: cabe exactamente 1 soporte
+  ✔ el primer soporte entra; el segundo se rechaza ANTES de subir nada (precomprobación del servidor) (1240.9037ms)
+  ✔ si la precomprobación falla, la BASE rechaza igual (autoridad) y el objeto nuevo se limpia (519.532ms)
+✔ 339 · contrato SIN pagos registrados: cabe exactamente 1 soporte (1761.8343ms)
+▶ 339 · contrato con pagos: un soporte por pago + 1 adicional
+  ✔ 1 pago: caben 2; el tercero se rechaza (1147.0848ms)
+  ✔ 2 pagos: caben 3; el cuarto se rechaza (también si el servidor deja pasar la precomprobación) (1334.8919ms)
+  ✔ el INSERT directo (superusuario, sin pasar por la aplicación) también topa con el límite nuevo: la autoridad es la base (276.4205ms)
+  ✔ duplicado: el mismo archivo no ocupa dos cupos (la deduplicación por contenido sigue vigente) (760.9244ms)
+✔ 339 · contrato con pagos: un soporte por pago + 1 adicional (3519.9968ms)
+▶ 339 · reemplazar y retirar con el cupo adicional ocupado
+  ✔ a tope (2 de 2 con 1 pago) reemplazar no cambia el conteo; retirar libera el cupo y el siguiente soporte entra (1685.8937ms)
+✔ 339 · reemplazar y retirar con el cupo adicional ocupado (1686.28ms)
+▶ 339 · competencia por el ÚLTIMO cupo (concurrencia real)
+  ✔ contrato con 1 pago y 1 soporte (queda 1 cupo): de 3 subidas simultáneas gana exactamente 1 (4659.6337ms)
+  ✔ contrato SIN pagos (1 cupo): de 3 subidas simultáneas gana exactamente 1 (3423.3466ms)
+✔ 339 · competencia por el ÚLTIMO cupo (concurrencia real) (8083.4324ms)
+▶ 339 · registrar un pago abre el siguiente cupo (acción real registrarAbono)
+  ✔ 1 pago + 2 soportes = lleno; se registra un pago real y entra un soporte más; vuelve a llenarse (5081.7309ms)
+✔ 339 · registrar un pago abre el siguiente cupo (acción real registrarAbono) (5081.982ms)
+▶ 339 · subir evidencia NO toca nada financiero
+  ✔ subir, subir rechazado, reemplazar y retirar dejan idéntico venta, abonos, CxP, previstas, comisiones, asientos, saldo y estado (5536.9812ms)
+✔ 339 · subir evidencia NO toca nada financiero (5537.2453ms)
+▶ 339 · avisos internos (sin cambios)
+  ✔ el soporte del cupo adicional avisa igual al personal correcto; los rechazos no avisan; el aviso se reclama y lleva al contrato (2947.7967ms)
+✔ 339 · avisos internos (sin cambios) (2948.0598ms)
+▶ 339 · acceso no autorizado sigue denegado (el cupo adicional no abre puertas)
+  ✔ sin sesión, otro aliado, quien solo participa por comisión, cuenta inactiva, aliado de otra agencia y personal interno NO suben (0 pagos = cupo libre, pero ajeno) (2054.7611ms)
+  ✔ con el JWT de un aliado (rol authenticated) NO se puede llamar a soporte_registrar ni insertar en la tabla por la API: la autoridad sigue siendo solo del servidor (321.1016ms)
+✔ 339 · acceso no autorizado sigue denegado (el cupo adicional no abre puertas) (2376.3226ms)
+ℹ tests 14
+ℹ suites 8
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32454.4245

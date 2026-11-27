@@ -1,0 +1,98 @@
+(node:21032) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+Received `false` for a non-boolean attribute `prefetch`.
+
+If you want to write it to the DOM, pass a string instead: prefetch="false" or prefetch={value.toString()}.
+
+If you used to conditionally omit it with prefetch={condition && value}, pass prefetch={condition ? value : undefined} instead.
+✔ roles con módulo de vuelos: la tarjeta enlaza al inventario y conserva conteos (73.1961ms)
+✔ venta (sin módulo de vuelos): la tarjeta no enlaza al inventario (7.8512ms)
+✔ sin consultas nuevas: el enlace no cambia las llamadas de la página; la ventana sigue siendo hoy..hoy+14 (17.5498ms)
+(node:18544) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ retiro cuyo motivo menciona otro record: se muestra como retiro, sin destino ni cupos de destino (26.1242ms)
+✔ fecha y hora en Bogotá, con límites de día (UTC-5, sin importar la zona del servidor) (6.639ms)
+✔ traslado real: origen/destino guardados, inventario antes/después, sillas y detalle por silla (4.5335ms)
+✔ fila anterior a la 194 sin datos: todo lo ausente dice «No guardado» y no se deduce nada del motivo (2.9921ms)
+✔ sin movimientos: mensaje vacío; diseño compacto en móvil (2 columnas) y amplio desde lg (4) (2.2921ms)
+(node:27084) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ Liberar abre la confirmación de la app con la silla visible, la histórica y el plazo; no llama antes de confirmar (192.7847ms)
+✔ confirmar llama a la acción con la versión que mostró la pantalla (44.4212ms)
+✔ si la silla cambió, el error se muestra en el diálogo y no se cierra (37.8426ms)
+✔ cancelar no llama a la acción (29.0522ms)
+(node:24060) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ silla libre: no se ofrece Mover; Editar y Borrar siguen (49.5726ms)
+✔ silla ocupada: Mover abre el diálogo con los dos modos y NINGUNO elegido (42.6313ms)
+✔ elegir solo_datos envía ese modo explícito y un identificador de operación (34.9099ms)
+✔ elegir con_cupo envía ese modo explícito y un identificador de operación (24.8722ms)
+✔ reintento tras un error reutiliza el MISMO identificador de operación (37.3758ms)
+✔ reabrir el diálogo genera una operación NUEVA (52.0601ms)
+✔ tarifa distinta: exige confirmar antes de enviar y manda la aceptación (32.5664ms)
+✔ si la base detecta tarifa distinta, aparece la confirmación (30.8761ms)
+✔ D3-c contrato del sistema: records con otras fechas aparecen deshabilitados y se explica la regla (11.2869ms)
+✔ D3-c contrato manual (solo_datos): también se ofrecen records con otras fechas y se pueden elegir (24.9347ms)
+✔ D3-c contrato manual (con_cupo): también se ofrecen records con otras fechas y se pueden elegir (17.3712ms)
+✔ tras mover un contrato del sistema, informa los tramos del vuelo actualizados (19.694ms)
+✔ contrato manual que resuelve a una venta: solo se avisa del PNR anterior (18.4138ms)
+✔ Borrar muestra el dialogo de la app y solo ejecuta al confirmar (117.6369ms)
+✔ Borrar cancelado no llama a la acción (27.2481ms)
+✔ libre es obligatoria en el componente (sin ? ni valor por defecto) (0.8263ms)
+✔ todos los usos de <PasajeroAcciones en el repo pasan libre (151.7243ms)
+✔ la página calcula libre con esSillaLibre y el contrato manual real, y ofrece solo records compatibles (0.9408ms)
+(node:16592) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ cambiarSillas llama a trasladar_cupos con los argumentos exactos y revalida los dos records (1.5028ms)
+✔ cambiarSillas: un reintento ya aplicado se informa como repetida (0.2311ms)
+✔ cambiarSillas rechaza sin llamar a la base: mismo record, cantidad inválida o sin operación (0.1886ms)
+✔ moverPasajeroSilla sin modo, con modo inventado o sin opciones NO llega a la base (0.537ms)
+✔ moverPasajeroSilla modo solo_datos: una sola RPC mover_pasajero, sin inserts (0.3193ms)
+✔ moverPasajeroSilla modo con_cupo: una sola RPC mover_pasajero, sin inserts (0.1549ms)
+✔ tarifa distinta: la base pide confirmación; la acción lo marca y no revalida (0.4231ms)
+✔ errores de la base: bloqueo ocupado (55P03), migración faltante y mensaje de negocio (0.2236ms)
+✔ retirarCupo llama a retirar_cupo y nunca borra filas (0.1975ms)
+✔ cambiarEstadoSilla: solo estados manuales de la matriz y con motivo (0.2345ms)
+✔ contrato manual, liberar y editar delegan en su RPC (0.3292ms)
+✔ editarPasajeroSilla: sin el contrato visto no llega a la base; el rechazo por silla cambiada se devuelve tal cual (0.1325ms)
+✔ liberar y asignar sin la versión vista no llegan a la base (nunca a ciegas) (0.0875ms)
+✔ un error al liberar se devuelve y no revalida (0.1134ms)
+✔ crearBloqueo: una sola RPC crear_bloqueo con los datos y los cupos; ningún insert directo (0.4273ms)
+✔ crearBloqueo: sin modalidad, sin record o con cupos inválidos no llega a la base (0.1251ms)
+✔ crearBloqueo (231): la moneda elegida viaja a crear_bloqueo y un Bloqueo en USD con tarifas pequeñas es válido (0.1165ms)
+✔ crearBloqueo (231): sin moneda o con una inválida NO llega a la base; nunca se supone COP (0.187ms)
+✔ crearBloqueo (231): en COP un importe positivo menor a 1.000 se bloquea con '¿Este valor está en USD?' en el servidor (0.1953ms)
+✔ crearBloqueo (231): el error del trigger de la base se muestra sin el prefijo técnico (0.251ms)
+✔ cargarBloqueosMasivo (231): la columna moneda es obligatoria por fila y se valida igual que el formulario (0.6372ms)
+✔ actualizarBloqueo (231): la moneda es opcional al editar, pero COP con un importe menor a 1.000 se bloquea antes de la base (0.4074ms)
+✔ crearBloqueo: el error de la base se devuelve (p. ej. migración 195 sin aplicar) y no revalida (0.1479ms)
+✔ cargarBloqueosMasivo: cada fila válida va por crear_bloqueo; errores de la base y de forma se reportan por fila (0.4151ms)
+✔ eliminarBloqueo: una sola RPC eliminar_bloqueo; luego regenera los paquetes que lo usaban (0.2537ms)
+✔ eliminarBloqueo: el rechazo de la base se devuelve tal cual y no regenera nada (0.1182ms)
+✔ actions.ts ya no escribe sillas ni historial directamente en las operaciones de inventario (0.6536ms)
+✔ quitar y editar el contrato manual: versión, plazo y referencia; validan antes de llamar a la base (0.2165ms)
+(node:15728) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ con pasajero y sin contrato ofrece asignar manual, pero no retirar el cupo (41.0192ms)
+✔ al quitar el contrato manual con pasajero reaparece la asignacion (17.2214ms)
+✔ un estado no vendible o con contrato no ofrece cambios impropios (9.4981ms)
+✔ retención en plazo sin contrato: ofrece asignar y manda la versión vista; si la silla cambió muestra el rechazo (35.8002ms)
+✔ retención VENCIDA: no ofrece asignar contrato; pide actualizar el plazo (la liberación sigue siendo manual) (2.8778ms)
+✔ quitar contrato manual con pasajero: pide el plazo, no acepta vacío ni pasado, y propone el guardado si sigue vigente (41.8797ms)
+✔ editar contrato manual: reemplaza la referencia con la versión vista; vacío no llama; el rechazo se muestra (17.1778ms)
+✔ un contrato generado por la aplicación no se edita ni se quita desde la celda (2.5149ms)
+✔ asignar contrato manual (#75): verificar muestra el contrato destino y el envío definitivo lleva su uid; no se envía sin verificar (20.9977ms)
+ℹ tests 67
+ℹ suites 0
+ℹ pass 67
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9145.1065

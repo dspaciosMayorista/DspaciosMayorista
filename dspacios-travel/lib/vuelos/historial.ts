@@ -35,6 +35,8 @@ export type MovimientoFila = {
   cupos_destino_despues?: number | null;
 };
 
+export type DetalleMovimiento = { id: number; sillaOrigen: number | null; sillaDestino: number | null; contrato: string | null };
+
 /** Un renglón del historial: las filas de una misma operación se agrupan. */
 export type EntradaHistorial = {
   clave: string;
@@ -48,6 +50,8 @@ export type EntradaHistorial = {
   numerosOrigen: number[];
   numerosDestino: number[];
   contratos: string[];
+  /** Una fila por silla de la operación: el detalle individual sobrevive a la agrupación. */
+  detalle: DetalleMovimiento[];
   cuposOrigen: [number, number] | null;
   cuposDestino: [number, number] | null;
 };
@@ -76,6 +80,7 @@ export function agruparHistorial(filas: MovimientoFila[]): EntradaHistorial[] {
         numerosOrigen: [],
         numerosDestino: [],
         contratos: [],
+        detalle: [],
         cuposOrigen: f.cupos_origen_antes != null && f.cupos_origen_despues != null ? [f.cupos_origen_antes, f.cupos_origen_despues] : null,
         cuposDestino: f.cupos_destino_antes != null && f.cupos_destino_despues != null ? [f.cupos_destino_antes, f.cupos_destino_despues] : null,
       };
@@ -87,12 +92,28 @@ export function agruparHistorial(filas: MovimientoFila[]): EntradaHistorial[] {
     if (f.numero_silla_destino != null) e.numerosDestino.push(f.numero_silla_destino);
     const c = f.numero_contrato ?? f.contrato_manual ?? null;
     if (c && !e.contratos.includes(c)) e.contratos.push(c);
+    e.detalle.push({ id: f.id, sillaOrigen: f.numero_silla_origen ?? null, sillaDestino: f.numero_silla_destino ?? null, contrato: c });
   }
   for (const e of out) {
     e.numerosOrigen.sort((a, b) => a - b);
     e.numerosDestino.sort((a, b) => a - b);
   }
-  return out;
+  // Más reciente primero (la consulta ya lo pide; aquí se garantiza). Empates y fechas ilegibles conservan el orden recibido.
+  const t = (e: EntradaHistorial) => { const n = Date.parse(e.fecha); return Number.isNaN(n) ? -Infinity : n; };
+  return out.map((e, i) => ({ e, i })).sort((a, b) => (t(b.e) - t(a.e) || a.i - b.i)).map((x) => x.e);
+}
+
+/** Operación REAL guardada (`tipo`), nunca deducida del texto libre del motivo. Una fila anterior a la migración 194 no trae tipo: se dice así. */
+export function tituloEntrada(e: EntradaHistorial): string {
+  switch (e.tipo) {
+    case "retiro_cupo": return "Retiro de cupo";
+    case "traslado_cupo": return "Traslado de cupos libres";
+    case "mover_con_cupo": return "Pasajero movido con su cupo";
+    case "mover_datos": return "Pasajero movido a un cupo libre";
+    default: return e.origenId != null && e.destinoId != null && e.origenId !== e.destinoId
+      ? "Cambio entre records (registro anterior)"
+      : "Movimiento anterior (tipo no guardado)";
+  }
 }
 
 /** Texto del renglón, visto desde el record `bloqueoId`. */
@@ -117,6 +138,8 @@ export function describirEntrada(e: EntradaHistorial, bloqueoId: number, recordD
     case "retiro_cupo":
       return `Cupo retirado (${n})`;
     default:
+      // Sin tipo guardado solo se afirma un cambio entre records si origen y destino constan y difieren.
+      if (e.origenId == null || e.destinoId == null || e.origenId === e.destinoId) return "Movimiento anterior: no se guardó su tipo ni su destino";
       return `${entra ? "Entró desde" : "Salió hacia"} ${otro} (cambio ${recordDe(e.origenId)} → ${recordDe(e.destinoId)})`;
   }
 }

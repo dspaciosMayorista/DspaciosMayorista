@@ -1,0 +1,73 @@
+NOTICE:  column "file_size_limit" of relation "buckets" already exists, skipping
+NOTICE:  column "allowed_mime_types" of relation "buckets" already exists, skipping
+(node:10860) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:10860) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:10860) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+(node:10860) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/lib/supabase/admin.ts?node-test-mock=0 is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ subir: pertenencia, contenido y mismos bytes
+  ✔ la dueña sube a su contrato; los bytes validados son los que se guardan y se hashean (363.9821ms)
+  ✔ un aliado de OTRA agencia, uno del mismo tenant, quien solo participa por comisión y una cuenta inactiva NO suben a un contrato ajeno (1545.7762ms)
+  ✔ sin sesión y con un rol interno no se sube nada (232.0912ms)
+  ✔ el contenido real manda: ejecutable renombrado, vacío y demasiado grande se rechazan; el tipo declarado no engaña (649.3586ms)
+✔ subir: pertenencia, contenido y mismos bytes (2791.9937ms)
+▶ límite = abonos + 1 (339), reemplazo y retiro con historial
+  ✔ el límite se respeta y no deja objetos de más (832.1363ms)
+  ✔ la base rechaza aunque el aviso temprano falle; el objeto nuevo se limpia y el anterior no se toca (687.6403ms)
+  ✔ si Storage falla al subir no queda nada; si falla la limpieza el huérfano se REPORTA (663.6513ms)
+  ✔ reemplazar: conserva el archivo y la fila anteriores, el conteo no cambia, y un ajeno no puede (1224.8145ms)
+  ✔ retirar: conserva archivo e historial; no se retira dos veces; un ajeno no retira (1216.7568ms)
+✔ límite = abonos + 1 (339), reemplazo y retiro con historial (4625.7209ms)
+▶ contrato EXCEDIDO tras anular un abono (RPC real de la 248)
+  ✔ reemplazar y retirar funcionan; subir uno nuevo no; la anulación no se bloquea ni borra evidencia (2112.6591ms)
+✔ contrato EXCEDIDO tras anular un abono (RPC real de la 248) (2112.9591ms)
+▶ abrir: aliado propio y personal interno
+  ✔ el aliado abre solo vigentes de contratos propios (1975.2844ms)
+  ✔ el personal interno abre por RLS: gerencia de su agencia y el asesor del contrato sí; otra agencia, otro asesor y sin sesión no (149.4687ms)
+✔ abrir: aliado propio y personal interno (2125.0081ms)
+▶ avisos internos
+  ✔ destinatarios inequívocos; el contenido no revela datos; sin duplicados entre pestañas; reclamar ≠ leído (821.1582ms)
+  ✔ un usuario inactivo o sin sesión no recibe nada, y un aliado ve su propio portal como destino (134.0275ms)
+✔ avisos internos (955.4375ms)
+▶ confirmación incierta del registro: nunca se arriesga evidencia registrada
+  ✔ la fila SÍ se guardó pero la respuesta se perdió: éxito confirmado por la ruta, archivo conservado y el reintento NO duplica soportes ni avisos (746.8656ms)
+  ✔ la fila se guardó, la respuesta se perdió Y no se puede confirmar: se conserva el archivo, se registra para conciliación y el reintento no duplica (816.8683ms)
+  ✔ la petición NUNCA llegó a la base: el archivo también se conserva (podría estar en vuelo), se concilia, y el reintento registra sin perder nada (695.8181ms)
+  ✔ un rechazo definitivo de la base (límite) SÍ limpia el objeto nuevo, y no toca los registrados (596.4982ms)
+✔ confirmación incierta del registro: nunca se arriesga evidencia registrada (2856.5217ms)
+▶ reemplazar: la deduplicación se decide por el soporte SELECCIONADO y su sucesor, no por un hash suelto del contrato
+  ✔ preparación: tres soportes con contenidos distintos en un contrato de 3 abonos (1179.7991ms)
+  ✔ 1 · mismo archivo que el soporte seleccionado vigente = sin cambios (sin subir, sin fila, sin aviso) (1183.557ms)
+  ✔ 2 · coincide con OTRO soporte vigente: se EJECUTA el reemplazo pedido (no se devuelve un éxito falso dejando intacto el seleccionado) (1191.2608ms)
+  ✔ 3 · reintento tras respuesta perdida: se identifica por el sucesor del soporte original; no duplica filas, objetos ni avisos (1852.2154ms)
+  ✔ 4 · un soporte retirado o ya reemplazado por OTRO contenido no produce éxito falso, aunque exista otro archivo idéntico vigente (1846.8193ms)
+✔ reemplazar: la deduplicación se decide por el soporte SELECCIONADO y su sucesor, no por un hash suelto del contrato (7254.4839ms)
+▶ consecutivo reutilizado (eliminar contrato A con p_reusar → contrato B de otro aliado con el MISMO número): la evidencia de A no pasa a B
+  ✔ preparación: contrato A (minorista, aliado C) con dos soportes y avisos; se elimina con p_reusar=true; B nace con el mismo número y es de OTRO aliado (1466.3995ms)
+  ✔ la evidencia de A se CONSERVA (filas y archivos) aunque A ya no exista (317.1916ms)
+  ✔ B no LISTA los soportes de A (21.5338ms)
+  ✔ B no ABRE, no REEMPLAZA ni RETIRA soportes de A (y las filas de A no cambian) (1321.3797ms)
+  ✔ B no CUENTA los soportes de A contra su límite: con 1 abono propio suben 2 (1 + el adicional) y el tercero sí topa (667.1147ms)
+  ✔ el personal de la agencia no recibe ni ve los avisos antiguos de A, ni los alcanza por sus enlaces; sí los nuevos de B (59.3586ms)
+  ✔ la ficha interna de B (RLS) no lista soportes de A, ni para su gerencia ni para su asesor; la evidencia sigue disponible para superadmin (48.8178ms)
+✔ consecutivo reutilizado (eliminar contrato A con p_reusar → contrato B de otro aliado con el MISMO número): la evidencia de A no pasa a B (3902.6671ms)
+▶ renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MISMO contrato; después otro aliado reutiliza el número viejo
+  ✔ preparación: contrato minorista del aliado C con 2 abonos, 3 soportes (uno reemplazado: historial) y avisos para su personal (2479.4509ms)
+  ✔ se renumera con la RPC REAL (superadmin): el contrato existe con el número nuevo (401.7434ms)
+  ✔ continuidad en la base: filas, historial, conteos y rutas físicas intactos bajo el número nuevo; nada archivado (810.6641ms)
+  ✔ el aliado dueño sigue LISTANDO, ABRIENDO, REEMPLAZANDO y RETIRANDO bajo el número nuevo, y el límite continúa (1956.9738ms)
+  ✔ el personal sigue con acceso: gerencia y asesor del contrato ven TODA la evidencia (vigentes e historial) y los avisos con el número nuevo (224.409ms)
+  ✔ DESPUÉS otro aliado reutiliza el número VIEJO: no hereda soportes, conteos, avisos ni permisos del contrato renumerado; la evidencia se conserva (7326.1506ms)
+✔ renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MISMO contrato; después otro aliado reutiliza el número viejo (13200.1491ms)
+ℹ tests 36
+ℹ suites 9
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 40358.3281

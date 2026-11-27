@@ -26,7 +26,9 @@ test("el guardado conserva los tres datos: la fila del hotel, la RPC y la lectur
   const a = leer("app/(dashboard)/dashboard/paquetes/total/actions.ts");
   assert.match(a, /estrellas: h\.estrellas, ubicacion: h\.ubicacion\.trim\(\) \|\| null/);
   assert.match(a, /descripcion: h\.descripcion \|\| null/);
-  const p = leer("app/(dashboard)/dashboard/paquetes/total/[id]/page.tsx");
+  // #61: el mapeo fila → editor vive en `entradaDesdeFilas` (lo comparten la edición y la duplicación); la página de edición debe seguir usándolo.
+  const p = leer("lib/paqueteDinamico/entradaDesdeFilas.ts");
+  assert.match(leer("app/(dashboard)/dashboard/paquetes/total/[id]/page.tsx"), /entradaDesdeFilas\(/);
   assert.match(p, /estrellas: x\.estrellas == null \? null : Number\(x\.estrellas\), ubicacion: str\(x\.ubicacion\)/);
 });
 
@@ -44,7 +46,11 @@ test("con ficha, el servidor copia estrellas/descripcion/ubicacion de hoteles (n
 
 test("la vista pública lleva estrellas y ubicación (nunca netos) y la tarjeta usa los componentes del hotel normal", () => {
   const pub = leer("lib/paqueteDinamico/publico.ts");
-  assert.match(pub, /estrellas: h\.estrellas \?\? null, ubicacion: h\.ubicacion\?\.trim\(\) \?\? ""/);
+  // #88: el armado de estas dos cifras pasó a `presentacionDelHotel` (prioridad catálogo → copia guardada); sigue partiendo de lo guardado en la fila (`h.estrellas ?? null`, `h.ubicacion?.trim()`).
+  // El comportamiento (no solo el texto) lo prueban pruebas/paqueteDinamico88HotelCatalogo.test.ts.
+  assert.match(pub, /estrellas: c\?\.estrellas \?\? h\.estrellas \?\? null/);
+  assert.match(pub, /ubicacion: c\?\.ubicacion \|\| \(h\.ubicacion\?\.trim\(\) \?\? ""\)/);
+  assert.match(pub, /estrellas: pr\.estrellas, ubicacion: pr\.ubicacion/);
   const t = leer("app/tarifario/PorDinamicos.tsx");
   assert.match(t, /import \{ Categoria, DescripcionHotelExpandible, UbicacionHotel \} from "\.\/tarjetaHotelCompartida"/);
   assert.match(t, /<Categoria estrellas=\{h\.estrellas\}/); assert.match(t, /<DescripcionHotelExpandible texto=\{h\.descripcion\}/); assert.match(t, /<UbicacionHotel hotelNombre=\{h\.nombre\} ubicacion=\{h\.ubicacion\}/);

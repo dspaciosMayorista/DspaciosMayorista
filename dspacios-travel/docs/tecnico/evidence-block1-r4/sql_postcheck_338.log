@@ -1,0 +1,7 @@
+vouchers has servicio_clave, revision (not null, default 0) and actualizado_en|3|3|OK
+every air voucher has a service key (no air voucher without one)|0|0|OK
+index per (contract, service) exists and the 337 one-per-contract index is gone|1/0|1/0|OK
+guardar_vouchers_vuelo is SECURITY INVOKER, executable by authenticated, not by anon; the 337 function is gone|false/false/0|false/false/0|OK
+the three 309 functions carry the revision logic and are still SECURITY DEFINER (the superadmin guard is inside them)|3|3|OK
+right after install no voucher has a revision above 0 (a revision only appears when a regenerated voucher really changes)|0|0 right after install|OK
+air vouchers present (compare with preflight control 4: the install deletes none)|0|same as preflight control 4|REVIEW

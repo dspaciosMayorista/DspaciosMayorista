@@ -8,9 +8,9 @@ Estado: **código y migración escritos y probados en local; NADA aplicado en re
 
 - El aliado adjunta comprobantes (PDF, JPG o PNG) a **sus** contratos desde `Portal → Cartera → Soportes de pago`.
 - Un soporte **no es un pago**: no toca abonos, saldos, asientos ni conciliación.
-- **Límite por contrato:** soportes vigentes ≤ número de abonos registrados. Pueden ser menos (un PDF puede reunir varios abonos). No hay vínculo soporte–abono.
+- **Límite por contrato:** soportes vigentes ≤ número de abonos registrados **+ 1** (migración 339, decisión del dueño: el cupo adicional es del CONTRATO, no de un pago concreto; la 281 decía ≤ abonos). Pueden ser menos (un PDF puede reunir varios abonos). No hay vínculo soporte–abono.
 - **Reemplazar** (mantiene la cantidad vigente) y **retirar** (saca del conjunto vigente) conservan fila, actor, fecha **y el archivo anterior**. Nada se borra físicamente en esta entrega.
-- **Excedido** (más vigentes que abonos, p. ej. tras anular un abono) **se calcula, no se guarda**. Estando excedido: reemplazar ✔, retirar ✔, subir uno nuevo ✘. La anulación de abonos (`anular_abono`, 248) no se modifica ni se bloquea.
+- **Excedido** (más vigentes que abonos + 1, p. ej. tras anular un abono) **se calcula, no se guarda**. Estando excedido: reemplazar ✔, retirar ✔, subir uno nuevo ✘. La anulación de abonos (`anular_abono`, 248) no se modifica ni se bloquea.
 - El personal interno consulta los soportes y su historial en la ficha del contrato (`contratos/[numero]`).
 - Avisos **solo dentro del sistema** (campana, contador, título de pestaña, notificación del navegador y sonido con activación de la persona). Sin correo.
 
@@ -32,7 +32,7 @@ Estado: **código y migración escritos y probados en local; NADA aplicado en re
 ## Reglas que impone la BASE (no la interfaz)
 
 - Cada función (`soporte_registrar`, `soporte_reemplazar`, `soporte_retirar`) toma primero `FOR UPDATE` sobre `ventas` — el mismo primer bloqueo de `anular_abono` y `registrar_abono` (venta → abono) — y después solo filas de soportes/avisos, que esas RPC no tocan. No hay ciclo con ellas. `lock_timeout` de 5 s.
-- Trigger de inserción: el contrato existe, el `tenant` coincide con el de la venta, el cupo (`vigentes + 1 ≤ abonos`). **Sustitución sin bandera:** la fila nueva declara `reemplaza_id` y el trigger verifica que la anterior es del mismo contrato, quedó retirada con motivo `reemplazo` **en esa misma transacción** y nadie la sustituyó antes (índice único parcial). Un trigger **diferido** comprueba al confirmar que todo reemplazo tiene sucesor.
+- Trigger de inserción: el contrato existe, el `tenant` coincide con el de la venta, el cupo (`vigentes + 1 ≤ abonos + 1` desde la 339; `≤ abonos` en la 281 — la 339 reemplaza solo esta función, `f281_soportes_insert`). **Sustitución sin bandera:** la fila nueva declara `reemplaza_id` y el trigger verifica que la anterior es del mismo contrato, quedó retirada con motivo `reemplazo` **en esa misma transacción** y nadie la sustituyó antes (índice único parcial). Un trigger **diferido** comprueba al confirmar que todo reemplazo tiene sucesor.
 - Inmutabilidad de contrato, tenant, ruta, hash y autor; sin `DELETE` ni `TRUNCATE`; sin vuelta atrás de un retiro.
 - `anon`/`authenticated`/`service_role` no escriben la tabla directamente; solo las funciones `SECURITY DEFINER` (ejecutables únicamente por `service_role`).
 - **Autorización del aliado = código** (service-role): `contratosDelPortalB2B` (ids; respaldo por nombre solo si ya está concedido). **Participar por comisión no concede nada.** Se vuelve a resolver en CADA operación, leyendo el contrato de la base (nunca del navegador).

@@ -152,7 +152,7 @@ const paquete = (hoteles: Record<string, unknown>[]) => ({
   id: 1, nombre: "Paquete", moneda: "COP", destino: "CARTAGENA", noches: 3, descripcion: "", incluye: [], noIncluye: [], compraFin: null, usaHotel: true, usaVuelo: false, usaServicios: false,
   vuelos: [], servicios: [], hoteles, opciones: hoteles.map((x) => opcion(x.id as number)),
 });
-const hotelPub = (o: Record<string, unknown>) => ({ id: 1, nombre: "Hotel Mar", categoria: "Superior", regimen: "PAE", descripcion: "", foto: "/marca/hotel-predeterminado.svg", desde: 300000, reglas: null, categorias: [], regimenes: [], estrellas: null, ubicacion: "", ...o });
+const hotelPub = (o: Record<string, unknown>) => ({ id: 1, nombre: "Hotel Mar", categoria: "Superior", regimen: "PAE", descripcion: "", foto: "/marca/hotel-predeterminado.svg", fotos: ["/marca/hotel-predeterminado.svg"], desde: 300000, reglas: null, categorias: [], regimenes: [], estrellas: null, clasificacion: "", ubicacion: "", ...o });
 
 test("tarjeta pública: estrellas del hotel, descripción y mapa; la categoría de habitación va rotulada aparte", async () => {
   await montar(h(PorDinamicos, { dinamicos: [paquete([hotelPub({ estrellas: 4, descripcion: "Frente al mar", ubicacion: "Bocagrande, Cartagena" })])] as never, evaluar: (async () => ({ ok: false, error: "" })) as never }));
@@ -173,6 +173,16 @@ test("tarjeta pública: sin estrellas, descripción ni ubicación no se inventa 
   assert.equal(cont!.querySelector('span[title$="estrellas"]'), null);
   assert.equal(cont!.querySelector("iframe"), null);
   assert.doesNotMatch(cont!.textContent!, /Ubicación/);
+});
+
+test("#88 tarjeta pública: galería del catálogo (contador 1 / n) y clasificación solo cuando no hay estrellas", async () => {
+  await montar(h(PorDinamicos, { dinamicos: [paquete([hotelPub({ fotos: ["/f/portada.jpg", "/f/dos.jpg", "/f/tres.jpg"], foto: "/f/portada.jpg", clasificacion: "Boutique" })])] as never, evaluar: (async () => ({ ok: false, error: "" })) as never }));
+  assert.match(cont!.textContent!, /1 \/ 3/, "contador de la galería");
+  assert.match(cont!.textContent!, /Boutique/, "sin estrellas se muestra la clasificación del catálogo");
+  await montar(h(PorDinamicos, { dinamicos: [paquete([hotelPub({ estrellas: 4, clasificacion: "Boutique" })])] as never, evaluar: (async () => ({ ok: false, error: "" })) as never }));
+  assert.ok(cont!.querySelector('span[title="4 estrellas"]'), "con estrellas se muestran estrellas");
+  assert.doesNotMatch(cont!.textContent!, /Boutique/, "la clasificación no se suma a las estrellas");
+  assert.doesNotMatch(cont!.textContent!, /\d \/ \d/, "una sola foto: sin contador");
 });
 
 // ── Categoría de habitación y plan de alimentación: elegir una existente o escribir una nueva (solo de este paquete) ──

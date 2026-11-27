@@ -5,8 +5,10 @@ import { revalidatePath } from "next/cache";
 import { regenerarTarifariosDeHotelAcotado } from "../../../paquetes/actions";
 import type { ResultadoRegeneracionHotel } from "@/lib/tarifario/regeneracionHotel";
 import { MENSAJE_CIERRE_UNIDAD_NO_SOPORTADO } from "@/lib/tarifario/cierresHotel";
+import { despuesDeResponder, type ModoDespues } from "@/lib/tarifario/despuesDeResponder";
 
-type Result = { ok: true; aviso?: string } | { ok: false; error: string };
+// `regeneracion`: «diferida» = la fila ya está guardada/borrada y los tarifarios se regeneran DESPUÉS de responder (sin que el usuario espere); «inmediata» = se esperó (fuera de una petición de Next).
+type Result = { ok: true; aviso?: string; regeneracion?: ModoDespues; id?: number } | { ok: false; error: string };
 
 // #127: un cierre general cambia lo vendible de TODOS los paquetes que usan el hotel. Guardarlo ya no solo refresca esta pantalla: se regeneran sus tarifarios (acotado, igual que
 // al editar una tarifa) y, si algo no se pudo regenerar, se dice (la venta igual rechaza la estadía cerrada: ver computarReserva).
@@ -34,7 +36,8 @@ export async function crearBlackout(input: {
     if (hmErr) return { ok: false, error: "No se pudo comprobar el modelo de tarifa del hotel. Intenta de nuevo." };
     if (hm?.modelo_tarifario === "unidad") return { ok: false, error: MENSAJE_CIERRE_UNIDAD_NO_SOPORTADO };
   }
-  const { error } = await sb.from("hotel_blackouts").insert({
+  const inicioMs = Date.now();
+  const { data: creado, error } = await sb.from("hotel_blackouts").insert({
     hotel_id: input.hotelId,
     fecha_inicio: input.fechaInicio,
     fecha_fin: input.fechaFin,
@@ -42,19 +45,35 @@ export async function crearBlackout(input: {
     acomodaciones: input.total || !input.acomodaciones.length ? null : input.acomodaciones,
     categorias: input.total || !categorias.length ? null : categorias,
     motivo: input.motivo.trim() || null,
-  });
+  }).select("id").maybeSingle();
   if (error) return { ok: false, error: error.message };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
-  const aviso = avisoRegeneracion(await regenerarTarifariosDeHotelAcotado(input.hotelId));
-  return { ok: true, ...(aviso ? { aviso } : {}) };
+  const { regeneracion, aviso } = await regenerarDespues(input.hotelId, inicioMs);
+  return { ok: true, regeneracion, ...(creado?.id != null ? { id: creado.id } : {}), ...(aviso ? { aviso } : {}) };
 }
 
-export async function eliminarBlackout(id: number, hotelId: number): Promise<Result> {
+// El hotel sale de la fila realmente borrada (nunca del parámetro) y se verifica que HAYA una fila: con RLS un borrado sin permiso afecta 0 filas SIN error, y decir «listo» haría
+// desaparecer de la pantalla un cierre que sigue vigente.
+export async function eliminarBlackout(id: number, _hotelIdSolicitado?: number): Promise<Result> {
+  void _hotelIdSolicitado;
   const sb = await createClient();
-  const { error } = await sb.from("hotel_blackouts").delete().eq("id", id);
+  const inicioMs = Date.now();
+  const { data: borrado, error } = await sb.from("hotel_blackouts").delete().eq("id", id).select("hotel_id").maybeSingle();
   if (error) return { ok: false, error: error.message };
-  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  if (!borrado) return { ok: false, error: "No se pudo eliminar el cierre: ya no existe o no tienes permiso para borrarlo." };
+  revalidatePath(`/dashboard/producto/hoteles/${borrado.hotel_id}`);
   // Reabrir también cambia lo vendible (vuelven estadías): se regenera para que reaparezcan.
-  const aviso = avisoRegeneracion(await regenerarTarifariosDeHotelAcotado(hotelId));
-  return { ok: true, ...(aviso ? { aviso } : {}) };
+  const { regeneracion, aviso } = await regenerarDespues(borrado.hotel_id, inicioMs);
+  return { ok: true, regeneracion, ...(aviso ? { aviso } : {}) };
+}
+
+// La regeneración de TODOS los paquetes que usan el hotel (~16 consultas por paquete, de a 2 paquetes) ya no se espera para responder: el cierre ya está en la base y la base oculta las filas
+// cerradas en el mismo instante (migración 315) y la venta lo valida en vivo. Si la regeneración no se puede hacer, queda registrada y el paquete queda marcado por su propio mecanismo.
+async function regenerarDespues(hotelId: number, inicioMs: number): Promise<{ regeneracion: ModoDespues; aviso?: string }> {
+  let aviso: string | undefined;
+  const regeneracion = await despuesDeResponder("blackouts", async () => {
+    aviso = avisoRegeneracion(await regenerarTarifariosDeHotelAcotado(hotelId, inicioMs));
+    if (aviso) console.error(`blackouts: ${aviso}`);
+  });
+  return { regeneracion, ...(regeneracion === "inmediata" && aviso ? { aviso } : {}) };
 }

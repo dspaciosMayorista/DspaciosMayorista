@@ -13,6 +13,7 @@ import { modulosConsultables, miRol } from "@/lib/roles";
 import { tenantContext } from "@/lib/tenant.server";
 import { TenantSwitcher } from "./TenantSwitcher";
 import { CampanaAvisos } from "@/components/avisos/CampanaAvisos";
+import { PresenciaActiva } from "@/components/presencia/PresenciaActiva";
 import { AvisoContextoAgencia } from "./AvisoContextoAgencia";
 import { POWERED_BY } from "@/lib/contrato/plantilla";
 import styles from "./DashboardShell.module.css";
@@ -221,6 +222,7 @@ export default async function DashboardLayout({
 
       {/* Sidebar (escritorio) — recogible. El switcher de agencia vive en el
           Topbar (evita mostrar el mismo control dos veces a la vez). */}
+      <PresenciaActiva />
       <DesktopSidebar nav={nav} tenant={tenant} />
 
       {/* Columna derecha: topbar real (escritorio) + contenido. La página

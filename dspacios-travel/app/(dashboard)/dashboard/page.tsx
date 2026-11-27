@@ -10,9 +10,13 @@ import {
 import {
   Tags, FileText, Ticket, FileSignature, Plane, LineChart, ArrowRight,
   Package, Armchair, Wallet, HandCoins, Receipt, Settings, Boxes, ChevronRight,
-  PlaneTakeoff, AlertTriangle, FileCheck2, ShieldCheck, Percent, type LucideIcon,
+  PlaneTakeoff, AlertTriangle, CalendarClock, FileCheck2, ShieldCheck, Percent, type LucideIcon,
 } from "lucide-react";
 import { LECTURA_MODULO } from "@/lib/constants";
+import { ActividadReciente } from "@/components/dashboard/ActividadReciente";
+import { AlertasCompra } from "@/components/dashboard/AlertasCompra";
+import { cargarAlertasCompra } from "@/lib/avisos/alertasCompra";
+import type { ResumenActividad } from "@/lib/actividad/consulta";
 import styles from "../DashboardShell.module.css";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +76,8 @@ export default async function DashboardPage() {
     { data: metaVentasFilas },
     { data: carteraFilas },
     { data: ventaMesFilas },
+    { data: actividadResumen, error: actividadError },
+    alertasCompra,
   ] = await Promise.all([
     esMinorista ? Promise.resolve({ count: 0 }) : supabase.from("paquetes").select("id", { count: "exact", head: true }),
     // Contratos por estado — antes bajaba TODAS las ventas del tenant.
@@ -116,7 +122,14 @@ export default async function DashboardPage() {
     interno
       ? supabase.rpc("fn_dashboard_ventas_mes", { p_tenant: tenant, p_periodo: mesActual })
       : Promise.resolve({ data: [] as { moneda: string; total: number }[] }),
+    // #11 / B3-01: presencia reciente del equipo — SOLO superadmin (la función de base lo exige otra vez). Un AGREGADO (cinco conteos, sin filas por persona); el detalle paginado se pide al abrir el modal.
+    perfil?.rol === "superadmin"
+      ? supabase.rpc("fn_actividad_resumen" as never)
+      : Promise.resolve({ data: null, error: null }),
+    // B3-02: alertas de fin de compra ACTIVAS de esta persona (hasta 20 + el total). Solo roles que escriben paquetes; la agencia mayorista es la dueña del catálogo, así que en minorista no aplica. Sin sondeo.
+    user && !esMinorista ? cargarAlertasCompra(user.id, perfil?.rol) : Promise.resolve({ ok: true, alertas: [], total: 0 }),
   ]);
+  const resumenPresencia = ((actividadResumen as unknown as ResumenActividad[] | null) ?? [])[0] ?? null;
 
   // Contratos: denominador = TODOS los vigentes no cancelados (pendiente +
   // confirmado + activo); numerador = confirmado O activo (filtro explícito,
@@ -343,6 +356,7 @@ export default async function DashboardPage() {
   const alertas: { icon: LucideIcon; label: string; n: number | null; href: string; detalle?: string }[] = [
     ...(!esMinorista ? [{ icon: AlertTriangle, label: "Cupos críticos", n: cuposOk ? proximasSillas : null, href: "/dashboard/vuelos?vista=inventario", detalle: cuposOk ? `${proximasSillas.toLocaleString("es-CO")} ${plural(proximasSillas, "silla")} ${plural(proximasSillas, "disponible")} en ${proximosRecords.toLocaleString("es-CO")} ${plural(proximosRecords, "record")} con sillas que salen en 14 días` : "cifra no disponible" }] : []),
     ...(interno ? [{ icon: Receipt, label: "Pagos por vencer (15d)", n: cxpTotal, href: "/dashboard/pagos" }] : []),
+    ...(!esMinorista && interno ? [{ icon: CalendarClock, label: "Vigencias de compra por terminar", n: alertasCompra.ok ? alertasCompra.total : null, href: "#alertas-compra", detalle: alertasCompra.ok ? undefined : "cifra no disponible" }] : []),
   ];
 
   return (
@@ -398,8 +412,12 @@ export default async function DashboardPage() {
           <div className="flex flex-wrap gap-2">
             {alertas.map((a) => <AlertChip key={a.label} {...a} />)}
           </div>
+          <AlertasCompra key={alertasCompra.alertas.map((a) => a.id).join(",")} alertas={alertasCompra.alertas} total={alertasCompra.total} />
         </section>
       )}
+
+      {/* 4b. #11 Actividad reciente del equipo (solo superadmin). */}
+      {perfil?.rol === "superadmin" && <ActividadReciente resumen={resumenPresencia} error={!!actividadError} />}
 
       {/* 5. Módulos — mismo catálogo y gating de siempre (MODULOS). */}
       <h2 className="mb-3 mt-7 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dash-ink-muted)" }}>Módulos</h2>

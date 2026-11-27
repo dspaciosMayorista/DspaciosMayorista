@@ -150,6 +150,7 @@ import { resolverAliadoAsistencia, type AliadoResuelto } from "@/lib/cotizacion/
 import { blackoutQueAplica, mensajeBlackout, type BlackoutPrograma } from "@/lib/programas/blackouts409";
 import { rangoViajeConTraslados, trasladosDeItinerario, errorFechasSalida } from "@/lib/programas/trasladosFechas";
 import type { TerminosVisibles } from "@/components/cotizacion/TerminosB2BAsistido";
+import { estadoConversionCotizacion, reclamarConversion, liberarConversion, resultadoDeConversionExistente, MENSAJE_CONVERSION_EN_CURSO } from "@/lib/cotizacion/conversionReclamo";
 
 const oNull = (s: string | null | undefined) => (s && s.trim() !== "" ? s.trim() : null);
 
@@ -294,7 +295,7 @@ async function trmCostoContratoUsd(p: {
 // (mismo archivo), que ya validó `cot.tenant` en el servidor antes de llamar
 // — el tenant llega aquí siempre ya autorizado, nunca desde el navegador.
 // `costo`: TRM de COSTOS (solo contratos en USD): la recibida de quien convierte, ya con su permiso resuelto en el servidor (nunca del navegador).
-async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant, solicitud?: { neta: NetaSolicitud; precioCongelado: number }, costo?: { trmRecibida: unknown; esInterno: boolean }): Promise<ReservaResult> {
+async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant, solicitud?: { neta: NetaSolicitud; precioCongelado: number }, costo?: { trmRecibida: unknown; esInterno: boolean }, cotizacionOrigen?: number): Promise<ReservaResult> {
   let sb = await createClient(); // identidad:n/a — lecturas y sesión previas al INSERT: el contrato aún no existe (tras el INSERT se reasigna con la identidad)
 
   // Fallas NO bloqueantes que SÍ se reportan (ver el comentario de
@@ -591,6 +592,8 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     asesor: oNull(input.asesorInterno),
     plan_nombre: cab.plan_nombre,
     aceptacion_63_id: aceptacion63?.aceptacion_id ?? null,
+    // #40: una conversión corriente (sin oferta #63) liga su cotización de origen en el propio INSERT; `ventas_cotizacion_id_key` (164) hace imposible que dos conversiones simultáneas creen dos contratos.
+    cotizacion_id: aceptacion63 ? null : (cotizacionOrigen ?? null),
     // 235: moneda de cobro CONGELADA con el intento (NULL = aceptación anterior a la 235 o fuera del modo #63: se cobra en la moneda de la oferta).
     // La base compara estas tres columnas contra lo aceptado y las vuelve inmutables.
     moneda_cobro: aceptacion63?.cobro?.moneda ?? null,
@@ -598,6 +601,12 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
     total_cobro: aceptacion63?.cobro?.total ?? null,
   });
   // #63: la guarda de la cabecera (p63_cabecera) habla de intentos y snapshots; el navegador recibe un mensaje de negocio.
+  // #40: la otra conversión de la MISMA cotización ganó la carrera (respaldo: el reclamo previo de `convertirCotizacion` ya evita gastar este número). Solo se devuelve el
+  // contrato ya existente si está COMPLETO (`financiero_estado = 'completo'`); una cabecera aún pendiente es una conversión en curso y nunca se informa como terminada.
+  if (ve && cotizacionOrigen != null && !aceptacion63 && ve.code === "23505" && /ventas_cotizacion_id_key/.test(ve.message)) {
+    const previo = await resultadoDeConversionExistente(createAdminClient(), cotizacionOrigen, tenant); // identidad:n/a — lectura del contrato ya existente de esta cotización
+    if (previo) return previo;
+  }
   if (ve) return { ok: false, error: aceptacion63 && /p63_cabecera/.test(ve.message) ? MENSAJE_EN_CURSO_63 : ve.message };
 
   // A partir de aquí el contrato YA existe: ninguna salida por error puede
@@ -757,7 +766,8 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       const { data: hp } = await clientH.from("hoteles").select("proveedores(nombre)").eq("id", input.hotelId).maybeSingle();
       proveedorHotel = (hp?.proveedores as unknown as { nombre: string } | null)?.nombre ?? null;
     }
-    await sb.from("contrato_hoteles").insert({
+    // Codex F1: un fallo aquí ya no se ignora (antes el contrato quedaba «completo» sin su hotel): revierte la reserva como el resto de pasos.
+    const { error: ehotel } = await sb.from("contrato_hoteles").insert({
       numero_contrato: numero,
       nombre: meta.hotel_nombre ?? "",
       categoria: input.categoria,
@@ -770,6 +780,7 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       fecha_salida: meta.fecha_regreso,
       orden: 0,
     });
+    if (ehotel) return fallarYRevertir(`No se pudo guardar el hotel del contrato: ${ehotel.message}`);
   }
 
   // 6bis) Congelar condiciones de pago (Rama B, migración 165) — best-effort,
@@ -937,7 +948,10 @@ async function reservarDesdeTarifarioInterno(input: ReservaInput, tenant: Tenant
       const { error: eit } = await sb.from("contrato_items").insert(aceptacion63.snapshot.items.map((it) => ({ numero_contrato: numero, ...it })));
       if (eit) return fallarYRevertir(`No se pudieron guardar los valores del contrato: ${eit.message}`);
     }
-  } else if (items.length) await sb.from("contrato_items").insert(items);
+  } else if (items.length) {
+    const { error: eitems } = await sb.from("contrato_items").insert(items);
+    if (eitems) return fallarYRevertir(`No se pudieron guardar los valores del contrato: ${eitems.message}`);
+  }
 
   // Cuentas por pagar y costos del contrato (pasos 9 a 12): `calcularFinancieroReserva` (más abajo) los calcula; la escritura
   // atómica es el paso 12 (`registrarFinancieroContrato`).
@@ -1789,7 +1803,44 @@ export async function convertirCotizacion(
     if (!nc.ok) return { ok: false, error: nc.error };
     if (nc.neta) solicitudNeta = { neta: nc.neta, precioCongelado: nc.precioVenta };
   }
-  const res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant, solicitudNeta, { trmRecibida: trmCosto, esInterno: ctx.ok && ctx.interno !== false });
+  // #40 / Codex F1: una conversión corriente (sin oferta #63) RECLAMA la cotización antes de numerar. Una conversión idéntica y simultánea (otra pestaña, reintento) no gasta otro número:
+  // ve el contrato ya COMPLETO (se devuelve y se liga la cotización) o una conversión en curso (error reintentable que no toca nada). La oferta #63 conserva su aceptación atómica propia.
+  const adminConv = process.env.SUPABASE_SERVICE_ROLE_KEY ? createAdminClient() : null; // identidad:n/a — reclamo/estado de la conversión: no escribe tablas del contrato
+  let tokenReclamo: string | null = null;
+  let res: ReservaResult | null = null;
+  if (adminConv && !payload.oferta63) {
+    const previo = await estadoConversionCotizacion(adminConv, id, cot.tenant);
+    if (!previo.ok) return { ok: false, error: previo.error };
+    if (previo.estado === "completa") res = { ok: true, numero: previo.numero, ...(previo.contratoUid ? { contratoUid: previo.contratoUid } : {}) };
+    else if (previo.estado === "en_curso") return { ok: false, error: MENSAJE_CONVERSION_EN_CURSO };
+    else {
+      const rc = await reclamarConversion(adminConv, id);
+      if (!rc.ok) return { ok: false, error: rc.error };
+      if (rc.token === null) {
+        // Otro reclamo vigente: pudo terminar entre las dos lecturas.
+        const otra = await estadoConversionCotizacion(adminConv, id, cot.tenant);
+        if (otra.ok && otra.estado === "completa") res = { ok: true, numero: otra.numero, ...(otra.contratoUid ? { contratoUid: otra.contratoUid } : {}) };
+        else return { ok: false, error: otra.ok ? MENSAJE_CONVERSION_EN_CURSO : otra.error };
+      } else tokenReclamo = rc.token;
+    }
+  }
+  // Codex C1: el estado leído arriba pudo cambiar ANTES de adquirir este reclamo (otra solicitud completó y liberó el suyo en ese intervalo). Con el reclamo en la mano se REVALIDA el estado
+  // antes de invocar la reserva (que numera): completa → se devuelve ese contrato; en curso → reintentable; solo «ninguna» numera. Cualquier salida libera el reclamo (finally).
+  if (!res) {
+    try {
+      if (adminConv && tokenReclamo) {
+        const bajoReclamo = await estadoConversionCotizacion(adminConv, id, cot.tenant);
+        if (!bajoReclamo.ok) return { ok: false, error: bajoReclamo.error };
+        if (bajoReclamo.estado === "en_curso") return { ok: false, error: MENSAJE_CONVERSION_EN_CURSO };
+        if (bajoReclamo.estado === "completa") res = { ok: true, numero: bajoReclamo.numero, ...(bajoReclamo.contratoUid ? { contratoUid: bajoReclamo.contratoUid } : {}) };
+      }
+      if (!res) {
+        res = await reservarDesdeTarifarioInterno({ ...payload, pasajeros: pax, asesorInterno: asesor, oferta63: payload.oferta63 ? { ...payload.oferta63, cotizacionId: id, trmProvisional: trmProvisional ?? null, monedaCobro: monedaCobro ?? null, trmCobro: trmCobro ?? null } : payload.oferta63 }, cot.tenant as Tenant, solicitudNeta, { trmRecibida: trmCosto, esInterno: ctx.ok && ctx.interno !== false }, id);
+      }
+    } finally {
+      if (adminConv && tokenReclamo) await liberarConversion(adminConv, id, tokenReclamo);
+    }
+  }
   if (!res.ok) return res;
 
   // #75: ligar la cotización al número exige la identidad del contrato que ESTE flujo acaba de crear.
@@ -2832,11 +2883,13 @@ export async function convertirCotizacionCarrito(
     if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los servicios del carrito; no se crea ningún contrato. Intenta de nuevo." };
     for (const r of filas ?? []) monedaServicio.set(r.id as number, (r as { moneda?: unknown }).moneda);
   }
-  const bloqueosObl = new Map<number, { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown }>();
+  const bloqueosObl = new Map<number, { moneda: unknown; tarifa_neta: unknown; fee_infante: unknown }>();
   if (idsBloqueosObl.size) {
-    const { data: filas, error: errMon } = await admin.from("bloqueos_vuelo").select("id, moneda, tarifa_para_empaquetar, fee_infante").in("id", [...idsBloqueosObl]);
+    const { data: filas, error: errMon } = await admin.from("bloqueos_vuelo").select("id, moneda, tarifa_neta, fee_infante").in("id", [...idsBloqueosObl]);
     if (errMon) return { ok: false, error: "No se pudo verificar la moneda de los vuelos del carrito; no se crea ningún contrato. Intenta de nuevo." };
-    for (const r of filas ?? []) bloqueosObl.set(r.id as number, r as unknown as { moneda: unknown; tarifa_para_empaquetar: unknown; fee_infante: unknown });
+    for (const r of filas ?? []) bloqueosObl.set(r.id as number, r as unknown as { moneda: unknown; tarifa_neta: unknown; fee_infante: unknown });
+    // Un bloqueo pedido que no vuelve en una respuesta "exitosa" no se omite en silencio: sin su fila no hay costo aéreo ni CxP.
+    if ([...idsBloqueosObl].some((id) => !bloqueosObl.has(id))) return { ok: false, error: "No se pudo verificar un vuelo negociado del carrito (ya no existe o no se puede leer); no se crea ningún contrato. Intenta de nuevo." };
   }
   let requiereTrmCosto = false;
   for (const { grupo, validadosPersona, validadosBernalo } of gruposValidados) {
@@ -2845,7 +2898,10 @@ export async function convertirCotizacionCarrito(
       const { numMenoresDeDos, numInfantes } = menoresDelComputo(v.comp, { infantesDeclarados: v.item.infantes || 0 });
       obligaciones.push({ origen: `Hotel ${v.comp.meta.hotel_nombre ?? v.item.hotelNombre}`, moneda: v.comp.monedaReserva, valor: costoHotelPersona(v.comp, numInfantes) });
       const bq = v.item.modulo === "bloqueo" && v.item.bloqueoId ? bloqueosObl.get(v.item.bloqueoId) : undefined;
-      if (bq) obligaciones.push({ origen: `Vuelo de ${v.item.hotelNombre}`, moneda: bq.moneda, valor: costoAereoBloqueo(bq, v.comp.paxConSilla, numMenoresDeDos) });
+      if (bq) {
+        try { obligaciones.push({ origen: `Vuelo de ${v.item.hotelNombre}`, moneda: bq.moneda, valor: costoAereoBloqueo(bq, v.comp.paxConSilla, numMenoresDeDos) }); }
+        catch (e) { return { ok: false, error: `${v.item.hotelNombre}: ${e instanceof Error ? e.message : "no se pudo costear el vuelo"} No se crea ningún contrato.` }; }
+      }
       for (const sv of v.incluidos) obligaciones.push({ origen: sv.nombre, moneda: monedaServicio.get(sv.servicioId), valor: sv.costoNeto });
     }
     for (const v of validadosBernalo) {
@@ -3360,10 +3416,15 @@ export async function convertirCotizacionCarrito(
       }
 
       if (it.modulo === "bloqueo" && it.bloqueoId) {
-        const { data: bq } = await admin
+        const { data: bq, error: eBq } = await admin
           .from("bloqueos_vuelo")
-          .select("aerolinea, moneda, record, ruta, tarifa_para_empaquetar, fee_infante, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
+          .select("aerolinea, moneda, record, ruta, tarifa_neta, fee_infante, fecha_ida, fecha_regreso, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, proveedores(nombre, aplica_retencion, pct_retencion)")
           .eq("id", it.bloqueoId).maybeSingle();
+        // El vuelo del bloqueo es obligatorio: sin su lectura no hay tramo, costo aéreo ni CxP. Se revierte el contrato en curso, nunca se omite.
+        if (eBq || !bq) {
+          if (eBq) console.error(`[convertirCotizacionCarrito] etapa=vuelo_bloqueo bloqueo=${it.bloqueoId} motivo=${eBq.message}`);
+          return fallarYRevertirGrupo(`No se pudo leer el vuelo negociado del hotel "${meta.hotel_nombre ?? it.hotelNombre}" al crear el contrato.`);
+        }
         if (bq) {
           const r = parseRuta(bq.ruta);
           const tramos = [{
@@ -3385,7 +3446,9 @@ export async function convertirCotizacionCarrito(
 
           // Menores de 2 años: pagan SOLO el fee de infante del bloqueo (migración
           // 226, precio = costo) y no ocupan silla (`paxConSilla` ya los excluye).
-          const costoAereo = costoAereoBloqueo(bq, paxConSilla, numMenoresDeDos);
+          let costoAereo: number;
+          try { costoAereo = costoAereoBloqueo(bq, paxConSilla, numMenoresDeDos); }
+          catch (e) { return fallarYRevertirGrupo(e instanceof Error ? e.message : "No se pudo costear el vuelo del bloqueo."); }
           costoAereoTotal += costoAereo;
           pushCxP("aereo", `Aéreo ${bq.aerolinea ?? ""}`.trim(), costoAereo, bq.proveedores as unknown as ProvFact, bq.aerolinea, null, (bq as { moneda?: unknown }).moneda);
 

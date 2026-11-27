@@ -1,0 +1,436 @@
+{
+ "build": "inf1eC8Wl3kHf73y7ywIz",
+ "medidas": [
+  {
+   "nombre": "contrato-DTM-9803-dos-servicios",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\contrato-DTM-9803-dos-servicios-1280.png",
+   "alto": 2084,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-DTM-9803-dos-servicios",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\contrato-DTM-9803-dos-servicios-820.png",
+   "alto": 2868,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-DTM-9803-dos-servicios",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\contrato-DTM-9803-dos-servicios-390.png",
+   "alto": 3437,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-pnr-aliado-DTM-9801",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-pnr-aliado-DTM-9801-1280.png",
+   "alto": 1032,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-pnr-aliado-DTM-9801",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-pnr-aliado-DTM-9801-820.png",
+   "alto": 1032,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-pnr-aliado-DTM-9801",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-pnr-aliado-DTM-9801-390.png",
+   "alto": 1378,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-pnr-aliado-DTM-9801.pdf",
+   "paginas": 1
+  },
+  {
+   "nombre": "voucher-vuelo-impago-interno-DTM-9802",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-impago-interno-DTM-9802-1280.png",
+   "alto": 916,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-impago-interno-DTM-9802",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-impago-interno-DTM-9802-820.png",
+   "alto": 916,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-impago-interno-DTM-9802",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-impago-interno-DTM-9802-390.png",
+   "alto": 1294,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-sin-pnr-DTM-9804",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-sin-pnr-DTM-9804-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-sin-pnr-DTM-9804",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-sin-pnr-DTM-9804-820.png",
+   "alto": 900,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-sin-pnr-DTM-9804",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-sin-pnr-DTM-9804-390.png",
+   "alto": 1238,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio1-DTM-9803",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-servicio1-DTM-9803-1280.png",
+   "alto": 1018,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio1-DTM-9803",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-servicio1-DTM-9803-820.png",
+   "alto": 1018,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio1-DTM-9803",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-servicio1-DTM-9803-390.png",
+   "alto": 1396,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio1-DTM-9803.pdf",
+   "paginas": 1
+  },
+  {
+   "nombre": "voucher-vuelo-servicio2-DTM-9803",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-servicio2-DTM-9803-1280.png",
+   "alto": 1018,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio2-DTM-9803",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-servicio2-DTM-9803-820.png",
+   "alto": 1018,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio2-DTM-9803",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-servicio2-DTM-9803-390.png",
+   "alto": 1396,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-servicio2-DTM-9803.pdf",
+   "paginas": 2
+  },
+  {
+   "nombre": "gestion-voucher-actualizado-DTM-9803",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\gestion-voucher-actualizado-DTM-9803-1280.png",
+   "alto": 1264,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "gestion-voucher-actualizado-DTM-9803",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\gestion-voucher-actualizado-DTM-9803-820.png",
+   "alto": 1736,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "gestion-voucher-actualizado-DTM-9803",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\gestion-voucher-actualizado-DTM-9803-390.png",
+   "alto": 2110,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-documento-sin-pnr-DTM-9801",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\contrato-documento-sin-pnr-DTM-9801-1280.png",
+   "alto": 3578,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-documento-sin-pnr-DTM-9801",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\contrato-documento-sin-pnr-DTM-9801-1280.png",
+   "alto": 3578,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-en-actualizacion-aliado-DTM-9806",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-en-actualizacion-aliado-DTM-9806-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-en-actualizacion-aliado-DTM-9806",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-en-actualizacion-aliado-DTM-9806-820.png",
+   "alto": 900,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-en-actualizacion-aliado-DTM-9806",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-en-actualizacion-aliado-DTM-9806-390.png",
+   "alto": 900,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-desactualizado-interno-DTM-9806",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-desactualizado-interno-DTM-9806-1280.png",
+   "alto": 1070,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-desactualizado-interno-DTM-9806",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-desactualizado-interno-DTM-9806-820.png",
+   "alto": 1070,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-desactualizado-interno-DTM-9806",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-desactualizado-interno-DTM-9806-390.png",
+   "alto": 1436,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-retirado-interno-DTM-9806",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-retirado-interno-DTM-9806-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-retirado-interno-DTM-9806",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-retirado-interno-DTM-9806-820.png",
+   "alto": 900,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-retirado-interno-DTM-9806",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-retirado-interno-DTM-9806-390.png",
+   "alto": 900,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "gestion-vuelo-desactualizado-DTM-9806",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\gestion-vuelo-desactualizado-DTM-9806-1280.png",
+   "alto": 1198,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "gestion-vuelo-desactualizado-DTM-9806",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\gestion-vuelo-desactualizado-DTM-9806-820.png",
+   "alto": 1754,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "gestion-vuelo-desactualizado-DTM-9806",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\gestion-vuelo-desactualizado-DTM-9806-390.png",
+   "alto": 2044,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-en-actualizacion-aliado-DTM-9807",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-heredado-en-actualizacion-aliado-DTM-9807-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-en-actualizacion-aliado-DTM-9807",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-heredado-en-actualizacion-aliado-DTM-9807-820.png",
+   "alto": 900,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-en-actualizacion-aliado-DTM-9807",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-heredado-en-actualizacion-aliado-DTM-9807-390.png",
+   "alto": 900,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-actualizado-aliado-DTM-9807",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-heredado-actualizado-aliado-DTM-9807-1280.png",
+   "alto": 1000,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-actualizado-aliado-DTM-9807",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-heredado-actualizado-aliado-DTM-9807-820.png",
+   "alto": 1000,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-actualizado-aliado-DTM-9807",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r6\\visual\\voucher-vuelo-heredado-actualizado-aliado-DTM-9807-390.png",
+   "alto": 1346,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-heredado-actualizado-aliado-DTM-9807.pdf",
+   "paginas": 1
+  }
+ ],
+ "peticiones": [
+  {
+   "etiqueta": "ally opens paid voucher 9801",
+   "total": 6,
+   "porTipo": {
+    "GET /usuarios": 2,
+    "GET /aliados_b2b": 1,
+    "GET /vouchers": 1,
+    "GET /ventas": 1,
+    "POST /rpc/contratos_pagados_completos": 1
+   }
+  },
+  {
+   "etiqueta": "admin opens unpaid voucher 9802 (has PNR)",
+   "total": 15,
+   "porTipo": {
+    "GET /usuarios": 7,
+    "GET /vouchers": 2,
+    "GET /ventas": 1,
+    "HEAD /avisos": 1,
+    "GET /avisos": 1,
+    "POST /rpc/contratos_pagados_completos": 1,
+    "POST /rpc/contratos_identidades": 2
+   }
+  },
+  {
+   "etiqueta": "admin opens voucher 9804 (no PNR)",
+   "total": 5,
+   "porTipo": {
+    "GET /usuarios": 2,
+    "GET /vouchers": 2,
+    "GET /ventas": 1
+   }
+  },
+  {
+   "etiqueta": "admin opens paid voucher with PNR (9803 #1)",
+   "total": 6,
+   "porTipo": {
+    "GET /usuarios": 2,
+    "GET /vouchers": 2,
+    "GET /ventas": 1,
+    "POST /rpc/contratos_pagados_completos": 1
+   }
+  }
+ ],
+ "erroresPagina": []
+}

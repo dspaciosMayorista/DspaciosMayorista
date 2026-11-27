@@ -39,9 +39,11 @@ export function costoHotelPersona(
   return costo;
 }
 
-/** Costo aéreo de un bloqueo por persona: tarifa × pax con silla + fee de infante × menores de 2 años. */
-export function costoAereoBloqueo(bq: { tarifa_para_empaquetar: unknown; fee_infante: unknown }, paxConSilla: number, numMenoresDeDos: number): number {
-  return (Number(bq.tarifa_para_empaquetar) || 0) * paxConSilla + (Number(bq.fee_infante) || 0) * numMenoresDeDos;
+/** Costo aéreo de un bloqueo: tarifa NETA × pax con silla + fee de infante × menores de 2 años. Sin neta cargada lanza (nunca reventa ni 0). */
+export function costoAereoBloqueo(bq: { tarifa_neta: unknown; fee_infante: unknown }, paxConSilla: number, numMenoresDeDos: number): number {
+  const neta = Number(bq.tarifa_neta);
+  if (!(neta > 0)) throw new Error("El bloqueo no tiene tarifa neta cargada; cárgala en Vuelos antes de reservar.");
+  return neta * paxConSilla + (Number(bq.fee_infante) || 0) * numMenoresDeDos;
 }
 
 /** Costo aéreo REAL de un hotel Bernalo con vuelo: neto × pax con silla + fee de infante × (pax − pax con silla). */

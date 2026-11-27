@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { crearBloqueo } from "./actions";
+import type { InicialBloqueo } from "@/lib/vuelos/duplicarVuelo";
 import { RangosEdadPicker, type RangoEdad } from "@/components/RangosEdadPicker";
 import { ComboDestino, type DestinoOpt } from "@/components/ComboDestino";
 import { ComboProveedor, type ProveedorOpt } from "@/components/ComboProveedor";
@@ -17,21 +18,22 @@ import type { MonedaVuelo } from "@/lib/vuelos/monedaSospechosa";
 const lbl = "mb-1 block text-xs font-medium text-gray-600";
 const card = "rounded-xl border border-gray-200 bg-white p-5 space-y-4";
 
-export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] }: { proveedores?: ProveedorOpt[]; destinos?: DestinoOpt[]; rangos?: RangoEdad[] }) {
+export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [], inicial = null, copiaDe = null }: { proveedores?: ProveedorOpt[]; destinos?: DestinoOpt[]; rangos?: RangoEdad[]; inicial?: InicialBloqueo | null; copiaDe?: string | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [err, setErr] = useState("");
-  const [proveedorId, setProveedorId] = useState<number | "">("");
-  const [destinoId, setDestinoId] = useState<number | "">("");
-  const [origenId, setOrigenId] = useState<number | "">("");
-  const [rangosSel, setRangosSel] = useState<number[]>([]);
+  // #41: al duplicar, el formulario arranca con la CONFIGURACIÓN del bloqueo origen (nunca record, sillas ni reservas); todo sigue editable.
+  const [proveedorId, setProveedorId] = useState<number | "">(inicial?.proveedorId ?? "");
+  const [destinoId, setDestinoId] = useState<number | "">(inicial?.destinoId ?? "");
+  const [origenId, setOrigenId] = useState<number | "">(inicial?.origenId ?? "");
+  const [rangosSel, setRangosSel] = useState<number[]>(inicial?.rangosSel ?? []);
   // Obligatoria (migración 152): no hay valor neutral razonable para
   // "modalidad no elegida" — el bloqueo nuevo tiene que nacer con una.
-  const [modalidadEmision, setModalidadEmision] = useState<ModalidadEmision | "">("");
+  const [modalidadEmision, setModalidadEmision] = useState<ModalidadEmision | "">((inicial?.modalidadEmision as ModalidadEmision | undefined) ?? "");
   // Moneda de las tarifas (migración 231, #90): se ELIGE; un Bloqueo nuevo nunca se supone en COP.
-  const [moneda, setMoneda] = useState<MonedaVuelo | "">("");
+  const [moneda, setMoneda] = useState<MonedaVuelo | "">((inicial?.moneda as MonedaVuelo | undefined) ?? "");
 
-  const [f, setF] = useState({
+  const [f, setF] = useState(inicial?.f ?? {
     record: "", aerolinea: "",
     vueloIda: "", fechaIda: "", horaSalidaIda: "", horaLlegadaIda: "",
     vueloRegreso: "", fechaRegreso: "", horaSalidaReg: "", horaLlegadaReg: "",
@@ -73,6 +75,11 @@ export function NuevoBloqueoForm({ proveedores = [], destinos = [], rangos = [] 
 
   return (
     <form onSubmit={guardar} className="space-y-5">
+      {inicial && (
+        <p className="rounded-lg border border-[var(--brand-accent)] bg-[rgba(38,187,217,0.06)] px-4 py-3 text-sm text-gray-700" data-testid="aviso-duplicado">
+          Duplicando el bloqueo <b className="font-mono">{copiaDe}</b>: se copió solo la configuración. El <b>record (PNR) debe ser uno nuevo</b>. Revisa las fechas, los cupos y las ventanas (devolución y emisión) antes de guardar. No se copian sillas, reservas ni pasajeros; el original no cambia.
+        </p>
+      )}
       <section className={card}>
         <p className="text-sm font-semibold" style={{ color: "var(--brand-primary)" }}>Datos del bloqueo</p>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3">

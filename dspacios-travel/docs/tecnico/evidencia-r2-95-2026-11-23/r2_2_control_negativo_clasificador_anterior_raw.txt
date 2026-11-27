@@ -1,0 +1,67 @@
+  migración previa 308 aplicada
+  migración previa 309 aplicada
+  migración previa 310 aplicada
+  migración previa 311 aplicada
+  migración previa 312 aplicada
+  migración previa 313 aplicada
+  migración previa 314 aplicada
+  migración previa 315 aplicada
+  migración previa 316 aplicada
+  migración previa 317 aplicada
+  migración previa 318 aplicada
+  migración previa 319 aplicada
+  migración previa 322 aplicada
+  migración previa 323 aplicada
+  migración previa 324 aplicada
+  migración previa 325 aplicada
+  migración previa 326 aplicada
+  migración 331 aplicada
+  migración 332 aplicada
+== PostgREST pgrstr2_2c2b5c63384f en http://127.0.0.1:58244 contra r2a_old ==
+(node:4772) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoaderRelativo.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoaderRelativo.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:4772) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:4772) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+(node:4772) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\95-bloque-copia-pagos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+generarTarifario: medicion paquete_id=9501 generacion=1 resultado=ok etapa=publicar ms_etapa=20 ms_total=160 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=37ms,lectura_paquete=12ms,lectura_fuentes=30ms,lectura_grupos_servicio=25ms,lectura_bernalo=0ms,lectura_hoteles=23ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=13ms]
+[personas42] origen=reservar etapa=sello cotizacion=1 codigo=sello_no_admitido
+generarTarifario: medicion paquete_id=9501 generacion=2 resultado=ok etapa=publicar ms_etapa=11 ms_total=88 filas_calculadas=7 filas_por_modulo=[porcion_terrestre:5,servicios:2] etapas_previas=[inicio=0ms,iniciar_generacion=14ms,lectura_paquete=7ms,lectura_fuentes=8ms,lectura_grupos_servicio=23ms,lectura_bernalo=0ms,lectura_hoteles=16ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=1ms,calculo=8ms]
+▶ R2-2 · un servicio incluido en la reserva no se vuelve editable por una selección nueva
+  ✖ AUDITORÍA: el paquete reclasifica la asistencia como opcional DESPUÉS de reservar → elegirla como opcional se RECHAZA y no cambia nada; quitar la selección la conserva (1821.8921ms)
+  ℹ antes: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ℹ elegir la asistencia como opcional → {"ok":true}
+✖ R2-2 · un servicio incluido en la reserva no se vuelve editable por una selección nueva (1822.8226ms)
+ℹ tests 1
+ℹ suites 1
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2699.4267
+
+✖ failing tests:
+
+test at pruebas\r2Acciones95.pg.ts:153:3
+✖ AUDITORÍA: el paquete reclasifica la asistencia como opcional DESPUÉS de reservar → elegirla como opcional se RECHAZA y no cambia nada; quitar la selección la conserva (1821.8921ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts:167:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 1)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

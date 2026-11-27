@@ -1,5 +1,6 @@
 #!/bin/sh
 # ──────────────────────────────────────────────────────────────────
+# 281 isola la regla ORIGINAL (soportes vigentes <= abonos). Desde la 339 el límite es abonos + 1: ver test_pg_local.sh + pruebas/soportesCupoAdicional339.pg.ts.
 # SOPORTES DE PAGO (#86, migración 281) · pruebas en PostgreSQL LOCAL desechable con el esquema 001-280 (la plantilla).
 # 1) migración 281 sobre una base nueva copiada de la plantilla; 2) test_281_soportes.sql (límite, reemplazo, EXCEDIDO, RLS, avisos…);
 # 3) carreras REALES entre dos sesiones, con commits, contra la RPC real `anular_abono` (248): sin interbloqueos (40P01) ni sobrepasar el límite.

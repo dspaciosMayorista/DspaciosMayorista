@@ -1,0 +1,156 @@
+
+> dspacios-travel@0.1.0 build
+> next build
+
+▲ Next.js 16.3.0 (Turbopack)
+✓ Running next.config.ts took 217ms
+- Experiments (use with caution):
+  · serverActions
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 8.5s
+  Running TypeScript ...
+  Finished TypeScript in 10.7s ...
+  Collecting page data using 15 workers ...
+  Generating static pages using 15 workers (0/17) ...
+  Generating static pages using 15 workers (4/17) 
+  Generating static pages using 15 workers (8/17) 
+  Generating static pages using 15 workers (12/17) 
+✓ Generating static pages using 15 workers (17/17) in 714ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/cron/liberar-vencidas
+├ ƒ /api/cron/notificaciones
+├ ƒ /api/cron/publicacion-tarifario
+├ ƒ /api/cron/reconciliar-financiero
+├ ƒ /auth/callback
+├ ƒ /c/[token]
+├ ƒ /cms
+├ ƒ /contrato/[numero]
+├ ƒ /cot/[token]
+├ ƒ /cot/[token]/logo
+├ ƒ /cotizacion/[id]
+├ ƒ /cotizacion/[id]/logo
+├ ƒ /crm
+├ ƒ /crm/[id]
+├ ƒ /crm/b2b
+├ ƒ /crm/campanas
+├ ƒ /crm/clientes-aliados
+├ ƒ /crm/clientes-contratos
+├ ƒ /crm/clientes-contratos/[numero_contrato]
+├ ƒ /crm/difusion
+├ ƒ /crm/email
+├ ƒ /crm/leads
+├ ƒ /crm/leads/[id]
+├ ƒ /crm/pasajeros
+├ ƒ /crm/personas-cotizacion
+├ ƒ /cuenta/contrasena
+├ ƒ /dashboard
+├ ƒ /dashboard/aliados
+├ ƒ /dashboard/aliados/logo/[id]
+├ ƒ /dashboard/auditoria
+├ ƒ /dashboard/cartera
+├ ƒ /dashboard/comisiones
+├ ƒ /dashboard/configuracion
+├ ƒ /dashboard/contabilidad/agencia
+├ ƒ /dashboard/contabilidad/conciliaciones
+├ ƒ /dashboard/contabilidad/estados-financieros
+├ ƒ /dashboard/contabilidad/facturacion
+├ ƒ /dashboard/contabilidad/libro-auxiliar
+├ ƒ /dashboard/contabilidad/libro-diario
+├ ƒ /dashboard/contabilidad/movimientos
+├ ƒ /dashboard/contabilidad/plan-cuentas
+├ ƒ /dashboard/contabilidad/retenciones
+├ ƒ /dashboard/contratos
+├ ƒ /dashboard/contratos/[numero]
+├ ƒ /dashboard/contratos/importar
+├ ƒ /dashboard/contratos/nuevo
+├ ƒ /dashboard/cotizaciones
+├ ƒ /dashboard/cotizaciones/[id]
+├ ƒ /dashboard/cotizaciones/nueva
+├ ƒ /dashboard/finanzas
+├ ƒ /dashboard/flujo-caja
+├ ƒ /dashboard/gestion-contratos
+├ ƒ /dashboard/liquidacion
+├ ƒ /dashboard/pagos
+├ ƒ /dashboard/paquetes
+├ ƒ /dashboard/paquetes/[id]
+├ ƒ /dashboard/paquetes/nuevo
+├ ƒ /dashboard/paquetes/total/[id]
+├ ƒ /dashboard/paquetes/total/nuevo
+├ ƒ /dashboard/producto
+├ ƒ /dashboard/producto/aerolineas
+├ ƒ /dashboard/producto/configuracion
+├ ƒ /dashboard/producto/destinos
+├ ƒ /dashboard/producto/destinos/listas-fijas
+├ ƒ /dashboard/producto/hoteles
+├ ƒ /dashboard/producto/hoteles/[id]
+├ ƒ /dashboard/producto/hoteles/nuevo
+├ ƒ /dashboard/producto/programas
+├ ƒ /dashboard/producto/programas/[id]
+├ ƒ /dashboard/producto/programas/calculadora
+├ ƒ /dashboard/producto/programas/nuevo
+├ ƒ /dashboard/producto/proveedores
+├ ƒ /dashboard/producto/servicios
+├ ƒ /dashboard/punto-equilibrio
+├ ƒ /dashboard/rentabilidad
+├ ƒ /dashboard/reservar
+├ ƒ /dashboard/reservar/nuevo
+├ ƒ /dashboard/reservar/programa/[id]
+├ ƒ /dashboard/tarifario
+├ ƒ /dashboard/tarifario/[id]
+├ ƒ /dashboard/usuarios
+├ ƒ /dashboard/usuarios/b2b
+├ ƒ /dashboard/ventas
+├ ƒ /dashboard/vuelos
+├ ƒ /dashboard/vuelos/[id]
+├ ƒ /dashboard/vuelos/contrato/[numero]
+├ ƒ /dashboard/vuelos/empaquetados/[id]
+├ ƒ /dashboard/vuelos/empaquetados/nuevo
+├ ƒ /dashboard/vuelos/historico
+├ ƒ /dashboard/vuelos/nuevo
+├ ƒ /dashboard/vuelos/pasajeros
+├ ƒ /estado-cuenta/[numero]
+├ ƒ /login
+├ ○ /manifest.webmanifest
+├ ○ /opengraph-image
+├ ƒ /pagar
+├ ƒ /plan-cobro/[numero]
+├ ƒ /portal
+├ ƒ /portal/b2b
+├ ƒ /portal/b2b/agentes
+├ ƒ /portal/b2b/cartera
+├ ƒ /portal/b2b/clientes
+├ ƒ /portal/b2b/cotizaciones
+├ ƒ /portal/b2b/documentos
+├ ƒ /portal/b2b/perfil
+├ ƒ /portal/b2b/perfil/logo
+├ ƒ /portal/b2b/ventas
+├ ƒ /portal/comision/[numero]
+├ ƒ /portal/comision/[numero]/estado-cuenta
+├ ƒ /portal/registro
+├ ƒ /recibo/[id]
+├ ƒ /recuperar
+├ ƒ /restablecer
+├ ƒ /sitio_web
+├ ƒ /sitio_web/[slug]
+├ ƒ /sitio_web/blog
+├ ƒ /sitio_web/blog/[id]
+├ ƒ /sitio_web/cotizar
+├ ƒ /tarifario
+├ ○ /tarifario/checkout
+├ ƒ /tarifario/checkout/dinamico
+├ ƒ /tarifario/programa/[id]
+├ ƒ /tarifario/programa/[id]/doc
+└ ƒ /voucher/[token]
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+exit=0

@@ -1,0 +1,55 @@
+### state after 337 + fixture
+air vouchers: 3 · md5 fe716b383b87359b2f05cb2124e0ef08
+
+### PREFLIGHT 338
+control | observed | expected | verdict
+338 needs 337: the one-per-contract air voucher index exists | 1 | 1 | OK
+338 needs 309: acknowledgment table and the three Gestión functions exist | 4 | 4 | OK
+338 not applied yet: vouchers has none of servicio_clave / revision / actualizado_en / estado and contrato_vuelos has no servicio_aereo | 0 | 0 | OK
+air vouchers today (none is deleted; see control 5 for how each is keyed) | 3 | any | OK
+air vouchers whose contract legs have NO unambiguous shape (they get the key «legado-<id>» and estado «revisar»: their old link stops serving the itinerary until staff associate the legs and regen
+contracts with more than one air voucher today (impossible after 337) | 0 | 0 | OK
+voucher acknowledgments already registered (they keep working: no rev = 0; nothing is flagged until a voucher really changes) | 0 | any | OK
+contracts whose legs stay WITHOUT a saved service after the install (more than one leg and not exactly one outbound + one return): staff must associate them in the flight editor before generating air 
+(8 rows)
+
+### APPLY 338
+applied
+
+### POSTCHECK 338
+control | observed | expected | verdict
+vouchers has servicio_clave, revision (not null, default 0), actualizado_en and estado (not null, default vigente) | 4 | 4 | OK
+every air voucher has a service key (no air voucher without one) | 0 | 0 | OK
+index per (contract, service) exists and the 337 one-per-contract index is gone | 1/0 | 1/0 | OK
+guardar_vouchers_vuelo is SECURITY INVOKER, executable by authenticated, not by anon; the 337 function is gone | false/false/0 | false/false/0 | OK
+the three 309 functions carry the revision logic and are still SECURITY DEFINER (the superadmin guard is inside them) | 3 | 3 | OK
+right after install no voucher has a revision above 0 (a revision only appears when a regenerated voucher really changes) | 0 | 0 right after install | OK
+air vouchers present (compare with preflight control 4: the install deletes none) | 3 | same as preflight control 4 | REVIEW
+contrato_vuelos.servicio_aereo exists, both views expose it, the two triggers exist, the read helper is not executable by anon | 6 | 6 | OK
+legs left WITHOUT a saved service (historical ambiguity: associate them in the flight editor before generating air vouchers for that contract) | 5 | 0 (REVIEW otherwise) | REVIEW
+air vouchers that are not «vigente» right after the install (only legacy vouchers of contracts with ambiguous legs: estado revisar, key «legado-…») | 1 | 0 (REVIEW otherwise) | REVIEW
+(10 rows)
+
+### WHAT THE BACKFILL DID (legs → service, vouchers → key/state)
+numero_contrato | legs | services | unassociated
+DTM-9601 | 1 | 1 | 0
+DTM-9602 | 2 | 1 | 0
+DTM-9603 | 3 | 0 | 3
+DTM-9604 | 2 | 0 | 2
+(4 rows)
+numero_contrato | key | estado | revision
+DTM-9601 | the contract's only service | vigente | 0
+DTM-9602 | the contract's only service | vigente | 0
+DTM-9603 | legado-<id> | revisar | 0
+(3 rows)
+
+### ROLLBACK 338
+rolled-back
+after rollback: air vouchers: 3 · md5 fe716b383b87359b2f05cb2124e0ef08
+VOUCHERS IDENTICAL BEFORE/AFTER (id, token, content)
+columns left: 0
+337 function back: true · 338 function gone: true · editor returns 0 servicio_aereo column(s)
+
+### RE-APPLY 338 after the rollback
+re-applied
+postcheck OK rows: 7

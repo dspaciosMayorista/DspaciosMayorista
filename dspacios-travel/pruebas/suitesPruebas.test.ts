@@ -49,7 +49,9 @@ test("cada pruebas/*.react.ts se ejecuta: está en test:react, test:calendar, te
   const enSuites = new Set([...suitesReact.flatMap((s) => listados(s)), ...enWorkflows]);
   const react = readdirSync(join(raiz, "pruebas")).filter((f) => f.endsWith(".react.ts")).map((f) => `pruebas/${f}`);
   assert.ok(react.length > 0);
-  assert.deepEqual(react.filter((f) => !enSuites.has(f)), []);
+  // test:react:rev2 lista por patrón (`pruebas/**/*.rev2.react.ts`): un archivo con ese sufijo cuenta como ejecutado solo mientras el patrón siga en el script.
+  const porPatronRev2 = (f: string) => f.endsWith(".rev2.react.ts") && (scripts["test:react:rev2"] ?? "").includes("pruebas/**/*.rev2.react.ts");
+  assert.deepEqual(react.filter((f) => !enSuites.has(f) && !porPatronRev2(f)), []);
 });
 
 test("la entrada canónica `test` corre la suite unitaria y test:react:all, y test:react:all corre CADA suite React (nada queda fuera de la ejecución)", () => {

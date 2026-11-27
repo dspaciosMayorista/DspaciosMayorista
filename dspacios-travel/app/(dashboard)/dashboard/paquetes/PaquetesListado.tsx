@@ -4,7 +4,17 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { formatMoneda } from "@/lib/utils";
 import { EliminarPaqueteBtn } from "./EliminarPaqueteBtn";
+import { DuplicarPaqueteBtn } from "./DuplicarPaqueteBtn";
 import { TABS_TIPO_PAQUETE, construirUrlConTab, filtrarYOrdenarPaquetes, type TipoPaquete } from "./tipo-paquetes";
+import { AlertTriangle, CalendarClock, CheckCircle2, CircleAlert, ClipboardList, Clock } from "lucide-react";
+import type { ClavePublicacion, PublicacionPaquete, TonoPublicacion } from "@/lib/paquetes/estadoPublicacion";
+import { etiquetaDias, type EstadoCompra } from "@/lib/paquetes/vencimientoCompra";
+
+const TONO_PUBLICACION: Record<TonoPublicacion, string> = { ok: "bg-emerald-50 text-emerald-700", aviso: "bg-amber-100 text-amber-800", error: "bg-red-50 text-red-700" };
+const ICONO_PUBLICACION: Record<ClavePublicacion, typeof Clock> = {
+  publicado: CheckCircle2, publicado_avisos: AlertTriangle, publicado_oculto: Clock, error: CircleAlert, generando: Clock, pendiente: Clock, desactualizado: Clock,
+  cotizacion_unidad: ClipboardList, bajo_solicitud: ClipboardList, sin_oferta: AlertTriangle, oferta_sin_verificar: AlertTriangle,
+};
 
 export type PaqueteItem = {
   id: number;
@@ -16,6 +26,10 @@ export type PaqueteItem = {
   fechaViajeInicio: string | null;
   fechaViajeFin: string | null;
   nTarifas: number;
+  /** #36: estado de publicación derivado del estado autoritativo del tarifario (no del check «Activo»). */
+  publicacion: PublicacionPaquete;
+  /** #13: fin de la vigencia de compra del paquete y su estado frente a hoy (Bogotá). */
+  compra: { fin: string | null; estado: EstadoCompra; dias: number | null };
   /** «Desde» = tarifa DOBLE publicable, un importe por moneda (nunca mezcladas). Vacío = «Consultar». */
   desde: { moneda: string; valor: number }[];
 };
@@ -104,10 +118,27 @@ export function PaquetesListado({ paquetes, tabInicial }: { paquetes: PaqueteIte
                   {p.destino ?? "Sin destino"}
                   {p.fechaViajeInicio ? ` · viaje ${p.fechaViajeInicio} → ${p.fechaViajeFin ?? ""}` : ""}
                 </p>
-                <div className="mt-3 flex items-center justify-between">
-                  <span className="text-xs text-gray-500">
-                    {p.nTarifas > 0 ? `${p.nTarifas} combinaciones publicadas` : "Sin publicar"}
-                  </span>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="publicacion-paquete">
+                  {(() => {
+                    const Icono = ICONO_PUBLICACION[p.publicacion.clave];
+                    return (
+                      <span data-estado={p.publicacion.clave} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${TONO_PUBLICACION[p.publicacion.tono]}`}>
+                        <Icono size={12} aria-hidden="true" />{p.publicacion.etiqueta}
+                      </span>
+                    );
+                  })()}
+                  {p.publicacion.secundarias.map((s) => (
+                    <span key={s} className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"><ClipboardList size={12} aria-hidden="true" />{s}</span>
+                  ))}
+                  {p.activo && (p.compra.estado === "por_vencer" || p.compra.estado === "vence_hoy" || p.compra.estado === "vencida") && (
+                    <span data-compra={p.compra.estado} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${p.compra.estado === "por_vencer" ? "bg-amber-100 text-amber-800" : "bg-red-50 text-red-700"}`}>
+                      <CalendarClock size={12} aria-hidden="true" />
+                      {p.compra.estado === "vencida" ? "Compra vencida" : `Compra: ${etiquetaDias(p.compra.dias ?? 0).toLowerCase()}`}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+                  <span className="min-w-0 break-words text-xs text-gray-500">{p.publicacion.detalle ?? ""}</span>
                   {p.nTarifas > 0 && (
                     <span className="text-sm">
                       {p.desde.length ? (
@@ -127,7 +158,8 @@ export function PaquetesListado({ paquetes, tabInicial }: { paquetes: PaqueteIte
                   )}
                 </div>
               </Link>
-              <div className="mt-2 flex justify-end border-t border-gray-100 pt-2">
+              <div className="mt-2 flex items-center justify-end gap-4 border-t border-gray-100 pt-2">
+                <DuplicarPaqueteBtn id={p.id} nombre={p.nombre} />
                 <EliminarPaqueteBtn id={p.id} nombre={p.nombre} />
               </div>
             </div>

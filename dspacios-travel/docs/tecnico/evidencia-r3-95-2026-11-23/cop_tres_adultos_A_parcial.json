@@ -1,0 +1,197 @@
+{
+  "contexto": {
+    "escenario": "cop_tres_adultos",
+    "opcion": "A",
+    "moneda": "COP",
+    "ajusteEsperado": 1,
+    "fase": "parcial",
+    "madreId": 12,
+    "hijaId": 13,
+    "numero": "DTM-0008",
+    "pago": {
+      "exigidoMoneda": 770455.3,
+      "pagado": 770455.3
+    },
+    "total": 1330456,
+    "nino": 0
+  },
+  "venta": {
+    "numero_contrato": "DTM-0008",
+    "cliente": "Titular Sintético",
+    "cliente_documento": "900123456",
+    "estado": "confirmado",
+    "moneda": "COP",
+    "precio_venta": 1330456,
+    "pax": 3,
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "asesor": "Asesor 95",
+    "tipo_asesor": null,
+    "tenant": "mayorista",
+    "destino": "Cartagena",
+    "plan_nombre": "Hotel A · Superior · PAM · Triple",
+    "hotel": "Hotel A",
+    "tours_traslados": null,
+    "asistencia_medica": false
+  },
+  "items": [
+    {
+      "id": 11,
+      "numero_contrato": "DTM-0008",
+      "descripcion": "PAQUETE TURÍSTICO A CARTAGENA DEL 01/03/2030 AL 04/03/2030",
+      "adultos": 3,
+      "ninos": 1,
+      "tarifa_adulto": 443485,
+      "tarifa_nino": 0,
+      "orden": 0,
+      "modo_precio": "por_persona",
+      "valor_total": null
+    },
+    {
+      "id": 12,
+      "numero_contrato": "DTM-0008",
+      "descripcion": "Ajuste de redondeo del reparto del hotel",
+      "adultos": 1,
+      "ninos": 0,
+      "tarifa_adulto": 1,
+      "tarifa_nino": 0,
+      "orden": 1,
+      "modo_precio": "por_persona",
+      "valor_total": null
+    }
+  ],
+  "pasajeros": [
+    {
+      "id": 11,
+      "numero_contrato": "DTM-0008",
+      "nombre": "Titular Sintético",
+      "tipo_id": "CC",
+      "identificacion": "900123456",
+      "fecha_nacimiento": "1985-05-20",
+      "es_infante": false,
+      "orden": 0,
+      "nacionalidad": null,
+      "responsable_id": null,
+      "nombres": null,
+      "apellidos": null
+    }
+  ],
+  "hoteles": [],
+  "pagado": 770455.3,
+  "cotizacion_hija": {
+    "id": 13,
+    "codigo": "C-0013",
+    "modo": "simple",
+    "tipo": "manual",
+    "estado": "convertida",
+    "moneda": "COP",
+    "precio_venta": 1330456,
+    "pax": 3,
+    "cliente": "Titular Sintético",
+    "destino": "Cartagena",
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "vigencia_hasta": "2026-11-26",
+    "detalle": {
+      "items": [
+        {
+          "orden": 0,
+          "valor": 1330456,
+          "cantidad": 3,
+          "descripcion": "PAQUETE TURÍSTICO A CARTAGENA DEL 01/03/2030 AL 04/03/2030",
+          "tarifa_unit": 443485
+        },
+        {
+          "orden": 1,
+          "valor": 0,
+          "cantidad": 1,
+          "descripcion": "Tarifa por niño",
+          "tarifa_unit": 0
+        }
+      ],
+      "venta": {
+        "pax": 3,
+        "canal": "B2C",
+        "hotel": "Hotel A",
+        "ninos": 1,
+        "asesor": "Asesor 95",
+        "estado": "cotizacion",
+        "moneda": "COP",
+        "cliente": "Titular Sintético",
+        "destino": "Cartagena",
+        "aerolinea": "Avianca",
+        "fecha_salida": "2030-03-01",
+        "precio_venta": 1330456,
+        "tipo_cliente": "interno",
+        "fecha_regreso": "2030-03-04",
+        "observaciones": null,
+        "numero_contrato": "DTM-0008"
+      },
+      "vuelos": [],
+      "hoteles": [],
+      "incluye": "Tiquetes aéreos (Avianca)\nAlojamiento en Hotel A",
+      "recobro": {
+        "total": 0,
+        "aliado": 0,
+        "empresa": 0
+      },
+      "noIncluye": "",
+      "pasajeros": []
+    },
+    "payload": {
+      "pax": 3,
+      "ninos": 1,
+      "plazo": "",
+      "moneda": "COP",
+      "cliente": {
+        "email": "titular.sintetico@example.com",
+        "nombres": "Titular",
+        "tipoDoc": "CC",
+        "telefono": "3001112233",
+        "apellidos": "Sintético",
+        "numeroDoc": "900123456",
+        "nacimiento": "1985-05-20"
+      },
+      "destino": "Cartagena",
+      "incluye": "",
+      "recobro": 0,
+      "fechaIda": "2030-03-01",
+      "noIncluye": "",
+      "servicios": [
+        {
+          "ta": 30455,
+          "modo": "ta",
+          "tipo": "aereo",
+          "nombre": "Avianca",
+          "costoNeto": 500000,
+          "pctMarkup": 0,
+          "proveedor": "",
+          "plataforma": ""
+        },
+        {
+          "ta": 0,
+          "modo": "ta",
+          "tipo": "hotel",
+          "nombre": "Hotel A",
+          "regimen": "PAM",
+          "categoria": "Superior",
+          "costoNeto": 800001,
+          "pctMarkup": 0,
+          "proveedor": "",
+          "catalogoId": 9501,
+          "plataforma": "",
+          "acomodacion": "Triple"
+        }
+      ],
+      "tarifaNino": 0,
+      "tipoAsesor": "interno",
+      "fechaRegreso": "2030-03-04",
+      "agenciaNombre": "",
+      "asesorInterno": "Asesor 95",
+      "observaciones": "",
+      "recobroAliado": 0,
+      "vigenciaHasta": "",
+      "freelanceNombre": ""
+    }
+  }
+}

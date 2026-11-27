@@ -1,0 +1,48 @@
+mayorista|(todos los tipos)|1|7|INFO
+mayorista|(todos los tipos)|2|4|INFO
+mayorista|(todos los tipos)|3|2|INFO
+mayorista|(todos los tipos)|4|2|INFO
+mayorista|(todos los tipos)|5|2|INFO
+mayorista|(todos los tipos)|6|1|INFO
+mayorista|(todos los tipos)|7|2|REVISAR
+mayorista|(todos los tipos)|8|1|REVISAR
+mayorista|bloqueo|1|6|INFO
+mayorista|bloqueo|2|3|INFO
+mayorista|bloqueo|3|2|INFO
+mayorista|bloqueo|4|1|INFO
+mayorista|bloqueo|5|1|INFO
+mayorista|bloqueo|6|1|INFO
+mayorista|bloqueo|7|2|REVISAR
+mayorista|bloqueo|8|1|REVISAR
+mayorista|porcion_terrestre|1|1|INFO
+mayorista|porcion_terrestre|2|1|INFO
+mayorista|porcion_terrestre|3|0|INFO
+mayorista|porcion_terrestre|4|1|INFO
+mayorista|porcion_terrestre|5|1|INFO
+mayorista|porcion_terrestre|6|0|INFO
+mayorista|porcion_terrestre|7|0|OK
+mayorista|porcion_terrestre|8|0|OK
+minorista|(todos los tipos)|1|2|INFO
+minorista|(todos los tipos)|2|2|INFO
+minorista|(todos los tipos)|3|0|INFO
+minorista|(todos los tipos)|4|0|INFO
+minorista|(todos los tipos)|5|0|INFO
+minorista|(todos los tipos)|6|1|INFO
+minorista|(todos los tipos)|7|1|REVISAR
+minorista|(todos los tipos)|8|1|REVISAR
+minorista|bloqueo|1|1|INFO
+minorista|bloqueo|2|1|INFO
+minorista|bloqueo|3|0|INFO
+minorista|bloqueo|4|0|INFO
+minorista|bloqueo|5|0|INFO
+minorista|bloqueo|6|1|INFO
+minorista|bloqueo|7|0|OK
+minorista|bloqueo|8|0|OK
+minorista|dinamico|1|1|INFO
+minorista|dinamico|2|1|INFO
+minorista|dinamico|3|0|INFO
+minorista|dinamico|4|0|INFO
+minorista|dinamico|5|0|INFO
+minorista|dinamico|6|0|INFO
+minorista|dinamico|7|1|REVISAR
+minorista|dinamico|8|1|REVISAR

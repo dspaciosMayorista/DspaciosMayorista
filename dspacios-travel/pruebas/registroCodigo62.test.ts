@@ -236,6 +236,20 @@ describe("paso 1: iniciar el registro", () => {
     assert.ok(!JSON.stringify(reg().datos).includes("secreta123"));
   });
 
+  test("#76 código de referido opcional: se guarda como CANDIDATO normalizado en los datos del servidor; uno con formato inválido se rechaza antes de crear la cuenta", async () => {
+    const mala = await iniciarRegistroB2B({ ...form(), codigoReferido: "a b" });
+    assert.equal(mala.ok, false); assert.match(msgDe(mala), /El código de referido usa de 4 a 20/);
+    assert.equal(auth.size, 0, "no se creó ninguna cuenta"); assert.deepEqual(envios, []);
+    assert.deepEqual(await iniciarRegistroB2B({ ...form(), codigoReferido: "  odair-2 " }), { ok: true });
+    assert.equal((reg().datos as Fila).codigo_referido, "ODAIR-2", "texto normalizado; nunca referidor ni porcentaje");
+    assert.ok(!JSON.stringify(reg().datos).match(/referidor|pct/i));
+  });
+
+  test("#76 sin código: no se guarda ninguno (cadena vacía) y el registro sigue igual", async () => {
+    assert.deepEqual(await iniciarRegistroB2B(form()), { ok: true });
+    assert.equal((reg().datos as Fila).codigo_referido, "");
+  });
+
   test("si el código no se puede enviar, la cuenta no queda a medias; el límite de envíos de Auth se explica", async () => {
     errorResend = { status: 429, code: "over_email_send_rate_limit" };
     const r = await iniciarRegistroB2B(form());

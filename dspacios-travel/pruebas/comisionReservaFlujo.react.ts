@@ -138,7 +138,8 @@ test("reserva B2B SIN aliado: falla antes de numerar y no crea nada (antes omit�
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /falta la agencia/);
   assert.equal(bd.filas("ventas").length, 0);
-  assert.equal(bd.llamadasRpc.length, 0, "ni numeraci처n, ni pasajeros, ni comisi처n");
+  // Solo el reclamo/liberaci처n de la conversi처n (336, F1: se reclama antes de numerar y se libera siempre) puede aparecer; nada de numeraci처n, pasajeros ni comisi처n.
+  assert.deepEqual(bd.llamadasRpc.map((c) => c.fn).filter((fn) => !/_conversion_cotizacion$/.test(fn)), [], "ni numeraci처n, ni pasajeros, ni comisi처n");
 });
 
 test("aliado inexistente o de otro tipo: falla antes de numerar", async () => {

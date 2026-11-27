@@ -1,0 +1,96 @@
+app compilada respondiendo en http://127.0.0.1:3099 · BUILD_ID vzjltR-QtYjToJEKEVRcz
+
+== 1. Portal del aliado (Cartera → Soportes de pago): estados de cupo en la página compilada ==
+INFO  carga de Cartera→Soportes (6 contratos): 34 solicitudes al proxy {"GET /usuarios":23,"GET /config_sitio":1,"GET /ventas":2,"GET /aliados_b2b":2,"GET /comision_b2b_revision":1,"GET /aliados":1,"GET /abonos":1,"GET /contrato_soportes_pago":1,"GET /avisos":1,"HEAD /avisos":1}; HTML renderizado 86459 caracteres
+OK    DTM-8301: la tarjeta existe (contrato sin pagos incluido)
+OK    DTM-8301: «Soportes vigentes: 0 de 1 permitidos 0 pagos registrados + 1 adicional»
+OK    DTM-8301: mensaje de disponibilidad (/Aún no hay pagos registrados: puedes adjuntar un soporte/)
+OK    DTM-8301: botón «Subir soporte» habilitado (observado: false)
+OK    DTM-8302: la tarjeta existe (contrato sin pagos incluido)
+OK    DTM-8302: «Soportes vigentes: 1 de 1 permitidos 0 pagos registrados + 1 adicional»
+OK    DTM-8302: mensaje de disponibilidad (/Ya usaste todos los soportes permitidos/)
+OK    DTM-8302: botón «Subir soporte» deshabilitado (observado: true)
+OK    DTM-8303: la tarjeta existe (contrato sin pagos incluido)
+OK    DTM-8303: «Soportes vigentes: 1 de 2 permitidos 1 pago registrado + 1 adicional»
+OK    DTM-8303: mensaje de disponibilidad (/este es el soporte adicional, para un pago aún sin registrar/)
+OK    DTM-8303: botón «Subir soporte» habilitado (observado: false)
+OK    DTM-8304: la tarjeta existe (contrato sin pagos incluido)
+OK    DTM-8304: «Soportes vigentes: 2 de 2 permitidos 1 pago registrado + 1 adicional»
+OK    DTM-8304: mensaje de disponibilidad (/Ya usaste todos los soportes permitidos/)
+OK    DTM-8304: botón «Subir soporte» deshabilitado (observado: true)
+OK    DTM-8305: la tarjeta existe (contrato sin pagos incluido)
+OK    DTM-8305: «Soportes vigentes: 4 de 3 permitidos 2 pagos registrados + 1 adicional»
+OK    DTM-8305: mensaje de disponibilidad (/Hay más soportes vigentes de los permitidos/)
+OK    DTM-8305: botón «Subir soporte» deshabilitado (observado: true)
+OK    DTM-8306: la tarjeta existe (contrato sin pagos incluido)
+OK    DTM-8306: «Soportes vigentes: 3 de 3 permitidos 2 pagos registrados + 1 adicional»
+OK    DTM-8306: mensaje de disponibilidad (/Ya usaste todos los soportes permitidos/)
+OK    DTM-8306: botón «Subir soporte» deshabilitado (observado: true)
+OK    el aliado NO ve el contrato de otro aliado
+OK    los 6 contratos propios están listados
+OK    portal soportes @1280px (viewport real 1280): sin desborde horizontal (scroll 1280/1280; fuera de viewport: 0); texto recortado: ninguno
+OK    portal soportes @820px (viewport real 820): sin desborde horizontal (scroll 820/820; fuera de viewport: 0); texto recortado: ninguno
+OK    portal soportes @390px (viewport real 390): sin desborde horizontal (scroll 390/390; fuera de viewport: 0); texto recortado: ninguno
+
+== 2. Subida REAL por la interfaz compilada (Server Action → Storage en memoria → RPC y triggers reales) ==
+OK    DTM-8301 (sin pagos: el primer soporte): parte con 0 soporte(s) vigente(s)
+OK    DTM-8301: archivo elegido en el input real de la tarjeta
+INFO  DTM-8301: una subida completa (acción + refresco de la pestaña) = 39 solicitudes al proxy {"GET /usuarios":22,"GET /config_sitio":1,"GET /ventas":4,"GET /aliados_b2b":2,"GET /comision_b2b_revision":1,"GET /aliados":1,"GET /abonos":1,"GET /contrato_soportes_pago":1,"POST /rpc/soporte_verificar_identidad":1,"HEAD /contrato_soportes_pago":2,"HEAD /abonos":1,"POST storage":1,"POST /rpc/soporte_registrar":1}
+OK    DTM-8301: la tarjeta pasa a «Soportes vigentes: 1 de 1 permitidos 0 pagos registrados +» con «Soporte subido.»
+OK    DTM-8301: el botón queda deshabilitado con el mensaje de máximo
+OK    DTM-8301: la base tiene 1 soporte(s) vigente(s)
+OK    DTM-8301: venta, estado, abonos y asientos IDÉNTICOS tras la subida (e6c7c0a8bf0c24a17e…)
+OK    DTM-8301: los avisos internos siguen llegando a gerencia y superadmin
+OK    DTM-8301: se fuerza un archivo más en el input oculto
+OK    DTM-8301: rechazo visible con el mensaje de máximo (Este contrato ya tiene el máximo de soportes vigentes: uno p…)
+OK    DTM-8301: la base sigue con 1 (no se superó el máximo)
+OK    DTM-8301: sigue sin cambios financieros tras el rechazo
+OK    DTM-8301 tras subir @1280px: sin desborde (fuera de viewport: 0)
+OK    DTM-8301 tras subir @820px: sin desborde (fuera de viewport: 0)
+OK    DTM-8301 tras subir @390px: sin desborde (fuera de viewport: 0)
+OK    DTM-8303 (1 pago + 1 soporte: el soporte ADICIONAL): parte con 1 soporte(s) vigente(s)
+OK    DTM-8303: archivo elegido en el input real de la tarjeta
+INFO  DTM-8303: una subida completa (acción + refresco de la pestaña) = 39 solicitudes al proxy {"GET /usuarios":22,"GET /config_sitio":1,"GET /ventas":4,"GET /aliados_b2b":2,"GET /comision_b2b_revision":1,"GET /aliados":1,"GET /abonos":1,"GET /contrato_soportes_pago":1,"POST /rpc/soporte_verificar_identidad":1,"HEAD /contrato_soportes_pago":2,"HEAD /abonos":1,"POST storage":1,"POST /rpc/soporte_registrar":1}
+OK    DTM-8303: la tarjeta pasa a «Soportes vigentes: 2 de 2 permitidos 1 pago registrado + 1» con «Soporte subido.»
+OK    DTM-8303: el botón queda deshabilitado con el mensaje de máximo
+OK    DTM-8303: la base tiene 2 soporte(s) vigente(s)
+OK    DTM-8303: venta, estado, abonos y asientos IDÉNTICOS tras la subida (45dabe641e885bf063…)
+OK    DTM-8303: los avisos internos siguen llegando a gerencia y superadmin
+OK    DTM-8303: se fuerza un archivo más en el input oculto
+OK    DTM-8303: rechazo visible con el mensaje de máximo (Este contrato ya tiene el máximo de soportes vigentes: uno p…)
+OK    DTM-8303: la base sigue con 2 (no se superó el máximo)
+OK    DTM-8303: sigue sin cambios financieros tras el rechazo
+OK    DTM-8303 tras subir @1280px: sin desborde (fuera de viewport: 0)
+OK    DTM-8303 tras subir @820px: sin desborde (fuera de viewport: 0)
+OK    DTM-8303 tras subir @390px: sin desborde (fuera de viewport: 0)
+OK    ningún pago nació de las subidas (8301: 0 y 8303: 1, como al inicio)
+OK    DTM-8301 sigue PENDIENTE: subir evidencia no confirma el contrato
+OK    Storage recibió las subidas reales (2 POST)
+
+== 3. Acceso: otro aliado, sin sesión, personal interno ==
+OK    otro aliado: ve solo SU contrato (DTM-8399, sin pagos: cupo disponible) y ninguno de Alfa
+OK    otro aliado: su contrato sin pagos admite 1 soporte
+OK    sin sesión: el portal pide iniciar sesión y no muestra contratos ni soportes
+OK    gerencia en el portal del aliado: no ve los soportes del aliado
+
+== 4. Ficha interna del contrato (gerencia y superadmin): panel de soportes ==
+OK    DTM-8304 (superadmin): panel «Vigentes 2 de 2 permitidos (1 abono registrado + 1 adicional)» con su nota
+OK    DTM-8304 (gerencia): panel «Vigentes 2 de 2 permitidos (1 abono registrado + 1 adicional)» con su nota
+OK    ficha DTM-8304 (panel de soportes) @1280px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    ficha DTM-8304 (panel de soportes) @820px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    ficha DTM-8304 (panel de soportes) @390px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    DTM-8305 (superadmin): panel «Vigentes 4 de 3 permitidos (2 abonos registrados + 1 adicional)» con su nota
+OK    DTM-8305: excedido muestra solo el aviso ámbar (no la nota informativa)
+OK    DTM-8305 (gerencia): panel «Vigentes 4 de 3 permitidos (2 abonos registrados + 1 adicional)» con su nota
+OK    DTM-8305: excedido muestra solo el aviso ámbar (no la nota informativa)
+OK    ficha DTM-8305 (panel de soportes) @1280px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    ficha DTM-8305 (panel de soportes) @820px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    ficha DTM-8305 (panel de soportes) @390px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    DTM-8302 (superadmin): panel «Vigentes 1 de 1 permitidos (0 abonos registrados + 1 adicional)» con su nota
+OK    DTM-8302 (gerencia): panel «Vigentes 1 de 1 permitidos (0 abonos registrados + 1 adicional)» con su nota
+OK    ficha DTM-8302 (panel de soportes) @1280px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    ficha DTM-8302 (panel de soportes) @820px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    ficha DTM-8302 (panel de soportes) @390px: sin desborde (fuera de viewport: 0); texto recortado: ninguno
+OK    sin excepciones de JavaScript en las pestañas (0)
+
+RESULTADO: TODO OK · BUILD_ID vzjltR-QtYjToJEKEVRcz · peticiones por tipo: {"GET /usuarios":666,"GET /config_sitio":15,"GET /ventas":77,"GET /aliados_b2b":69,"GET /comision_b2b_revision":15,"GET /aliados":30,"GET /abonos":68,"GET /contrato_soportes_pago":30,"GET /avisos":37,"HEAD /avisos":37,"POST /rpc/soporte_verificar_identidad":4,"HEAD /contrato_soportes_pago":8,"HEAD /abonos":4,"POST storage":2,"POST /rpc/soporte_registrar":2,"POST /rpc/soy_asesor_del_contrato":15,"POST /rpc/agencia_activa_sesion":12,"GET /cuentas_por_pagar":15,"GET /facturacion":15,"GET /formas_pago":15,"GET /contrato_adjuntos":15,"GET /asesores":15,"GET /vouchers":15,"GET /cuotas":15,"GET /contrato_pasajeros":15,"GET /destinos":15,"GET /proveedores":15,"GET /contrato_condiciones":15,"GET /restriccion_overrides":15,"GET /contrato_servicios":12,"GET /contrato_items":12,"GET /contrato_vuelos":12,"GET /contrato_hoteles":12,"GET /parametros_tributarios":15,"GET /cotizaciones":30,"GET /contrato_minimo_acuerdo":15,"GET /contrato_programa_estancia":15,"GET /ventas_basica":15,"POST /rpc/contratos_identidades":10,"GET /contrato_obligaciones_previstas":5,"POST /rpc/estado_confirmacion_pago":5}

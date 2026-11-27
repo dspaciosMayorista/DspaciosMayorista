@@ -49,6 +49,14 @@ export function formatFecha(iso: string): string {
   });
 }
 
+/** Fecha corta «1 dic 2026» a partir de YYYY-MM-DD (sin `Date`: no se corre un día por la zona horaria). Para tablas en pantallas angostas. */
+export function formatFechaCorta(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso ?? "");
+  if (!m) return "—";
+  const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  return `${Number(m[3])} ${MES[Number(m[2]) - 1] ?? m[2]} ${m[1]}`;
+}
+
 /** Formatea una fecha (YYYY-MM-DD) a texto largo: "12 de agosto de 2026" */
 export function formatFechaLarga(iso: string | null | undefined): string {
   if (!iso) return "—";

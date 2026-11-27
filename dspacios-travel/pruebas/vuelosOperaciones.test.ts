@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import {
   esModoMover, esOperacionId, esIdPositivo, mensajeErrorRpc, transicionesManuales, esEstadoManual, nuevaOperacionId,
 } from "../lib/vuelos/operaciones.ts";
-import { agruparHistorial, describirEntrada, esSillaActiva, type MovimientoFila } from "../lib/vuelos/historial.ts";
+import { agruparHistorial, describirEntrada, esSillaActiva, tituloEntrada, type MovimientoFila } from "../lib/vuelos/historial.ts";
 import { movimientosPorBloqueo } from "../lib/vuelos/stats.ts";
 
 describe("modo de mover y operación", () => {
@@ -94,24 +94,51 @@ describe("dos cifras: cupos activos y movimientos históricos", () => {
     { ...base, id: 15, tipo: null, fecha_movimiento: "2026-01-01T00:00:00Z", bloqueo_origen_id: 3, bloqueo_destino_id: 1, motivo: "viejo" },
   ];
 
-  test("el historial se agrupa por operación y conserva cupos antes/después", () => {
+  const porClave = (c: string) => agruparHistorial(filas).find((e) => e.clave === c)!;
+
+  test("el historial se agrupa por operación, va del más reciente al más antiguo y conserva cupos antes/después y el detalle por silla", () => {
     const h = agruparHistorial(filas);
     assert.equal(h.length, 4);
-    assert.deepEqual([h[0]!.tipo, h[0]!.sillas, h[0]!.numerosOrigen, h[0]!.numerosDestino, h[0]!.cuposOrigen, h[0]!.cuposDestino],
+    assert.deepEqual(h.map((e) => e.clave), ["op-3", "op-2", "op-1", "fila-15"]);
+    const tras = porClave("op-1");
+    assert.deepEqual([tras.tipo, tras.sillas, tras.numerosOrigen, tras.numerosDestino, tras.cuposOrigen, tras.cuposDestino],
       ["traslado_cupo", 2, [9, 10], [7, 8], [10, 8], [6, 8]]);
-    assert.deepEqual(h[1]!.contratos, ["DTM-0451"]);
-    assert.equal(h[3]!.tipo, "legado", "filas anteriores a la 194 se muestran como legado");
+    assert.deepEqual(tras.detalle.map((d) => [d.id, d.sillaOrigen, d.sillaDestino]), [[11, 10, 8], [12, 9, 7]], "el detalle individual sobrevive a la agrupación");
+    assert.deepEqual(porClave("op-2").contratos, ["DTM-0451"]);
+    assert.equal(porClave("fila-15").tipo, "legado", "filas anteriores a la 194 se muestran como legado");
   });
 
   test("el texto depende del record desde el que se mira", () => {
-    const [tras, datos, retiro, legado] = agruparHistorial(filas);
+    const tras = porClave("op-1"), datos = porClave("op-2"), retiro = porClave("op-3"), legado = porClave("fila-15");
     const rec = (id: number | null) => ({ 1: "Y", 2: "X", 3: "Z" } as Record<number, string>)[id ?? 0] ?? "—";
-    assert.equal(describirEntrada(tras!, 1, rec), "Salieron 2 cupo(s) libre(s) hacia X");
-    assert.equal(describirEntrada(tras!, 2, rec), "Entraron 2 cupo(s) libre(s) desde Y");
-    assert.match(describirEntrada(datos!, 1, rec), /su silla quedó libre aquí.*DTM-0451/);
-    assert.match(describirEntrada(datos!, 2, rec), /en un cupo libre de este record/);
-    assert.equal(describirEntrada(retiro!, 2, rec), "Cupo retirado (1)");
-    assert.equal(describirEntrada(legado!, 1, rec), "Entró desde Z (cambio Z → Y)");
+    assert.equal(describirEntrada(tras, 1, rec), "Salieron 2 cupo(s) libre(s) hacia X");
+    assert.equal(describirEntrada(tras, 2, rec), "Entraron 2 cupo(s) libre(s) desde Y");
+    assert.match(describirEntrada(datos, 1, rec), /su silla quedó libre aquí.*DTM-0451/);
+    assert.match(describirEntrada(datos, 2, rec), /en un cupo libre de este record/);
+    assert.equal(describirEntrada(retiro, 2, rec), "Cupo retirado (1)");
+    assert.equal(describirEntrada(legado, 1, rec), "Entró desde Z (cambio Z → Y)");
+  });
+
+  test("la operación se nombra por lo guardado (tipo), nunca por el motivo en texto libre", () => {
+    // Retiro cuyo motivo menciona otro record: sigue siendo un retiro, sin destino.
+    const retiroConMotivo = agruparHistorial([{ ...base, id: 21, tipo: "retiro_cupo", operacion_id: "op-9", fecha_movimiento: "2026-10-01T10:00:00Z", bloqueo_origen_id: 1, bloqueo_destino_id: null,
+      numero_silla_origen: 4, motivo: "se pasa al record LBH7YT / traslado a X", cupos_origen_antes: 8, cupos_origen_despues: 7 }])[0]!;
+    assert.equal(tituloEntrada(retiroConMotivo), "Retiro de cupo");
+    assert.equal(retiroConMotivo.destinoId, null);
+    assert.equal(describirEntrada(retiroConMotivo, 1, () => "X"), "Cupo retirado (1)");
+    // Traslado real: tipo guardado + destino guardado.
+    assert.equal(tituloEntrada(porClave("op-1")), "Traslado de cupos libres");
+    assert.equal(tituloEntrada(porClave("op-2")), "Pasajero movido a un cupo libre");
+    // Legado: solo es «cambio entre records» si origen y destino constan y difieren; el motivo no cuenta.
+    assert.equal(tituloEntrada(porClave("fila-15")), "Cambio entre records (registro anterior)");
+    const legadoSinDestino = agruparHistorial([{ ...base, id: 22, tipo: null, fecha_movimiento: "2026-01-02T00:00:00Z", bloqueo_origen_id: 1, bloqueo_destino_id: null, motivo: "trasladada al record Z" }])[0]!;
+    assert.equal(tituloEntrada(legadoSinDestino), "Movimiento anterior (tipo no guardado)");
+    assert.equal(describirEntrada(legadoSinDestino, 1, () => "Z"), "Movimiento anterior: no se guardó su tipo ni su destino");
+  });
+
+  test("fechas ilegibles o iguales conservan el orden recibido y quedan al final", () => {
+    const f = (id: number, fecha: string): MovimientoFila => ({ ...base, id, tipo: "retiro_cupo", operacion_id: `o${id}`, fecha_movimiento: fecha, bloqueo_origen_id: 1, bloqueo_destino_id: null });
+    assert.deepEqual(agruparHistorial([f(1, "basura"), f(2, "2026-10-01T00:00:00Z"), f(3, "2026-10-01T00:00:00Z")]).map((e) => e.clave), ["o2", "o3", "o1"]);
   });
 
   test("movimientos por record: cuentan en origen y destino, nunca dos veces en el mismo", () => {

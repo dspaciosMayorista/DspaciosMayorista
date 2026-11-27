@@ -9,6 +9,7 @@ import { tituloDocumento } from "@/lib/utils/tituloDocumento";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { habitacionesBernaloDeContrato } from "@/lib/reservar/alojamientoBernaloDocumento";
 import { leerResumenContrato } from "@/lib/contrato/resumenPreciosContrato";
+import { inclusionesDeContrato } from "@/lib/contrato/inclusionesContrato";
 import { condicionesTarifaParaRender } from "@/lib/calc/condicionesTarifa";
 import { desgloseNetoB2B } from "@/lib/finanzas/netoB2B";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
@@ -82,6 +83,8 @@ export default async function ContratoPublicoPage({
     // #94: resumen de precios por pasajero congelado al convertir (solo importes de cara al cliente). Sin fila = contrato histórico (presentación de siempre); un error de lectura se LANZA, no se disfraza de histórico.
     leerResumenContrato(sb, numero),
   ]);
+  // B95-18: «Incluye / No incluye» de la cotización de origen (la opción elegida); el token ya autorizó el contrato.
+  const inclusiones = await inclusionesDeContrato(numero);
 
   const totalPagado = (abonos ?? []).reduce(
     (s, a) => s + (a.valor_abono ?? 0),
@@ -118,6 +121,8 @@ export default async function ContratoPublicoPage({
             habitacionesBernalo={habitacionesBernalo}
             resumenPrecios={resumenContrato}
             netoTotalExigible={desgloseNetoB2B(venta)?.totalExigible ?? null}
+            incluye={inclusiones.incluye}
+            noIncluye={inclusiones.noIncluye}
           />
         </div>
       </div>

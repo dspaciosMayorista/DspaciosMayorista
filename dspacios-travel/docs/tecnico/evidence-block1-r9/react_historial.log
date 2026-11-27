@@ -1,0 +1,16 @@
+(node:18780) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/reactLoader.mjs", pathToFileURL("./")); register("./pruebas/support/reactLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ retiro cuyo motivo menciona otro record: se muestra como retiro, sin destino ni cupos de destino (41.6688ms)
+✔ fecha y hora en Bogotá, con límites de día (UTC-5, sin importar la zona del servidor) (12.1493ms)
+✔ traslado real: origen/destino guardados, inventario antes/después, sillas y detalle por silla (4.6348ms)
+✔ fila anterior a la 194 sin datos: todo lo ausente dice «No guardado» y no se deduce nada del motivo (3.1643ms)
+✔ sin movimientos: mensaje vacío; diseño compacto en móvil (2 columnas) y amplio desde lg (4) (5.6829ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 547.7269

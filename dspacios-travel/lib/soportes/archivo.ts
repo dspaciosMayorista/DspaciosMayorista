@@ -59,12 +59,23 @@ export function rutaSoporte(numeroContrato: string, uuid: string, ext: "pdf" | "
   return `${numeroContrato}/${uuid}.${ext}`;
 }
 
-/** «Excedido» no se guarda: se calcula. */
+/**
+ * Soportes vigentes permitidos POR ENCIMA de los pagos registrados (migración 339, decisión del dueño): el aliado puede adjuntar la evidencia de un pago que el equipo
+ * todavía no ha registrado. NO es un vínculo soporte-pago (no se sabe a cuál pago corresponde ninguno) y subirlo no crea ni aprueba nada. La base lo impone (f281_soportes_insert).
+ */
+export const SOPORTES_ADICIONALES = 1;
+
+/** Máximo de soportes vigentes de un contrato: un soporte por cada pago registrado + el adicional. */
+export function maximoSoportes(abonos: number): number {
+  return abonos + SOPORTES_ADICIONALES;
+}
+
+/** «Excedido» no se guarda: se calcula (más vigentes que el máximo, p. ej. tras anular un pago). */
 export function estaExcedido(vigentes: number, abonos: number): boolean {
-  return vigentes > abonos;
+  return vigentes > maximoSoportes(abonos);
 }
 
 /** ¿Cabe un soporte NUEVO? (reemplazar y retirar no dependen de esto: no suben el conteo). */
 export function cabeUnoNuevo(vigentes: number, abonos: number): boolean {
-  return vigentes + 1 <= abonos;
+  return vigentes + 1 <= maximoSoportes(abonos);
 }

@@ -1,0 +1,330 @@
+dedicated PostgreSQL container hj103_pg ready (ownership recorded in C:\Users\Usuario\AppData\Local\Temp\claude\634f7d9673ff611f\2ac379c7-2697-4eac-9214-92e8b5899452\scratchpad\stack\cfg\pg.json); template database hj103_template loaded read-only from pg127/plantilla127
+PGC_EXIT=0
+NOTICE:  trigger "tarifario_trg_hotel_blackouts_ins" for relation "public.hotel_blackouts" does not exist, skipping
+NOTICE:  trigger "tarifario_trg_hotel_blackouts_upd" for relation "public.hotel_blackouts" does not exist, skipping
+NOTICE:  trigger "tarifario_trg_hotel_blackouts_del" for relation "public.hotel_blackouts" does not exist, skipping
+NOTICE:  trigger "trg_aliado_firmas_inmutable" for relation "public.aliado_firmas" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.aliado_firmas" does not exist, skipping
+NOTICE:  trigger "trg_cuenta_cobro_aceptaciones_inmutable" for relation "public.cuenta_cobro_aceptaciones" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.cuenta_cobro_aceptaciones" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.aliado_logos" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.aliado_clientes" does not exist, skipping
+NOTICE:  trigger "conjuntos_fechas_tocar" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "conjuntos_fechas: lectura" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "conjuntos_fechas: escritura" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "catalogo global: insertar solo Mayorista" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "catalogo global: actualizar solo Mayorista" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "catalogo global: borrar solo Mayorista" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  trigger "trg_solicitud_proveedor_uid" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  trigger "trg_codigo_promocion_coherente" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  trigger "trg_solicitud_proveedor_codigo" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  policy "codigos_promocion: lectura" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "codigos_promocion: escritura" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "catalogo global: insertar solo Mayorista" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "catalogo global: actualizar solo Mayorista" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "catalogo global: borrar solo Mayorista" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "solicitudes_proveedor: lectura" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_eventos: lectura" for relation "public.solicitud_proveedor_eventos" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_avisos: propios" for relation "public.solicitud_proveedor_avisos" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_avisos: marcar leído" for relation "public.solicitud_proveedor_avisos" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  trigger "trg_contrato_guarda" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  policy "cxp_pago_soportes: lectura" for relation "public.cxp_pago_soportes" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_pagos: lectura" for relation "public.solicitud_proveedor_pagos" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.cxp_pago_soportes" does not exist, skipping
+stack ready: gateway 127.0.0.1:19080, mailpit 127.0.0.1:19083, database hj103_journey
+UP_EXIT=0
+seeded: 4 users, 2 contracts, 8 requests
+SEED_EXIT=0
+simulated Mail API on 127.0.0.1:19086 (pid 25580)
+app listening ONLY on 127.0.0.1:3047 (pid 14164); non-loopback addresses of this machine refuse connections
+APP_EXIT=0
+OK   0.1 compiled app answers /login  — 200
+OK   1 webhook no Authorization → 401  — got 401
+OK   1 webhook wrong Bearer → 401  — got 401
+OK   1 webhook Basic scheme with the right secret → 401  — got 401
+OK   1 webhook with the CRON secret → 401  — got 401
+OK   1 webhook right secret, 70 KB body → 413  — got 413
+OK   1 webhook GET (method not allowed) → 405  — got 405
+OK   1 cron no Authorization → 401  — got 401
+OK   1 cron wrong Bearer → 401  — got 401
+OK   1 cron with the WEBHOOK secret → 401  — got 401
+OK   1.x rejected requests made ZERO Mail API calls  — 0 calls
+OK   1.y no event, state or backlog row created by rejected requests
+  run 1: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":5,"revisados":301,"yaRegistrados":0,"nuevos":0,"procesados":0,"progresoParcial":0} wall=7025ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":1000,"con_umbral":true,"version":4}
+  run 2: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":300,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":0} wall=7091ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":700,"con_umbral":true,"version":7}
+  run 3: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":5,"revisados":500,"yaRegistrados":0,"nuevos":0,"procesados":0,"progresoParcial":0} wall=7018ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":200,"con_umbral":true,"version":12}
+  run 4: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":2,"revisados":196,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":1} wall=7071ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":5,"con_umbral":true,"version":14}
+  run 5: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":2,"revisados":5,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":0} wall=5009ms sim=4 cursor={"uid_cubierto":1300,"barrido_tope":null,"barrido_siguiente":null,"con_umbral":false,"version":15}
+OK   2.1 the first run could not finish a 1,300-message mailbox (202, incomplete)  — status 202
+OK   2.2 each run stayed inside the budget (wall ≤ 11 s, ≤ 60 provider calls)  — 7025ms/5 7091ms/5 7018ms/5 7071ms/5 5009ms/4
+OK   2.3 the position survived an app restart (run 2 resumed below run 1's position)  — {"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":1000,"con_umbral":true,"version":4}
+OK   2.4 eventually complete (200) with the cursor at the newest uid  — runs=5, cursor={"uid_cubierto":1300,"barrido_tope":null,"barrido_siguiente":null,"con_umbral":false,"version":15}
+OK   2.5 the three replies hidden behind >1,000 newer unrelated messages were recorded exactly once  — hostinger:ACwalk0000test1:<w1000@proveedor.test>,hostinger:ACwalk0000test1:<w130@proveedor.test>,hostinger:ACwalk0000test1:<w5@proveedor.test>
+  run A: 202 {"completo":false,"pendiente":true,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":1,"pendientesRecuperados":0,"pendientesRestantes":1,"paginas":3,"revisados":3,"yaRegistrados":0,"nuevos":2,"procesados":2,"progresoParcial":0} wall=4573ms
+OK   3.1 a reply whose download keeps failing (503) is PARKED, others still recorded  — parked=1 events=5
+OK   3.2 an incomplete pass answers 202 (never a false 200)  — 202
+  run B (cron): 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":1,"pendientesRestantes":0,"paginas":1,"revisados":0,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":0} wall=1791ms
+OK   3.3 the next pass (scheduled drain) recovers the parked reply and clears the backlog without any new email  — parked=0 events=6
+  run C (hang): 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":2,"revisados":1,"yaRegistrados":0,"nuevos":0,"procesados":0,"progresoParcial":0} wall=7017ms
+OK   3.4 a provider that never answers cannot hold the request past the budget (wall ≤ 12 s)  — 7017 ms
+OK   3.5 …and the reply is recovered by the next pass  — events=7 parked=0
+  concurrent 0: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":2,"procesados":8,"progresoParcial":0} wall=6158ms
+  concurrent 1: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=6267ms
+  concurrent 2: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":1,"procesados":8,"progresoParcial":0} wall=5966ms
+  concurrent 3: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":2,"procesados":8,"progresoParcial":0} wall=5963ms
+  concurrent 4: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=6266ms
+  concurrent 5: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=6156ms
+  concurrent 6: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":3,"procesados":8,"progresoParcial":0} wall=5968ms
+  concurrent 7: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=5961ms
+OK   4.1 every one of the 8 replies recorded exactly once under 8 simultaneous passes  — 8 rows
+OK   4.2 no 5xx and no unauthenticated answer among the concurrent passes  — 200,200,200,200,200,200,200,200
+OK   4.3 the passes really overlapped at the provider (max in-flight > 1)  — maxInflight=9
+OK   4.4 state coherent: cursor at the newest uid, no running sweep, backlog empty  — {"uid_cubierto":1407,"barrido_tope":null,"barrido_siguiente":null,"con_umbral":false,"version":21}
+OK   4.5 on-screen notices created once per new reply (not once per concurrent pass)  — +8
+OK   4.6 internal e-mail notices sent exactly once per new reply (Mailpit)  — +8
+OK   5.1 the same Message-ID under a new uid creates no new event and no notice  — events 15/15, yaRegistrados=1
+OK   5.2 an idle pass costs ONE list call and no downloads  — {"listas":1,"busquedas":0,"descargas":0}
+OK   6.1 replied requests are «respondida» and none is confirmed/rejected by a reply  — ["1:respondida","2:respondida","3:respondida","4:respondida","5:respondida","6:respondida","7:respondida","8:enviada"]
+OK   6.2 the contracts' own state is untouched
+  contracts: DTM-2001:pendiente,DTM-2002:pendiente
+
+JOURNEY PASSED: 32/32 checks
+{
+ "escenarios": {
+  "2-continuation": [
+   {
+    "llamadas": 5,
+    "listas": 1,
+    "busquedas": 4,
+    "descargas": 0,
+    "msTotal": 6050,
+    "maxMs": 1216,
+    "sinAuth": 0,
+    "transaccionesBd": 13,
+    "msPared": 7131,
+    "rssAppMB": 115
+   },
+   {
+    "llamadas": 5,
+    "listas": 0,
+    "busquedas": 3,
+    "descargas": 2,
+    "msTotal": 6038,
+    "maxMs": 1216,
+    "sinAuth": 0,
+    "transaccionesBd": 12,
+    "msPared": 7207,
+    "rssAppMB": 135
+   },
+   {
+    "llamadas": 5,
+    "listas": 0,
+    "busquedas": 5,
+    "descargas": 0,
+    "msTotal": 6025,
+    "maxMs": 1214,
+    "sinAuth": 0,
+    "transaccionesBd": 9,
+    "msPared": 7118,
+    "rssAppMB": 111
+   },
+   {
+    "llamadas": 5,
+    "listas": 0,
+    "busquedas": 2,
+    "descargas": 3,
+    "msTotal": 6042,
+    "maxMs": 1214,
+    "sinAuth": 0,
+    "transaccionesBd": 13,
+    "msPared": 7174,
+    "rssAppMB": 112
+   },
+   {
+    "llamadas": 4,
+    "listas": 1,
+    "busquedas": 1,
+    "descargas": 2,
+    "msTotal": 4819,
+    "maxMs": 1207,
+    "sinAuth": 0,
+    "transaccionesBd": 7,
+    "msPared": 5110,
+    "rssAppMB": 112
+   }
+  ],
+  "3-parked": [
+   {
+    "llamadas": 13,
+    "listas": 2,
+    "busquedas": 1,
+    "descargas": 10,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 23,
+    "msPared": 4687,
+    "rssAppMB": 114
+   },
+   {
+    "llamadas": 5,
+    "listas": 1,
+    "busquedas": 0,
+    "descargas": 4,
+    "msTotal": 1,
+    "maxMs": 1,
+    "sinAuth": 0,
+    "transaccionesBd": 5,
+    "msPared": 1892,
+    "rssAppMB": 114
+   }
+  ],
+  "3-hang": [
+   {
+    "llamadas": 2,
+    "listas": 1,
+    "busquedas": 1,
+    "descargas": 0,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 8,
+    "msPared": 7118,
+    "rssAppMB": 114
+   },
+   {
+    "llamadas": 4,
+    "listas": 1,
+    "busquedas": 1,
+    "descargas": 2,
+    "msTotal": 1,
+    "maxMs": 1,
+    "sinAuth": 0,
+    "transaccionesBd": 7,
+    "msPared": 337,
+    "rssAppMB": 115
+   }
+  ],
+  "4-concurrency": [
+   {
+    "llamadas": 152,
+    "listas": 16,
+    "busquedas": 8,
+    "descargas": 128,
+    "msTotal": 39010,
+    "maxMs": 265,
+    "sinAuth": 0,
+    "transaccionesBd": 341,
+    "msPared": 6373,
+    "rssAppMB": 130
+   }
+  ],
+  "5-dedupe": [
+   {
+    "llamadas": 3,
+    "listas": 2,
+    "busquedas": 1,
+    "descargas": 0,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 56,
+    "msPared": 286,
+    "rssAppMB": 131
+   }
+  ],
+  "5-idle": [
+   {
+    "llamadas": 1,
+    "listas": 1,
+    "busquedas": 0,
+    "descargas": 0,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 4,
+    "msPared": 144,
+    "rssAppMB": 132
+   }
+  ]
+ },
+ "libreMinMB": 3467,
+ "libreInicialMB": 3549,
+ "rssAppInicialMB": 133,
+ "continuacion": {
+  "corridas": [
+   {
+    "run": 1,
+    "status": 202,
+    "wallMs": 7025,
+    "simCalls": 5,
+    "searches": 4,
+    "downloads": 0,
+    "tx": 13
+   },
+   {
+    "run": 2,
+    "status": 202,
+    "wallMs": 7091,
+    "simCalls": 5,
+    "searches": 3,
+    "downloads": 2,
+    "tx": 12
+   },
+   {
+    "run": 3,
+    "status": 202,
+    "wallMs": 7018,
+    "simCalls": 5,
+    "searches": 5,
+    "downloads": 0,
+    "tx": 9
+   },
+   {
+    "run": 4,
+    "status": 202,
+    "wallMs": 7071,
+    "simCalls": 5,
+    "searches": 2,
+    "downloads": 3,
+    "tx": 13
+   },
+   {
+    "run": 5,
+    "status": 200,
+    "wallMs": 5009,
+    "simCalls": 4,
+    "searches": 1,
+    "downloads": 2,
+    "tx": 7
+   }
+  ]
+ },
+ "libreFinalMB": 3553,
+ "rssAppFinalMB": 132,
+ "contenedores": [
+  "hj103_rest 95.93MiB / 160MiB 0.48%",
+  "hj103_auth 11.33MiB / 192MiB 0.00%",
+  "hj103_mail 23.38MiB / 64MiB 0.00%",
+  "hj103_pg 173.6MiB / 768MiB 0.08%"
+ ],
+ "totales": {
+  "eventos": 15,
+  "avisosEnPantalla": 15,
+  "correosInternos": 15
+ }
+}
+JOURNEY_EXIT=0
+{"estado":"detenido","pid":8796}
+{"estado":"detenido","pid":25580}
+app {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+sim {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+gateway {"estado":"detenido","pid":24504}
+dropped hj103_journey
+teardown done (the work folder with generated config is kept; delete it by hand if you want)
+DOWN_EXIT=0
+removed hj103_pg
+DESTROY_EXIT=0

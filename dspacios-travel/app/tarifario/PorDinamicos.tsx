@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, BedDouble, Calculator, Hotel, Info, Moon, Plane, Sparkles, Users, Utensils } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DateInput } from "@/components/ui/DateInput";
 import { formatMoneda } from "@/lib/utils";
 import { ACOM_ROOM_LABEL, ACOM_ROOMS, PAX_TARIFA_DEFAULT, type AcomRoom } from "@/lib/acomodaciones";
@@ -135,7 +136,7 @@ function Cotizador({ p, hotel, onCerrar, evaluar }: { p: DinamicoPublico; hotel:
   const cambiarCantidadMenores = (n: number) => setEdades((a) => ajustarCantidadEdades(a, Math.max(0, Math.min(10, n))));
 
   return (
-    <div className="mt-3 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-3" data-testid="cotizador-dinamico">
+    <div className="space-y-3" data-testid="cotizador-dinamico">
       {p.usaHotel && hotel && (
         <>
           <Seccion icono={Hotel} titulo="Hotel">
@@ -270,12 +271,12 @@ export function PorDinamicos({ dinamicos, evaluar, abierta = null }: { dinamicos
                 const desde = h ? h.desde : Math.min(...p.opciones.map((o) => o.desdePorPersona));
                 return (
                   <article key={clave} className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-                    {h && <CarruselFotoHotel fotos={[h.foto]} alt={h.nombre} />}
+                    {h && <CarruselFotoHotel fotos={h.fotos} alt={h.nombre} />}
                     <div className="p-4">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <h3 className="font-semibold text-gray-900">{h?.nombre ?? p.nombre}</h3>
-                        {/* Estrellas del HOTEL; la categoría de la habitación va aparte, rotulada. */}
-                        {h && <Categoria estrellas={h.estrellas} clasificacion={null} />}
+                        {/* Estrellas del HOTEL (o su clasificación del catálogo si no tiene estrellas); la categoría de la habitación va aparte, rotulada. */}
+                        {h && <Categoria estrellas={h.estrellas} clasificacion={h.clasificacion || null} />}
                       </div>
                       {h && <p className="text-xs text-gray-500" data-testid="hotel-habitacion-alimentacion">{[h.categoria && `Habitación ${h.categoria}`, h.regimen].filter(Boolean).join(" · ")}</p>}
                       {h && <DescripcionHotelExpandible texto={h.descripcion} className="mt-1" />}
@@ -283,7 +284,16 @@ export function PorDinamicos({ dinamicos, evaluar, abierta = null }: { dinamicos
                       <p className="mt-2 text-sm text-gray-500">Desde por persona en doble</p>
                       <p className="text-lg font-bold" style={{ color: "var(--brand-primary)" }}>{formatMoneda(desde, p.moneda)}</p>
                       <Button className="mt-3 w-full" variant="outline" onClick={() => setAbierto(abierto === clave ? null : clave)}><Calculator className="h-4 w-4" /> Cotizar</Button>
-                      {abierto === clave && <Cotizador p={p} hotel={h} onCerrar={() => setAbierto(null)} evaluar={evaluar} />}
+                      {/* #88 H88-01: el cotizador se abre en una ventana (no estira la tarjeta ni la grilla). Cerrar/Escape lo desmonta; la selección se conserva en sessionStorage, igual que antes. */}
+                      <Dialog open={abierto === clave} onOpenChange={(o) => { if (!o) setAbierto(null); }}>
+                        <DialogContent className="max-h-[90dvh] w-[calc(100%-1rem)] max-w-[calc(100%-1rem)] overflow-y-auto overflow-x-hidden sm:max-w-2xl" data-testid="ventana-cotizador-dinamico">
+                          <DialogHeader>
+                            <DialogTitle>Cotizar · {h?.nombre ?? p.nombre}</DialogTitle>
+                            <DialogDescription>{[p.nombre, p.destino, `${p.noches} noches`].filter(Boolean).join(" · ")}</DialogDescription>
+                          </DialogHeader>
+                          {abierto === clave && <Cotizador p={p} hotel={h} onCerrar={() => setAbierto(null)} evaluar={evaluar} />}
+                        </DialogContent>
+                      </Dialog>
                     </div>
                   </article>
                 );

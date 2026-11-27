@@ -1,0 +1,3 @@
+ERROR:  column "revision" does not exist
+LINE 2:   select revision || '|' || id || '|' || share_token || '|' ...
+                 ^

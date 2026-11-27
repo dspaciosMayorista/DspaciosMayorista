@@ -6,6 +6,7 @@ import {
   esRegistroPendienteSinVerificar, esRegistroVerificadoSinSolicitud, MAX_INTENTOS_CODIGO, MSG_CODIGO_AGOTADO, MSG_CODIGO_INVALIDO, MSG_CONTINUAR, MSG_CONTINUAR_INVALIDO,
   MSG_EN_CURSO, MSG_ERROR_TEMPORAL, MSG_ESPERA, MSG_VERIFICADO_PENDIENTE, normalizarCodigo, type RegistroPendiente,
 } from "@/lib/auth/codigoRegistro";
+import { normalizarCodigo as normalizarCodigoReferido } from "@/lib/referidos/reglas";
 
 // #62 — registro B2B en DOS pasos. (1) `iniciarRegistroB2B`: crea la cuenta SIN verificar e INACTIVA y manda el código al correo. (2)
 // `confirmarCodigoYSolicitarB2B`: solo con el código correcto (Auth confirma el correo) se registra la solicitud de aprobación. La solicitud
@@ -25,6 +26,7 @@ export type SolicitudB2BInput = {
   telefono: string; ciudad: string; notas: string; aceptaNotificaciones: boolean;
   password: string; passwordConfirm: string;
   tipoDocumento?: string;   // NIT / CC / CE / PAS — `nit` es el NÚMERO
+  codigoReferido?: string;  // #76: código de referido OPCIONAL. Es un CANDIDATO (texto): no asigna nada; superadmin/gerencia lo confirman contra la regla guardada (migración 342).
 };
 export type DatosSolicitudB2B = Omit<SolicitudB2BInput, "password" | "passwordConfirm">;
 
@@ -50,6 +52,8 @@ function datosParaEstado(d: Partial<DatosSolicitudB2B>) {
   return {
     nombre: (d.nombre ?? "").trim(), nit: (d.nit ?? "").trim(), tipo_documento: (d.tipoDocumento ?? "").trim(), contacto: (d.contacto ?? "").trim(),
     telefono: (d.telefono ?? "").trim(), ciudad: (d.ciudad ?? "").trim(), notas: (d.notas ?? "").trim(), acepta_notificaciones: d.aceptaNotificaciones === true,
+    // Solo texto normalizado y con formato válido; la base lo vuelve a validar. Nunca se resuelve referidor ni porcentaje aquí.
+    codigo_referido: normalizarCodigoReferido(d.codigoReferido) ?? "",
   };
 }
 
@@ -88,6 +92,8 @@ export async function iniciarRegistroB2B(input: SolicitudB2BInput): Promise<Resu
   if (!input.nit.trim()) return { ok: false, error: "El número de documento (NIT o cédula) es obligatorio." };
   if (input.password.length < 6) return { ok: false, error: "La contraseña debe tener al menos 6 caracteres." };
   if (input.password !== input.passwordConfirm) return { ok: false, error: "Las contraseñas no coinciden." };
+  // Un código con formato inválido se avisa ANTES de crear la cuenta (no revela si el código existe: eso lo decide quien aprueba).
+  if ((input.codigoReferido ?? "").trim() && !normalizarCodigoReferido(input.codigoReferido)) return { ok: false, error: "El código de referido usa de 4 a 20 letras, números o guiones. Revísalo o déjalo en blanco." };
 
   const tipo = input.tipo === "freelance" ? "freelance" : "agencia";
   const admin = createAdminClient();

@@ -85,8 +85,8 @@ describe("costos compartidos (mismas fórmulas que antes, ahora en un solo lugar
     assert.equal(costoHotelPersona({ ...comp, numNinos: 0, numNinos2: 0 }, 0), 200);
   });
   test("vuelo de bloqueo y vuelo Bernalo", () => {
-    assert.equal(costoAereoBloqueo({ tarifa_para_empaquetar: "500000", fee_infante: 80_500 }, 2, 1), 1_080_500);
-    assert.equal(costoAereoBloqueo({ tarifa_para_empaquetar: null, fee_infante: undefined }, 2, 1), 0, "sin tarifa ni fee → cero");
+    assert.equal(costoAereoBloqueo({ tarifa_neta: "500000", fee_infante: 80_500 }, 2, 1), 1_080_500);
+    for (const neta of [null, undefined, 0, "x"]) assert.throws(() => costoAereoBloqueo({ tarifa_neta: neta, fee_infante: 0 }, 2, 0), /tarifa neta/, "sin neta no hay costo: ni cero ni reventa");
     assert.equal(costoVueloBernalo({ costo_neto: 250, fee_infante: 20 }, 3, 2), 2 * 250 + 20);
   });
   test("costo de un tour: solo finito y positivo genera CxP", () => {

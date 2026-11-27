@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
-  MAX_BYTES_POR_DEFECTO, TOPE_FUNCION_BYTES, cabeUnoNuevo, detectarTipo, estaExcedido, formatoMaximo, maxBytesSoporte, nombreSeguro, rutaSoporte, validarArchivo,
+  MAX_BYTES_POR_DEFECTO, TOPE_FUNCION_BYTES, cabeUnoNuevo, detectarTipo, estaExcedido, formatoMaximo, maximoSoportes, maxBytesSoporte, nombreSeguro, rutaSoporte, validarArchivo,
 } from "../lib/soportes/archivo.ts";
 import { MENSAJE_IDENTIDAD } from "../lib/contrato/identidad.ts";
 import { esRechazoDefinitivo, mensajeDeBase, precomprobarIdentidad, subirYVincular, type Confirmacion, type DepsSubida, type Validado } from "../lib/soportes/operaciones.ts";
@@ -47,12 +47,27 @@ test("límite configurable: por defecto 4 MB, nunca por encima del tope de la fu
   assert.equal(formatoMaximo(4_000_000), "4 MB");
 });
 
-test("excedido y cupo se calculan, no se guardan", () => {
-  assert.equal(estaExcedido(3, 2), true);
-  assert.equal(estaExcedido(2, 2), false);
-  assert.equal(cabeUnoNuevo(2, 3), true);
-  assert.equal(cabeUnoNuevo(3, 3), false);
-  assert.equal(cabeUnoNuevo(3, 2), false, "excedido: no cabe uno nuevo (reemplazar y retirar no dependen de esto)");
+test("excedido y cupo se calculan, no se guardan: máximo = pagos registrados + 1 (migración 339)", () => {
+  // Tabla escrita a mano (vigentes, pagos) → ¿cabe uno nuevo? / ¿excedido?  Máximo = pagos + 1.
+  const tabla: [number, number, boolean, boolean][] = [
+    [0, 0, true, false],   // sin pagos: cabe 1
+    [1, 0, false, false],  // sin pagos y 1 soporte: lleno, no excedido
+    [2, 0, false, true],   // más del máximo (p. ej. tras anular un pago): excedido
+    [0, 1, true, false],
+    [1, 1, true, false],   // 1 pago: caben 2
+    [2, 1, false, false],  // 1 pago y 2 soportes: lleno
+    [3, 1, false, true],
+    [2, 3, true, false],
+    [3, 3, true, false],   // el soporte adicional sobre 3 pagos
+    [4, 3, false, false],  // 3 pagos y 4 soportes: lleno (máximo 4)
+    [5, 3, false, true],
+  ];
+  for (const [vigentes, abonos, cabe, excedido] of tabla) {
+    assert.equal(cabeUnoNuevo(vigentes, abonos), cabe, `cabe uno nuevo: ${vigentes} vigentes, ${abonos} pagos`);
+    assert.equal(estaExcedido(vigentes, abonos), excedido, `excedido: ${vigentes} vigentes, ${abonos} pagos`);
+  }
+  assert.equal(maximoSoportes(0), 1);
+  assert.equal(maximoSoportes(2), 3);
 });
 
 test("nombre y ruta: el nombre no puede inyectar rutas y la ruta la arma el servidor", () => {
@@ -103,7 +118,7 @@ test("si la base rechaza: se borra SOLO el objeto nuevo y el mensaje es comprens
   const log: string[] = [];
   const r = await subirYVincular(deps({ log, registrar: async () => ({ error: { message: "SOPORTE_LIMITE: el contrato…" } }) }), { path: "C/2.pdf", archivo, bytes: PDF });
   assert.equal(r.ok, false);
-  assert.match(r.ok ? "" : r.error, /un soporte vigente por cada abono/);
+  assert.match(r.ok ? "" : r.error, /máximo de soportes vigentes: uno por cada pago registrado y uno adicional/);
   assert.deepEqual(log, ["subir C/2.pdf", "borrar C/2.pdf"]);
   assert.equal("huerfano" in r, false);
 });

@@ -60,11 +60,14 @@ test("NETO: muestra tarifas prorrateadas por persona sin revelar PVP ni comisió
   assert.doesNotMatch(texto, /comisi[oó]n/i);
   assert.match(texto, /Tarifa Adulto NETO/);
   assert.match(texto, /Valor total NETO/);
-  assert.ok(texto.includes($(874_000)), "tarifa neta por adulto");
-  assert.ok(texto.includes($(1_748_000)), "subtotal neto de dos adultos");
-  assert.ok(texto.includes($(92_000)), "servicio prorrateado a NETO");
+  // B95-02 (owner 2026-11-26): un servicio adicional no muestra su propio precio (ni siquiera prorrateado a NETO). Su parte NETO (92.000) va dentro de la tarifa de los adultos:
+  // 2 × 920.000 = 1.840.000 (antes 2 × 874.000 = 1.748.000 y una fila de servicio por 92.000). El total exigible y su suma exacta no cambian.
+  assert.ok(texto.includes($(920_000)), "tarifa neta por adulto (incluye la parte NETO del servicio)");
+  assert.ok(texto.includes($(1_840_000)), "subtotal neto de los adultos = total exigible");
+  assert.ok(!texto.includes($(874_000)) && !texto.includes($(1_748_000)), "ya no se imprime el reparto anterior");
+  assert.ok(!texto.includes($(92_000)), "el servicio NO muestra su precio NETO");
   assert.match(texto, /Doble · Estándar\/PAM/);
-  assert.match(texto, /Traslado aeropuerto/);
+  assert.match(texto, /Traslado aeropuerto/, "el servicio sigue descrito (qué incluye), sin importe");
   assert.doesNotMatch(texto, /Valor total acordado para el paquete/);
 });
 
@@ -93,7 +96,10 @@ test("no NETO: el documento queda exactamente como antes (suma de ítems y valor
   const texto = render(null);
   assert.ok(texto.includes(`Total del contrato ${$(PVP)}`));
   assert.ok(texto.includes(`Saldo pendiente ${$(PVP - PAGADO)}`));
-  assert.ok(texto.includes($(950_000)) && texto.includes($(1_900_000)) && texto.includes($(100_000)));
+  // B95-02 (owner 2026-11-26): el servicio (100.000) deja de ser una fila con precio propio; su importe va en la tarifa de los adultos: 2 × 1.000.000 = 2.000.000 = total.
+  assert.ok(texto.includes($(1_000_000)) && texto.includes($(2_000_000)), "tarifa por adulto con el servicio incluido y subtotal = total");
+  assert.ok(!texto.includes($(950_000)) && !texto.includes($(1_900_000)) && !texto.includes($(100_000)), "ni el reparto anterior ni el precio propio del servicio");
+  assert.match(texto, /Traslado aeropuerto/, "el servicio sigue descrito");
   assert.doesNotMatch(texto, /Valor total acordado para el paquete/);
 });
 
@@ -101,7 +107,8 @@ test("Minorista PVP conserva las tarifas originales por persona", () => {
   const html = renderToStaticMarkup(createElement(ContratoDocumento, { agencia: AGENCIA_PRUEBA,
     venta: { ...venta, tenant: "minorista" }, pasajeros: [], hoteles: [], vuelos: [], items, totalPagado: PAGADO,
   } as never)).replace(/<[^>]+>/g, " ").replace(/&nbsp;| /g, " ").replace(/\s+/g, " ");
-  assert.ok(html.includes($(950_000)) && html.includes($(1_900_000)));
+  assert.ok(html.includes($(1_000_000)) && html.includes($(2_000_000)), "(B95-02) el servicio va dentro de la tarifa por adulto");
+  assert.ok(!html.includes($(100_000)), "el servicio no muestra su propio precio");
   assert.doesNotMatch(html, /Tarifa Adulto NETO/);
 });
 

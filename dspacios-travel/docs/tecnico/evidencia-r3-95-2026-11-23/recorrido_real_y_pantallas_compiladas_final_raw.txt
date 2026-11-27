@@ -1,0 +1,92 @@
+  ✔ la reserva deja la asistencia INCLUIDA (30.000 × 2 pax = 60.000) en costo_asistencia, con su obligación y la bandera de asistencia (1426.5956ms)
+  ℹ reserva DTM-0001: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ✔ AUDITORÍA: el paquete reclasifica la asistencia como opcional DESPUÉS de reservar → elegirla como opcional se RECHAZA y no cambia nada; quitar la selección la conserva (3394.8878ms)
+  ℹ antes: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ℹ elegir la asistencia como opcional → {"ok":false,"error":"No se puede agregar como opcional «Asistencia médica 95»: este contrato ya tiene una obligación con ese servicio (quedó incluido al reservar). Se conserva tal cual para no duplicar ni perder ese costo. No se cambió nada."}
+  ℹ quitar la selección → resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ✔ el servicio incluido se QUITA del paquete después de reservar: el tour opcional se agrega y se quita y la asistencia histórica (60.000, bandera) sobrevive en cada paso (2985.9294ms)
+  ℹ con el tour: resumen=926000|80000|60000|true|Tour clasificado 95 · obligaciones=9502:asistencia:60000,9503:receptivo:80000 · líneas servicio=Servicio · Tour clasificado 95
+  ℹ sin el tour: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ✔ cop_impar_nino_gratis_y_pago · opción A: el contrato suma EXACTAMENTE 1330455 COP y conserva niño, titular y la copia editada del hotel (4176.8045ms)
+  ℹ contrato DTM-0004: precio=1330455 · pagado=770455 (exigido 770455) · plan="Hotel A · Superior · PAM · Triple" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,665228,0],["Ajuste de redondeo del",1,0,-1,0]]
+  ℹ saldo pagado 560000 → pagado=1330455
+  ✔ cop_impar_nino_gratis_y_pago · opción B: el contrato suma EXACTAMENTE 1580455 COP y conserva niño, titular y la copia editada del hotel (4236.0389ms)
+  ℹ contrato DTM-0005: precio=1580455 · pagado=800455 (exigido 800455) · plan="Hotel B · Estándar · PC · Doble" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,715228,150000],["Ajuste de redondeo del",1,0,-1,0]]
+  ℹ saldo pagado 780000 → pagado=1580455
+  ✔ cop_par · opción A: el contrato suma EXACTAMENTE 1330000 COP y conserva niño, titular y la copia editada del hotel (4302.6047ms)
+  ℹ contrato DTM-0006: precio=1330000 · pagado=770000 (exigido 770000) · plan="Hotel A · Superior · PAM · Triple" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,665000,0]]
+  ℹ saldo pagado 560000 → pagado=1330000
+  ✔ cop_par · opción B: el contrato suma EXACTAMENTE 1580000 COP y conserva niño, titular y la copia editada del hotel (4326.4072ms)
+  ℹ contrato DTM-0007: precio=1580000 · pagado=800000 (exigido 800000) · plan="Hotel B · Estándar · PC · Doble" · líneas=[["PAQUETE TURÍSTICO A CA",2,1,715000,150000]]
+  ℹ saldo pagado 780000 → pagado=1580000
+  ✔ cop_tres_adultos · opción A: el contrato suma EXACTAMENTE 1330456 COP y conserva niño, titular y la copia editada del hotel (4257.8776ms)
+  ℹ contrato DTM-0008: precio=1330456 · pagado=770455.3 (exigido 770455.3) · plan="Hotel A · Superior · PAM · Triple" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,443485,0],["Ajuste de redondeo del",1,0,1,0]]
+  ℹ saldo pagado 560000.7 → pagado=1330456
+  ✔ cop_tres_adultos · opción B: el contrato suma EXACTAMENTE 1580455 COP y conserva niño, titular y la copia editada del hotel (4312.3304ms)
+  ℹ contrato DTM-0009: precio=1580455 · pagado=800455 (exigido 800455) · plan="Hotel B · Estándar · PC · Doble" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,476818,150000],["Ajuste de redondeo del",1,0,1,0]]
+  ℹ saldo pagado 780000 → pagado=1580455
+  ✔ usd_centavos · opción A: el contrato suma EXACTAMENTE 1331 USD y conserva niño, titular y la copia editada del hotel (4143.7065ms)
+  ℹ contrato DTM-0010: precio=1331 · pagado=770.3 (exigido 770.3) · plan="Hotel A · Superior · PAM · Triple" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,443.67,0],["Ajuste de redondeo del",1,0,-0.01,0]]
+  ℹ saldo pagado 560.7 → pagado=1331
+  ✔ usd_centavos · opción B: el contrato suma EXACTAMENTE 1582.55 USD y conserva niño, titular y la copia editada del hotel (4024.9311ms)
+  ℹ contrato DTM-0011: precio=1582.55 · pagado=800.6 (exigido 800.6) · plan="Hotel B · Estándar · PC · Doble" · líneas=[["PAQUETE TURÍSTICO A CA",3,1,477.33,150.55],["Ajuste de redondeo del",1,0,0.01,0]]
+  ℹ saldo pagado 781.95 → pagado=1582.55
+  ✔ cotización SIMPLE (no comparativa): misma conversión, mismas líneas exactas (cop_tres_adultos) y la copia editada del hotel (1735.8991ms)
+  ℹ simple DTM-0012: plan="Hotel A · Superior · PAM · Triple" líneas=[["PAQUETE TURÍSTICO A CA",443485],["Ajuste de redondeo del",1]]
+  ✔ conversión repetida (reintento): no duplica la línea de ajuste ni cambia nada (1754.3666ms)
+  ✔ los contratos HISTÓRICOS no se reescriben: un contrato anterior con líneas que suman +1 queda tal cual tras nuevas conversiones (1141.9079ms)
+ℹ tests 14
+ℹ pass 14
+ℹ fail 0
+contratos: {"imparA":{"numero":"DTM-0004","hija":"5","precio":"1330455.00"},"imparB":{"numero":"DTM-0005","hija":"7","precio":"1580455.00"},"usdB":{"numero":"DTM-0011","hija":"19","precio":"1582.55"},"parA":{"numero":"DTM-0006","hija":"9","precio":"1330000.00"}}
+OK    los 4 contratos del recorrido real existen
+OK    imparA/escritorio: /contrato/DTM-0004 responde 200 (200)
+OK    imparA/escritorio: «Total del contrato $1.330.455» exacto en la pantalla compilada
+OK    imparA/escritorio: sin desbordamiento horizontal
+OK    imparA: PDF generado (4 páginas) → contrato_imparA.pdf
+OK    imparA/movil: /contrato/DTM-0004 responde 200 (200)
+OK    imparA/movil: «Total del contrato $1.330.455» exacto en la pantalla compilada
+OK    imparA/movil: sin desbordamiento horizontal
+OK    imparB/escritorio: /contrato/DTM-0005 responde 200 (200)
+OK    imparB/escritorio: «Total del contrato $1.580.455» exacto en la pantalla compilada
+OK    imparB/escritorio: sin desbordamiento horizontal
+OK    imparB: PDF generado (4 páginas) → contrato_imparB.pdf
+OK    imparB/movil: /contrato/DTM-0005 responde 200 (200)
+OK    imparB/movil: «Total del contrato $1.580.455» exacto en la pantalla compilada
+OK    imparB/movil: sin desbordamiento horizontal
+OK    usdB/escritorio: /contrato/DTM-0011 responde 200 (200)
+OK    usdB/escritorio: «Total del contrato USD $1,582.55» exacto en la pantalla compilada
+OK    usdB/escritorio: sin desbordamiento horizontal
+OK    usdB: PDF generado (4 páginas) → contrato_usdB.pdf
+OK    usdB/movil: /contrato/DTM-0011 responde 200 (200)
+OK    usdB/movil: «Total del contrato USD $1,582.55» exacto en la pantalla compilada
+OK    usdB/movil: sin desbordamiento horizontal
+OK    parA/escritorio: /contrato/DTM-0006 responde 200 (200)
+OK    parA/escritorio: «Total del contrato $1.330.000» exacto en la pantalla compilada
+OK    parA/escritorio: sin desbordamiento horizontal
+OK    parA: PDF generado (4 páginas) → contrato_parA.pdf
+OK    parA/movil: /contrato/DTM-0006 responde 200 (200)
+OK    parA/movil: «Total del contrato $1.330.000» exacto en la pantalla compilada
+OK    parA/movil: sin desbordamiento horizontal
+OK    cotización imparA: /cotizacion/5 responde 200
+OK    cotización usdB: /cotizacion/19 responde 200
+OK    ficha superadmin/escritorio: responde 200
+OK    ficha superadmin/escritorio: hay botón de plan de cobro
+OK    ficha superadmin/escritorio: el plan quedó guardado (1 filas, suma 1580455 = precio exacto)
+OK    ficha superadmin/escritorio: la pantalla muestra «Regenerar plan» tras generarlo
+OK    ficha superadmin/escritorio: sin desbordamiento horizontal
+OK    ficha administracion/escritorio: responde 200
+OK    ficha administracion/escritorio: hay botón de plan de cobro
+OK    ficha administracion/escritorio: el plan quedó guardado (1 filas, suma 1580455 = precio exacto)
+OK    ficha administracion/escritorio: la pantalla muestra «Regenerar plan» tras generarlo
+OK    ficha administracion/escritorio: sin desbordamiento horizontal
+OK    ficha superadmin/movil: responde 200
+OK    ficha superadmin/movil: hay botón de plan de cobro
+OK    ficha superadmin/movil: el plan quedó guardado (1 filas, suma 1580455 = precio exacto)
+OK    ficha superadmin/movil: la pantalla muestra «Regenerar plan» tras generarlo
+OK    ficha superadmin/movil: sin desbordamiento horizontal
+OK    ficha venta/escritorio: responde 200
+OK    ficha venta/escritorio: botón de plan visible = true (la RLS de cuotas decide la escritura)
+OK    dos navegadores a la vez → UN plan (1 filas, 1 órdenes distintos, suma 1580455)
+PDF: contrato_imparA.pdf=4p · contrato_imparB.pdf=4p · contrato_usdB.pdf=4p · contrato_parA.pdf=4p · cotizacion_imparA.pdf=5p · cotizacion_usdB.pdf=5p
+=== pantallas R3: 49 OK, 0 fallo(s)

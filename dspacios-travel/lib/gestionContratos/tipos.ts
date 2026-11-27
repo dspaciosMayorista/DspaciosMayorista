@@ -41,7 +41,7 @@ export type FilaGestion = {
   saldoClase: SaldoClase;
   nAbonos: number;
   /** `acuseAnterior`: la entrega registrada quedó sustituida por un voucher nuevo (el evento de abajo es ese acuse anterior; sigue en el historial). */
-  voucher: EventoSeguimiento & { n: number; entrega: EntregaVoucher; acuseAnterior: boolean };
+  voucher: EventoSeguimiento & { n: number; entrega: EntregaVoucher; acuseAnterior: boolean; /** ADL-041 (338): un voucher conservó su enlace pero CAMBIÓ de contenido después de la entrega registrada (señal interna; no dice nada de lo que vio el cliente). */ actualizado?: boolean; /** ADL-042 (338): vouchers de vuelo que ya NO corresponden a los tramos guardados (cambiaron → «revisar», o el servicio se retiró). */ aereoNoVigente?: number };
   /** `emitida` = validada en la DIAN (nada más lo establece); `estado` distingue «sin validar» (asiento o número, sin DIAN). */
   factura: EventoSeguimiento & { emitida: boolean; estado: EstadoFactura; contable: boolean; dian: boolean; registros: number; envio: EnvioFactura };
   comision: { clase: ClaseComision; filas: number };
@@ -99,7 +99,7 @@ function fila(raw: unknown): FilaGestion {
     estado: txt(o, "estado", true), estadoGrupo: enLista<EstadoGrupo>(o, "estado_grupo", ESTADOS_GRUPO), financieroPendiente: o.financiero_pendiente === true,
     monedaOferta: moneda(o, "moneda_oferta"), precioOferta: numero(o, "precio_oferta", true), monedaCobro: moneda(o, "moneda_cobro"), cobroConvertido: o.cobro_convertido === true,
     total: numero(o, "total", true), pagado: numero(o, "pagado") as number, saldo: numero(o, "saldo", true), saldoClase: enLista<SaldoClase>(o, "saldo_clase", SALDOS), nAbonos: numero(o, "n_abonos") as number,
-    voucher: { ...evento(v), n: numero(v as Obj, "n") as number, entrega: enLista<EntregaVoucher>(v as Obj, "entrega", ENTREGAS), acuseAnterior: (v as Obj).acuse_anterior === true },
+    voucher: { ...evento(v), n: numero(v as Obj, "n") as number, entrega: enLista<EntregaVoucher>(v as Obj, "entrega", ENTREGAS), acuseAnterior: (v as Obj).acuse_anterior === true, actualizado: (v as Obj).actualizado === true, aereoNoVigente: typeof (v as Obj).aereo_no_vigente === "number" ? ((v as Obj).aereo_no_vigente as number) : 0 },
     factura: { ...evento(f), emitida: (f as Obj).emitida === true, estado: enLista<EstadoFactura>(f as Obj, "estado", ESTADOS_FACTURA), contable: (f as Obj).contable === true, dian: (f as Obj).dian === true, registros: numero(f as Obj, "registros") as number, envio: enLista<EnvioFactura>(f as Obj, "envio", ENVIOS) },
     comision: { clase: enLista<ClaseComision>(c as Obj, "clase", COMISIONES), filas: numero(c as Obj, "filas") as number },
   };

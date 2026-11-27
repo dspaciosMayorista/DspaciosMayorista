@@ -13,7 +13,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 
 export function RegistroForm({ retomar = false }: { retomar?: boolean }) {
   const [f, setF] = useState({
-    tipo: "agencia", tipoDocumento: "NIT", nombre: "", nit: "", contacto: "", email: "", telefono: "", ciudad: "", notas: "", aceptaNotificaciones: true,
+    tipo: "agencia", tipoDocumento: "NIT", nombre: "", nit: "", contacto: "", email: "", telefono: "", ciudad: "", notas: "", codigoReferido: "", aceptaNotificaciones: true,
     password: "", passwordConfirm: "",
   });
   const set = (k: keyof typeof f, v: string | boolean) => setF((p) => ({ ...p, [k]: v }));
@@ -185,6 +185,11 @@ export function RegistroForm({ retomar = false }: { retomar?: boolean }) {
         <div><label className={lbl}>Ciudad</label><Input value={f.ciudad} onChange={(e) => set("ciudad", e.target.value)} /></div>
         <div><label className={lbl}>Contraseña *</label><Input type="password" value={f.password} onChange={(e) => set("password", e.target.value)} placeholder="mín. 6 caracteres" /></div>
         <div><label className={lbl}>Repetir contraseña *</label><Input type="password" value={f.passwordConfirm} onChange={(e) => set("passwordConfirm", e.target.value)} /></div>
+      </div>
+      <div>
+        <label className={lbl} htmlFor="reg-codigo-referido">Código de referido (opcional)</label>
+        <Input id="reg-codigo-referido" value={f.codigoReferido} onChange={(e) => set("codigoReferido", e.target.value)} maxLength={20} autoComplete="off" className="font-mono uppercase" placeholder="Si alguien te recomendó" />
+        <p className="mt-1 text-[11px] text-gray-400">Si una persona te recomendó, escribe su código. Lo revisamos al aprobar tu registro; no cambia tu comisión.</p>
       </div>
       <div><label className={lbl}>Notas</label><textarea value={f.notas} onChange={(e) => set("notas", e.target.value)} rows={2} className={sel} /></div>
       <label className="flex items-center gap-2 text-sm text-gray-700">

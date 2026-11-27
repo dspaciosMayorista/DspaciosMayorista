@@ -1,7 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,7 +62,7 @@ const sel = "w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm
 type TierForm = { paxDesde: string; paxHasta: string; precio: string };
 const tierVacio = (): TierForm => ({ paxDesde: "1", paxHasta: "4", precio: "" });
 
-export function ServiciosClient({ servicios, proveedores, destinos, rangos, temporadas }: { servicios: Servicio[]; proveedores: ProveedorOpt[]; destinos: DestinoOpt[]; rangos: RangoEdad[]; temporadas: Record<number, TemporadaServicio[]> }) {
+export function ServiciosClient({ servicios, proveedores, destinos, rangos, temporadas, servicioInicial, vigenciaDestacada }: { servicios: Servicio[]; proveedores: ProveedorOpt[]; destinos: DestinoOpt[]; rangos: RangoEdad[]; temporadas: Record<number, TemporadaServicio[]>; servicioInicial?: number; vigenciaDestacada?: number }) {
   const [nombre, setNombre] = useState("");
   const [provId, setProvId] = useState<number | "">("");
   const [destId, setDestId] = useState<number | "">("");
@@ -101,6 +101,10 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
   function resetForm() {
     setNombre(""); setProvId(""); setDestId(""); setCobertura("nacional"); setMoneda("COP"); setPPersona(""); setPInfante(""); setCategoria("otro"); setLiquidacion("paquete"); setDescripcion(""); setRecargoOn(false); setRecargoVal(""); setGrupo([tierVacio()]); setRangosSel([]); setEditId(null);
   }
+
+  // B3-03: llegada desde una alerta de compra → abre ese servicio en edición una sola vez (la vigencia se resalta dentro).
+  useEffect(() => { const s = servicioInicial ? servicios.find((x) => x.id === servicioInicial) : undefined; if (s) startEdit(s); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function startEdit(s: Servicio) {
     setTab("config");
@@ -287,7 +291,7 @@ export function ServiciosClient({ servicios, proveedores, destinos, rangos, temp
         {/* Temporadas (tarifa por fecha) — necesitan el servicio ya guardado (FK),
             así que el editor solo aparece al EDITAR. En creación, una guía. */}
         {editId ? (
-          <TemporadasServicio servicioId={editId} lista={temporadas[editId] ?? []} />
+          <TemporadasServicio servicioId={editId} lista={temporadas[editId] ?? []} vigenciaDestacada={vigenciaDestacada} />
         ) : (
           <div className="mt-4 rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3">
             <p className="text-sm font-semibold text-gray-700">Temporadas (tarifa por fecha del viaje)</p>
@@ -387,7 +391,7 @@ function aInput(t: TemporadaServicio): TemporadaServicioInput {
   };
 }
 
-function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: TemporadaServicio[] }) {
+function TemporadasServicio({ servicioId, lista, vigenciaDestacada }: { servicioId: number; lista: TemporadaServicio[]; vigenciaDestacada?: number }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [nueva, setNueva] = useState<TemporadaServicioInput>(vacia());
@@ -416,7 +420,7 @@ function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: 
 
       <div className="space-y-2">
         {lista.map((t) => (
-          <TemporadaFila key={t.id} t={t} onChanged={refrescar} setErr={setErr} />
+          <TemporadaFila key={t.id} t={t} onChanged={refrescar} setErr={setErr} destacada={t.id === vigenciaDestacada} />
         ))}
       </div>
 
@@ -433,7 +437,7 @@ function TemporadasServicio({ servicioId, lista }: { servicioId: number; lista: 
   );
 }
 
-function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChanged: () => void; setErr: (s: string) => void }) {
+function TemporadaFila({ t, onChanged, setErr, destacada = false }: { t: TemporadaServicio; onChanged: () => void; setErr: (s: string) => void; destacada?: boolean }) {
   const [pending, start] = useTransition();
   const [v, setV] = useState<TemporadaServicioInput>(aInput(t));
   const [editando, setEditando] = useState(false);
@@ -450,7 +454,7 @@ function TemporadaFila({ t, onChanged, setErr }: { t: TemporadaServicio; onChang
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-3">
+    <div id={`vigencia-${t.id}`} ref={destacada ? (el) => el?.scrollIntoView({ block: "center" }) : undefined} data-destacada={destacada ? "true" : undefined} className={`rounded-lg border bg-white p-3 ${destacada ? "border-amber-300 bg-amber-50 ring-2 ring-amber-300" : "border-gray-200"}`}>
       {!editando ? (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span className="font-medium text-gray-700">{t.nombre}</span>

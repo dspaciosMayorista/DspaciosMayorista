@@ -1,0 +1,51 @@
+NOTICE:  OK    P1 one call creates TWO air vouchers (two services), distinct ids and tokens, keyed by their stored key
+
+
+NOTICE:  OK    P2 revision starts at 0 and the update timestamp is empty
+NOTICE:  OK    P3 an IDENTICAL replay changes nothing: same rows, same tokens, revision 0, creado = actualizado = false (no notice can duplicate)
+
+
+NOTICE:  OK    P4 a replay that differs ONLY in the issue date is also a no-op (the stored issue date is kept; revision stays 0)
+
+NOTICE:  OK    P5 changing ONE service: that voucher keeps its id and token, revision 1, timestamp set; the OTHER service is byte-identical
+NOTICE:  OK    P6 repeating that same change does not raise the revision again
+
+
+NOTICE:  OK    P7 a saved PNR that appears later is a REAL change of that service only (revision 1; the other service stays)
+NOTICE:  OK    P8 atomic: a payload whose SECOND service is invalid is rejected and the FIRST is not written
+
+NOTICE:  OK    P9 repeated keys, empty or non-array payloads, blank or oversized keys are rejected
+
+
+NOTICE:  OK    P10 the unique index is per (contract, service): a second voucher with the SAME key is refused (23505), a different key is accepted
+NOTICE:  OK    P11 an air voucher without a service key is refused (23514); other voucher types do not need one
+
+
+NOTICE:  OK    P12 hotel and service vouchers are byte-identical after all of the above
+
+NOTICE:  OK    P13 ONE service in, ONE voucher out, key not found (legs re-created): the existing voucher is re-keyed — same id and SAME link, new content, revision 1
+NOTICE:  OK    P14 with SEVERAL vouchers nothing is guessed: an unknown key creates a new voucher and no existing one is re-keyed
+
+NOTICE:  OK    P15 RLS applies: venta writes its OWN contract, not a colleague's (nothing created), anon cannot execute
+
+
+NOTICE:  OK    G1 before any acknowledgment: voucher generated, delivery pending, not «updated»
+NOTICE:  OK    G2 the superadmin registers the delivery manually: «entregado», not updated
+
+
+NOTICE:  OK    G3 an IDENTICAL regeneration after the delivery does NOT raise any signal (still «entregado»)
+NOTICE:  OK    G4 a real change in ONE service (same link) after the delivery: «pendiente», acuse_anterior and actualizado = true, the earlier acknowledgment stays visible
+
+NOTICE:  OK    G5 only the changed contract is flagged: the other contract (acknowledged, untouched) is still «entregado»
+
+NOTICE:  OK    G6 retrying that same change adds nothing and the retiro of a superseded acknowledgment is refused (nothing to retire)
+
+
+NOTICE:  OK    G7 the staff can register the communication again (allowed because the earlier mark is superseded), the signal clears, and a second identical registration is refused as already current
+NOTICE:  OK    G8 a later change raises the signal again (revision grows monotonically)
+
+NOTICE:  OK    G9 309 behaviour kept: a NEW voucher (higher id) supersedes the acknowledgment but is NOT reported as «updated»
+
+
+NOTICE:  OK    G10 an acknowledgment written BEFORE 338 (no rev) stays «entregado» while nothing changed
+NOTICE:  TEST 338 SQL: ALL OK (25 comprobaciones)

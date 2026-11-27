@@ -1,0 +1,24 @@
+== 1. base nueva desde plantilla: preflight / aplicar / postcheck ==
+NOTICE:  database "t339_a" does not exist, skipping
+preflight: 99|VEREDICTO|0|0 fallas|APLICABLE
+339 aplicada
+postcheck: 99|VEREDICTO|0|0 fallas|CORRECTA
+== 2. re-aplicar (idempotente) ==
+re-aplicada sin error
+postcheck: 99|VEREDICTO|0|0 fallas|CORRECTA
+== 3. preflight después de aplicar (debe decir NO APLICAR: ya es la 339) ==
+preflight: 99|VEREDICTO|1|0 fallas|NO APLICAR
+== 4. rollback ==
+NOTICE:  339 rollback: f281_soportes_insert restaurada (281). Contratos con más soportes vigentes que abonos (excedidos bajo la regla vieja; nada se borró): 0
+    resultado    | contratos_excedidos_regla_281 
+-----------------+-------------------------------
+ ROLLBACK 339 OK |                             0
+(1 row)
+
+postcheck tras rollback (debe REVISAR): 99|VEREDICTO|3|0 fallas|REVISAR
+preflight tras rollback (debe APLICABLE): 99|VEREDICTO|0|0 fallas|APLICABLE
+== 5. rollback otra vez (debe NEGARSE: ya no es la 339) ==
+ERROR:  339 rollback: f281_soportes_insert ya no es la versión de la 339 (md5 actual b0ca477d9cd9917c888a93ff0cb208a4); no se sobrescribe. Revisa y restaura a mano.
+== 6. control negativo: función alterada a mano -> la 339 aborta y el rollback se niega ==
+ERROR:  339: la definición de f281_soportes_insert en esta base NO es la de la migración 281 (md5 b0ca477d9cd9917c888a93ff0cb208a4; actual 717a13dce6e1b49aeb2758baf7e2355c). No se reemplaza una vers
+ERROR:  339 rollback: f281_soportes_insert ya no es la versión de la 339 (md5 actual 717a13dce6e1b49aeb2758baf7e2355c); no se sobrescribe. Revisa y restaura a mano.

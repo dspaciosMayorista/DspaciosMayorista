@@ -1,0 +1,223 @@
+{
+  "contexto": {
+    "escenario": "cop_impar_nino_gratis_y_pago",
+    "opcion": "B",
+    "moneda": "COP",
+    "total": 1580455,
+    "incluye": "Tiquetes aéreos Avianca\nPlan completo B\nTraslados B",
+    "noIncluye": "Impuesto de salida B"
+  },
+  "venta": {
+    "numero_contrato": "DTM-0002",
+    "cliente": "Titular Sintético",
+    "cliente_documento": "900123456",
+    "estado": "confirmado",
+    "moneda": "COP",
+    "precio_venta": 1580455,
+    "pax": 2,
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "asesor": "Asesor 95",
+    "tipo_asesor": null,
+    "tenant": "mayorista",
+    "destino": "CARTAGENA 95",
+    "plan_nombre": "Hotel B · Estándar · PC · 1 hab Doble",
+    "hotel": "Hotel B",
+    "tours_traslados": null,
+    "asistencia_medica": false
+  },
+  "items": [
+    {
+      "id": 3,
+      "numero_contrato": "DTM-0002",
+      "descripcion": "PAQUETE TURÍSTICO A CARTAGENA 95 DEL 01/03/2030 AL 04/03/2030",
+      "adultos": 2,
+      "ninos": 1,
+      "tarifa_adulto": 715228,
+      "tarifa_nino": 150000,
+      "orden": 0,
+      "modo_precio": "por_persona",
+      "valor_total": null
+    },
+    {
+      "id": 4,
+      "numero_contrato": "DTM-0002",
+      "descripcion": "Ajuste de redondeo del reparto del hotel",
+      "adultos": 1,
+      "ninos": 0,
+      "tarifa_adulto": -1,
+      "tarifa_nino": 0,
+      "orden": 1,
+      "modo_precio": "por_persona",
+      "valor_total": null
+    }
+  ],
+  "pasajeros": [
+    {
+      "id": 2,
+      "numero_contrato": "DTM-0002",
+      "nombre": "Titular Sintético",
+      "tipo_id": "CC",
+      "identificacion": "900123456",
+      "fecha_nacimiento": "1985-05-20",
+      "es_infante": false,
+      "orden": 0,
+      "nacionalidad": null,
+      "responsable_id": null,
+      "nombres": null,
+      "apellidos": null
+    }
+  ],
+  "hoteles": [
+    {
+      "id": 2,
+      "numero_contrato": "DTM-0002",
+      "nombre": "Hotel B",
+      "ciudad": "CARTAGENA 95",
+      "alimentacion": "PC",
+      "acomodacion": "1 hab Doble",
+      "detalle_acomodacion": null,
+      "fecha_ingreso": "2030-03-01",
+      "fecha_salida": "2030-03-04",
+      "orden": 1,
+      "categoria": "Estándar",
+      "proveedor": "Booking",
+      "condiciones_tarifa": null,
+      "compra_origen": "plataforma",
+      "plataforma": "Booking"
+    }
+  ],
+  "pagado": 800455,
+  "cotizacion_hija": {
+    "id": 4,
+    "codigo": "C-0004",
+    "modo": "simple",
+    "tipo": "manual",
+    "estado": "convertida",
+    "moneda": "COP",
+    "precio_venta": 1580455,
+    "pax": 2,
+    "cliente": "Titular Sintético",
+    "destino": "CARTAGENA 95",
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "vigencia_hasta": "2026-11-29",
+    "detalle": {
+      "items": [
+        {
+          "orden": 0,
+          "valor": 1430455,
+          "cantidad": 2,
+          "descripcion": "PAQUETE TURÍSTICO A CARTAGENA 95 DEL 01/03/2030 AL 04/03/2030",
+          "tarifa_unit": 715228
+        },
+        {
+          "orden": 1,
+          "valor": 150000,
+          "cantidad": 1,
+          "descripcion": "Tarifa por niño",
+          "tarifa_unit": 150000
+        }
+      ],
+      "venta": {
+        "pax": 2,
+        "canal": "B2C",
+        "hotel": "Hotel B",
+        "ninos": 1,
+        "asesor": "Asesor 95",
+        "estado": "cotizacion",
+        "moneda": "COP",
+        "cliente": "Titular Sintético",
+        "destino": "CARTAGENA 95",
+        "aerolinea": "Avianca",
+        "fecha_salida": "2030-03-01",
+        "precio_venta": 1580455,
+        "tipo_cliente": "interno",
+        "fecha_regreso": "2030-03-04",
+        "observaciones": null,
+        "numero_contrato": "DTM-0002"
+      },
+      "vuelos": [],
+      "hoteles": [
+        {
+          "ciudad": "CARTAGENA 95",
+          "nombre": "Hotel B",
+          "categoria": "Estándar",
+          "acomodacion": "1 hab Doble",
+          "alimentacion": "PC",
+          "fecha_salida": "2030-03-04",
+          "fecha_ingreso": "2030-03-01",
+          "detalle_acomodacion": null
+        }
+      ],
+      "incluye": "Tiquetes aéreos Avianca\nPlan completo B\nTraslados B",
+      "recobro": {
+        "total": 0,
+        "aliado": 0,
+        "empresa": 0
+      },
+      "noIncluye": "Impuesto de salida B",
+      "pasajeros": []
+    },
+    "payload": {
+      "pax": 2,
+      "ninos": 1,
+      "plazo": "",
+      "moneda": "COP",
+      "cliente": {
+        "email": "titular.sintetico@example.com",
+        "nombres": "Titular",
+        "tipoDoc": "CC",
+        "telefono": "3001112233",
+        "apellidos": "Sintético",
+        "numeroDoc": "900123456",
+        "nacimiento": "1985-05-20"
+      },
+      "destino": "CARTAGENA 95",
+      "incluye": "Tiquetes aéreos Avianca\nPlan completo B\nTraslados B",
+      "recobro": 0,
+      "fechaIda": "2030-03-01",
+      "destinoId": 9501,
+      "noIncluye": "Impuesto de salida B",
+      "servicios": [
+        {
+          "ta": 30455,
+          "modo": "ta",
+          "tipo": "aereo",
+          "nombre": "Avianca",
+          "costoNeto": 500000,
+          "pctMarkup": 0,
+          "proveedor": "",
+          "plataforma": ""
+        },
+        {
+          "ta": 0,
+          "modo": "ta",
+          "tipo": "hotel",
+          "compra": "plataforma",
+          "nombre": "Hotel B",
+          "regimen": "PC",
+          "categoria": "Estándar",
+          "costoNeto": 900000,
+          "pctMarkup": 0,
+          "proveedor": "Booking",
+          "catalogoId": 9512,
+          "plataforma": "Booking",
+          "acomodacion": "1 hab Doble",
+          "habitaciones": {
+            "doble": 1
+          }
+        }
+      ],
+      "tarifaNino": 150000,
+      "tipoAsesor": "interno",
+      "fechaRegreso": "2030-03-04",
+      "agenciaNombre": "",
+      "asesorInterno": "Asesor 95",
+      "observaciones": "",
+      "recobroAliado": 0,
+      "vigenciaHasta": "",
+      "freelanceNombre": ""
+    }
+  }
+}

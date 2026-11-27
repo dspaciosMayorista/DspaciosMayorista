@@ -93,9 +93,16 @@ BASE_PROPIA=1
 $PS -d postgres -c "comment on database $DB is '$MARCA'" >/dev/null
 $PS -d "$DB" -c "select exists (select 1 from information_schema.columns where table_name = 'aliados' and column_name = 'activo')" | grep -qx t
 $PS -d "$DB" -c "alter table storage.buckets add column if not exists file_size_limit bigint, add column if not exists allowed_mime_types text[]" >/dev/null
-$PS -1 -d "$DB" -f - < "$APP/supabase/migrations/20260601000281_soportes_pago.sql" >/dev/null
-# #75: las acciones reales declaran la identidad del contrato (cabecera x-contratos) y las funciones soporte_* la verifican → hacen falta la 284 y la 285.
-for m in 20260601000284_identidad_contrato 20260601000285_identidad_funciones_storage; do $PS -1 -d "$DB" -f - < "$APP/supabase/migrations/$m.sql" >/dev/null; done
+# Plantilla antigua (001-280): se aplican la 281, la 284 y la 285. Plantilla completa (001-326): ya están y se omiten.
+if [ "$($PS -d "$DB" -c "select coalesce(to_regclass('public.contrato_soportes_pago')::text, 'no')")" = no ]; then
+  $PS -1 -d "$DB" -f - < "$APP/supabase/migrations/20260601000281_soportes_pago.sql" >/dev/null
+  # #75: las acciones reales declaran la identidad del contrato (cabecera x-contratos) y las funciones soporte_* la verifican → hacen falta la 284 y la 285.
+  for m in 20260601000284_identidad_contrato 20260601000285_identidad_funciones_storage; do $PS -1 -d "$DB" -f - < "$APP/supabase/migrations/$m.sql" >/dev/null; done
+fi
+# 339: cupo adicional (soportes vigentes <= pagos + 1). PG281A_SIN_339=1 prueba la regla anterior (281 sola).
+if [ "${PG281A_SIN_339:-}" != 1 ] && [ -f "$APP/supabase/migrations/20260601000339_soportes_pago_cupo_adicional.sql" ]; then
+  $PS -1 -d "$DB" -f - < "$APP/supabase/migrations/20260601000339_soportes_pago_cupo_adicional.sql" >/dev/null
+fi
 
 # Entorno (NO es esquema de la app): el auth.uid()/auth.role() de Supabase alojado leen el JWT de request.jwt.claims (PostgREST ya no fija los GUC legados).
 $PS -d "$DB" >/dev/null <<'SQL'

@@ -137,8 +137,9 @@ describe("F5 · fallo de lectura ≠ ausencia verificada", () => {
     assert.ok(iError > 0, "hay una guarda por fallo de lectura");
     assert.ok(iError < f.indexOf("reglaConfirmacion("), "la guarda va antes de calcular el mínimo");
     assert.ok(iError < f.indexOf("planDeCuotas("), "…antes de armar las cuotas");
-    assert.ok(iError < f.indexOf('from("cuotas").delete()'), "…y antes de borrar el plan anterior");
-    assert.ok(iError < f.indexOf('from("cuotas").insert'), "…y antes de guardar uno nuevo");
+    // B95-1: borrar + insertar ya no son pasos sueltos de la aplicación: el reemplazo es UNA transacción de la base (RPC) y la guarda va antes de llamarla.
+    assert.ok(iError < f.indexOf('"reemplazar_plan_cobro"'), "…y antes de reemplazar el plan (borrar el anterior + guardar el nuevo, en una sola transacción)");
+    assert.ok(!/from\("cuotas"\)\.(delete|insert)/.test(f), "la acción ya no borra ni inserta cuotas por pasos sueltos");
     assert.match(f, /acuerdo: lecturaAcuerdo\.estado === "acuerdo" \? lecturaAcuerdo\.acuerdo : null/);
   });
   test("el documento avisa que el mínimo no está disponible en vez de mostrar uno sustituto", () => {

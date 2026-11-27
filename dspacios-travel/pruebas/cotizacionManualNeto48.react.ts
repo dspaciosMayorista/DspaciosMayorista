@@ -48,11 +48,21 @@ const campoDe = (raiz: Element, etiqueta: string | RegExp, desde = 0) =>
   ([...raiz.querySelectorAll("label")].filter((l) => (typeof etiqueta === "string" ? txt(l).startsWith(etiqueta) : etiqueta.test(txt(l))))[desde]?.parentElement?.querySelector("input") ?? null) as HTMLInputElement | null;
 const radio = (raiz: Element, texto: RegExp) => [...raiz.querySelectorAll('input[type="radio"][name="modalidad"]')].find((r) => texto.test(txt(r.closest("label")))) as HTMLInputElement | undefined;
 
+// F6 (B95-13/15/20): el destino ahora se ELIGE del catálogo y cada hotel declara cómo se compra y sus habitaciones; este archivo prueba la modalidad NETO, así que solo cumple esos requisitos.
+const DESTINOS_F6 = [{ id: 1, nombre: "San Andrés", codigo_iata: "ADZ" }];
+async function elegirDestinoF6(raiz: Element) {
+  const combo = raiz.querySelector('[data-testid="campo-destino"] input[role="combobox"]') as HTMLInputElement;
+  await React.act(async () => combo.focus());
+  await escribir(combo, "San Andrés");
+  const op = [...document.querySelectorAll('[role="option"]')].find((b) => /San Andrés/.test(txt(b)))!;
+  await React.act(async () => { op.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true })); });
+}
 async function montarForm(rol: string | null, aliado: string, tipo: "agencia" | "freelance" | "interno" = "agencia") {
   usarBD({});
-  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: ALIADOS, miNombre: "Asesor", miRolVenta: rol === "venta", pctAliadoB2B: 0.5, neto: neto(rol) }));
+  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: ALIADOS, miNombre: "Asesor", miRolVenta: rol === "venta", pctAliadoB2B: 0.5, neto: neto(rol), destinos: DESTINOS_F6 }));
   desmontar = m.desmontar;
   const raiz = m.contenedor;
+  await elegirDestinoF6(raiz);
   await escribir(campoDe(raiz, "Nombres")!, "Ana");
   if (tipo !== "interno") {
     await clic(boton(raiz, new RegExp(`^${tipo}$`, "i")), tipo);
@@ -64,6 +74,10 @@ async function montarForm(rol: string | null, aliado: string, tipo: "agencia" | 
 async function agregarServicios(raiz: Element, costoAereo = 800000, costoHotel = 3200000, markups: [number, number] = [20, 20]) {
   await clic(boton(raiz, /^Aéreo$/), "Aéreo");
   await clic(boton(raiz, /^Hotel$/), "Hotel");
+  const origen = raiz.querySelector('select[aria-label="Origen de la compra"]') as HTMLSelectElement;
+  await React.act(async () => { Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value")!.set!.call(origen, "plataforma"); origen.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+  await escribir(campoDe(raiz, "Plataforma (proveedor a pagar)")!, "Despegar");
+  await escribir(raiz.querySelector('input[aria-label="Habitaciones Sencilla"]') as HTMLInputElement, "1");
   const costos = [...raiz.querySelectorAll("label")].filter((l) => txt(l) === "Costo neto").map((l) => l.parentElement!.querySelector("input") as HTMLInputElement);
   await escribir(costos[0], String(costoAereo));
   await escribir(costos[1], String(costoHotel));

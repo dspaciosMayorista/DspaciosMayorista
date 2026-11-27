@@ -8,6 +8,14 @@ import { desdeListadoPorPaquete } from "@/lib/tarifario/desdeDoble";
 import { Info } from "lucide-react";
 import { paquetesConTarifarioAnteriorAInfante } from "./actions";
 import { ListadoTotales, type FilaTotal } from "./total/ListadoTotales";
+import { AvisosCompraPaquetes } from "./AvisosCompraPaquetes";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { hoyBogota } from "@/lib/cotizacion/vigencia";
+import { cargarHotelesBernaloDescubiertos } from "@/lib/tarifario/datosBernalo";
+import { cargarHotelesBajoSolicitud } from "@/lib/tarifario/datosSolicitud";
+import { estadoPublicacionPaquete } from "@/lib/paquetes/estadoPublicacion";
+import { cargarAvisosCompra } from "@/lib/paquetes/vencimientoCompraDatos";
+import { diasEntre, estadoCompra, normalizarDias } from "@/lib/paquetes/vencimientoCompra";
 
 export const dynamic = "force-dynamic";
 // Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
@@ -27,7 +35,7 @@ export default async function PaquetesPage({
   const sb = await createClient();
   const { data: paquetesRaw } = await sb
     .from("armado_paquetes")
-    .select("id, nombre, activo, pct_mk, tipo, fecha_viaje_inicio, fecha_viaje_fin, destinos(nombre)")
+    .select("id, nombre, activo, pct_mk, tipo, fecha_viaje_inicio, fecha_viaje_fin, fecha_compra_fin, tarifario_estado, tarifario_error, tarifario_diagnostico, tarifario_snapshot_publicable, tarifario_generacion_publicada, destinos(nombre)")
     .order("id", { ascending: false });
 
   type Row = {
@@ -38,6 +46,12 @@ export default async function PaquetesPage({
     tipo: PaqueteItem["tipo"];
     fecha_viaje_inicio: string | null;
     fecha_viaje_fin: string | null;
+    fecha_compra_fin: string | null;
+    tarifario_estado: string | null;
+    tarifario_error: string | null;
+    tarifario_diagnostico: string | null;
+    tarifario_snapshot_publicable: boolean | null;
+    tarifario_generacion_publicada: number | null;
     destinos: { nombre: string } | null;
   };
   const filas = (paquetesRaw ?? []) as unknown as Row[];
@@ -74,6 +88,17 @@ export default async function PaquetesPage({
   const conteo = new Map<number, number>();
   let desdePorPaquete = new Map<number, { moneda: string; valor: number }[]>();
   let errorEstadoPublicacion = false;
+  // #36/#13: lo que NO vive en tarifario_resumen (hoteles por unidad y bajo solicitud, que el tarifario público descubre aparte) y las vigencias de compra por vencer.
+  // Se lanzan en paralelo con el resumen (consultas acotadas; ninguna crece por paquete) y un fallo NUNCA se disfraza de «no hay»: se avisa en pantalla.
+  const hoy = hoyBogota();
+  const sinVerificar = (error: string) => ({ ok: false as const, error });
+  const pUnidad = filas.length ? cargarHotelesBernaloDescubiertos().catch(() => sinVerificar("unidad")) : Promise.resolve({ ok: true as const, hoteles: [] as { paqueteId: number }[], hotelIdsUnidadAutoritativos: [] as number[] });
+  const pSolicitud = filas.length ? cargarHotelesBajoSolicitud().catch(() => sinVerificar("solicitud")) : Promise.resolve({ ok: true as const, hoteles: [] as { paqueteId: number }[] });
+  const pAvisos = (async () => {
+    const { data: cfgN } = await createAdminClient().from("config_notificaciones").select("dias_anticipacion").eq("id", 1).maybeSingle();
+    const dias = normalizarDias(cfgN?.dias_anticipacion);
+    return { dias, r: await cargarAvisosCompra(sb, hoy, dias).catch(() => ({ ok: false as const, error: "compra" })) };
+  })().catch(() => ({ dias: normalizarDias(null), r: { ok: false as const, error: "compra" } }));
   if (filas.length) {
     const pagResumen = await cargarFilasResumenPaginado(sb);
     if (!pagResumen.ok) {
@@ -113,6 +138,12 @@ export default async function PaquetesPage({
     .from("paquete_din").select("id, nombre, moneda, esquema, pvp_modo, activo, publicado").order("id", { ascending: false });
   const totales = (totalesRaw ?? []).filter((t) => t.activo);
 
+  const [rUnidad, rSolicitud, avisosCompra] = await Promise.all([pUnidad, pSolicitud, pAvisos]);
+  const contarPorPaquete = (hs: { paqueteId: number }[]) => hs.reduce((m, h) => m.set(h.paqueteId, (m.get(h.paqueteId) ?? 0) + 1), new Map<number, number>());
+  const unidadPorPaquete = rUnidad.ok ? contarPorPaquete(rUnidad.hoteles) : new Map<number, number>();
+  const solicitudPorPaquete = rSolicitud.ok ? contarPorPaquete(rSolicitud.hoteles) : new Map<number, number>();
+  const ofertaSinVerificar = !rUnidad.ok || !rSolicitud.ok;
+
   const paquetes: PaqueteItem[] = filas.map((p) => ({
     id: p.id,
     nombre: p.nombre,
@@ -124,6 +155,13 @@ export default async function PaquetesPage({
     fechaViajeFin: p.fecha_viaje_fin,
     nTarifas: conteo.get(p.id) ?? 0,
     desde: desdePorPaquete.get(p.id) ?? [],
+    publicacion: estadoPublicacionPaquete({
+      activo: p.activo, estado: p.tarifario_estado, error: p.tarifario_error, diagnostico: p.tarifario_diagnostico,
+      generacionPublicada: p.tarifario_generacion_publicada, snapshotPublicable: p.tarifario_snapshot_publicable,
+      combinaciones: conteo.get(p.id) ?? 0, hotelesUnidad: unidadPorPaquete.get(p.id) ?? 0, hotelesSolicitud: solicitudPorPaquete.get(p.id) ?? 0,
+      unidadVerificada: rUnidad.ok, solicitudVerificada: rSolicitud.ok,
+    }),
+    compra: { fin: p.fecha_compra_fin, estado: estadoCompra(hoy, p.fecha_compra_fin, avisosCompra.dias), dias: p.fecha_compra_fin ? diasEntre(hoy, p.fecha_compra_fin) : null },
   }));
 
   return (
@@ -162,6 +200,13 @@ export default async function PaquetesPage({
         </div>
       )}
 
+      {ofertaSinVerificar && (
+        <div role="status" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800" data-testid="oferta-sin-verificar">
+          <Info size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <p>No se pudo verificar la oferta por unidad o bajo solicitud de los paquetes; las etiquetas «Cotización por unidad» y «Bajo solicitud» pueden faltar en este listado.</p>
+        </div>
+      )}
+      <AvisosCompraPaquetes avisos={avisosCompra.r.ok ? avisosCompra.r.avisos : []} dias={avisosCompra.dias} truncado={avisosCompra.r.ok ? avisosCompra.r.truncado : false} error={!avisosCompra.r.ok} />
       <PaquetesListado paquetes={paquetes} tabInicial={tabInicial} />
       <ListadoTotales filas={totales} />
     </div>
