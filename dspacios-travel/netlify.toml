@@ -1,0 +1,10 @@
+[build]
+  command = "pnpm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_OPTIONS = "--max-old-space-size=3072"
+
+# Required explicitly because this site's manual setup omitted the Next.js runtime.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
