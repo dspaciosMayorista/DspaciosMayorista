@@ -89,3 +89,32 @@ export async function sucesorDe(id: number): Promise<{ estado: "ninguno" } | { e
   if (error) return { estado: "error" };
   return data ? { estado: "existe", sha256: data.sha256 } : { estado: "ninguno" };
 }
+
+/** Soporte rechazado SIN corrección: lo que el aliado debe corregir. Los rechazados ya corregidos viven en el historial del equipo, no aquí. */
+export type SoporteRechazadoPortal = { id: number; numero_contrato: string; nombre_original: string; motivo: string; rechazado_en: string };
+const TOPE_RECHAZADOS = 200;
+
+export async function soportesRechazadosPendientes(numeros: string[]): Promise<{ filas: SoporteRechazadoPortal[]; completa: boolean }> {
+  if (numeros.length === 0) return { filas: [], completa: true };
+  const admin = createAdminClient(); // identidad:n/a — solo lectura
+  const filas: SoporteRechazadoPortal[] = [];
+  for (let i = 0; i < numeros.length; i += 100) {
+    const lote = numeros.slice(i, i + 100);
+    const { data, error } = await admin.from("contrato_soportes_pago").select("id, numero_contrato, nombre_original, nota_retiro, retirado_en")
+      .in("numero_contrato", lote).eq("motivo_retiro", "rechazo").eq("vigente", false).is("archivado_en", null).order("id", { ascending: false }).limit(TOPE_RECHAZADOS);
+    if (error || !data || data.length >= TOPE_RECHAZADOS) return { filas: [], completa: false };
+    if (data.length === 0) continue;
+    const { data: corr, error: e2 } = await admin.from("contrato_soportes_pago").select("corrige_id").in("corrige_id", data.map((d) => d.id)); // identidad:n/a — solo lectura
+    if (e2) return { filas: [], completa: false };
+    const corregidos = new Set((corr ?? []).map((c) => c.corrige_id));
+    for (const d of data) if (!corregidos.has(d.id)) filas.push({ id: d.id, numero_contrato: d.numero_contrato, nombre_original: d.nombre_original, motivo: String(d.nota_retiro ?? ""), rechazado_en: String(d.retirado_en ?? "") });
+  }
+  return { filas, completa: true };
+}
+
+/** Corrección de un rechazo (`corrige_id`): el contenido del archivo corregido, para tratar como éxito el reintento tras una respuesta perdida. */
+export async function correccionDe(id: number): Promise<{ estado: "ninguna" } | { estado: "existe"; sha256: string } | { estado: "error" }> {
+  const { data, error } = await createAdminClient().from("contrato_soportes_pago").select("sha256").eq("corrige_id", id).maybeSingle(); // identidad:n/a — solo lectura
+  if (error) return { estado: "error" };
+  return data ? { estado: "existe", sha256: data.sha256 } : { estado: "ninguna" };
+}

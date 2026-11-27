@@ -28,6 +28,9 @@ export const REFERENCIAS_DESTINO = [
   { tabla: "paquete_din", singular: "paquete dinámico total", plural: "paquetes dinámicos totales" },
   { tabla: "paquete_din_vuelos", singular: "vuelo de paquete dinámico total", plural: "vuelos de paquetes dinámicos totales" },
   { tabla: "paquete_din_servicios", singular: "servicio de paquete dinámico total", plural: "servicios de paquetes dinámicos totales" },
+  // 334 (#29): destinos aéreos alternativos de un paquete (migración 220). Tabla SIN FK a destinos: la guarda de borrado y la
+  // fusión de la 334 la cubren; el modal debe contarla para ofrecer fusionar en vez de un borrado directo.
+  { tabla: "armado_paquete_destinos_aereos", singular: "destino aéreo alternativo de un paquete", plural: "destinos aéreos alternativos de paquetes" },
   // Tablas del esquema inicial (migraciones 004/013). Siguen existiendo y
   // siguen bloqueando el borrado aunque la app actual ya no las llene.
   { tabla: "paquetes", singular: "paquete del esquema anterior", plural: "paquetes del esquema anterior" },

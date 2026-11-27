@@ -131,8 +131,8 @@ const reservarEntrada = (c: Record<string, unknown>, pasajeros: Record<string, u
 });
 const pax = (n: number, doc: string, extra: Record<string, unknown> = {}) => ({ nombres: `Pax${n}`, apellidos: "Prueba", tipoDoc: "CC", numeroDoc: doc, fechaNacimiento: "1990-01-01", nacionalidad: "Colombiana", esInfante: false, ...extra });
 const manual = (c: Record<string, unknown>) => ({
-  cliente: c, destino: "CARTAGENA", fechaIda: "2030-05-10", fechaRegreso: "2030-05-13", pax: 2, moneda: "COP", tipoAsesor: "interno", asesorInterno: "Asesor 901", agenciaNombre: "", freelanceNombre: "",
-  plazo: "", vigenciaHasta: "", observaciones: "", servicios: [{ tipo: "hotel", plataforma: "Directo", nombre: "Hotel manual", proveedor: "Prov", costoNeto: 800000, modo: "mk", pctMarkup: 20, ta: 0 }],
+  cliente: c, destino: "CARTAGENA", destinoId: D, fechaIda: "2030-05-10", fechaRegreso: "2030-05-13", pax: 2, moneda: "COP", tipoAsesor: "interno", asesorInterno: "Asesor 901", agenciaNombre: "", freelanceNombre: "",
+  plazo: "", vigenciaHasta: "", observaciones: "", servicios: [{ tipo: "hotel", plataforma: "Directo", nombre: "Hotel manual", proveedor: "Prov", costoNeto: 800000, modo: "mk", pctMarkup: 20, ta: 0, compra: "directa", habitaciones: { doble: 1 } }],
 });
 const crm = (texto: string) => como("admin", async () => { const r = await buscarPersonasCotizacion(texto, 1, 25); assert.equal(r.ok, true, JSON.stringify(r)); return r.ok ? r.filas : []; });
 

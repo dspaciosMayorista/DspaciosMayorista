@@ -9,6 +9,7 @@ import { identidadDe } from "@/lib/contrato/identidad";
 import { AvisoContratoCambio } from "./AvisoContratoCambio";
 import { ConfirmacionPagoPendiente } from "./ConfirmacionPagoPendiente";
 import { ObligacionesPrevistasPanel, type ObligacionPrevista } from "@/components/contrato/ObligacionesPrevistasPanel";
+import { trmComun } from "@/lib/finanzas/costoProvisional";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ShareButtons } from "./ShareButtons";
 import { permisosComisionContrato } from "@/lib/finanzas/comisionB2B";
@@ -19,11 +20,13 @@ import { EditarVentaForm } from "./EditarVentaForm";
 import { ServiciosContratoEditor, type ServicioDispContrato } from "./ServiciosContratoEditor";
 import { AdjuntosContrato, type Adjunto } from "./AdjuntosContrato";
 import { VouchersPanel, type VoucherRow } from "./VouchersPanel";
+import { SolicitudesProveedorSeccion } from "./SolicitudesProveedorSeccion";
 import { type CuotaRow } from "./PlanCobroPanel";
 import { EditarAsesorPasajeros, type PasajeroRow } from "./EditarAsesorPasajeros";
 import { EliminarContrato } from "./EliminarContrato";
 import { ContenidoContratoEditor } from "./ContenidoContratoEditor";
-import { Eye } from "lucide-react";
+import { Eye, Plane } from "lucide-react";
+import { ROLES_EDITOR_VUELOS_CONTRATO } from "@/lib/roles";
 import { fiscalFromParams } from "@/lib/calc/finanzas";
 import { sumarRetencionesPorCuenta } from "@/lib/finanzas/retenciones";
 import CondicionesContratoPanel from "@/components/contrato/CondicionesContratoPanel";
@@ -32,7 +35,7 @@ import { contratosPagadosCompletos } from "@/lib/voucher/pagoCompleto";
 import { MinimoConfirmacionPanel, type DetalleMinimo } from "./MinimoConfirmacionPanel";
 import { resolverCondicionesContrato } from "@/lib/contrato/condicionesContrato";
 import { OverrideRestriccionForm } from "./OverrideRestriccionForm";
-import { SoportesPagoInterno, type SoporteInterno } from "./SoportesPagoInterno";
+import { SoportesPagoInterno, type SoporteInterno, type AvisoRechazo } from "./SoportesPagoInterno";
 import { EvidenciaAliadoPanel } from "@/components/cotizacion/EvidenciaAliadoPanel";
 import { cargarEvidenciaAliado, cotizacionesDeContrato } from "@/lib/cotizacion/evidenciaAliadoServidor";
 import { desgloseNetoB2B, esVentaNetoDescontada } from "@/lib/finanzas/netoB2B";
@@ -119,7 +122,7 @@ export default async function ContratoDetallePage({
     sb.from("asesores").select("nombre, email, pct_comision_base"),
     sb.from("formas_pago").select("nombre").order("orden"),
     sb.from("contrato_adjuntos").select("id, tipo, nombre, path, size_bytes, subido_por, created_at").eq("numero_contrato", numero).order("created_at", { ascending: false }),
-    sb.from("vouchers").select("id, tipo, proveedor, share_token, contenido").eq("numero_contrato", numero).order("id"),
+    sb.from("vouchers").select("id, tipo, proveedor, share_token, contenido, revision, actualizado_en, estado").eq("numero_contrato", numero).order("id"),
     sb.from("cuotas").select("id, orden, tipo, fecha_limite, monto").eq("numero_contrato", numero).order("orden"),
     sb.from("contrato_pasajeros").select("id, nombre, tipo_id, identificacion, fecha_nacimiento, es_infante, responsable_id").eq("numero_contrato", numero).order("orden"),
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
@@ -156,6 +159,14 @@ export default async function ContratoDetallePage({
       ])
     : [{ data: null }, { data: null }, { data: null }, { data: null }];
   const formasPago = (formasPagoRows ?? []).map((f) => f.nombre);
+
+  // #37/#40 (Codex F3): el enlace al editor operativo del vuelo se decide con LA MISMA vista que lista y abre el editor (`ventas_vuelo_sistema`: acceso por rol/tenant + evidencia aérea
+  // de la 335). Solo se pide la llave (nunca costos) y solo a los roles editores; `venta` no la consulta. Si la lectura falla no se muestra el enlace (el editor lo diría igual).
+  const puedeAbrirEditorVuelos = !!perfil?.rol && (ROLES_EDITOR_VUELOS_CONTRATO as readonly string[]).includes(perfil.rol);
+  const { data: filaVueloSistema } = puedeAbrirEditorVuelos
+    ? await sb.from("ventas_vuelo_sistema").select("numero_contrato").eq("numero_contrato", numero).maybeSingle()
+    : { data: null };
+  const enlaceEditorVuelos = !!filaVueloSistema?.numero_contrato;
 
   // Ítems de las facturas del contrato, agrupados por factura.
   const facturaIds = (facturas ?? []).map((f) => f.id);
@@ -212,7 +223,7 @@ export default async function ContratoDetallePage({
       const { data: pv } = await createAdminClient().from("contrato_obligaciones_previstas").select("clave, payload").eq("numero_contrato", numero).eq("clase", "cxp").is("materializada_en", null).order("id");
       previstas = (pv ?? []).map((r) => {
         const pl = (r.payload ?? {}) as Record<string, unknown>;
-        return { clave: r.clave, servicio: (pl.servicio as string) ?? null, proveedor: (pl.proveedor as string) ?? null, tipo_proveedor: (pl.tipo_proveedor as string) ?? null, valor_total: Number(pl.valor_total) || 0, moneda: (pl.moneda as string) ?? null };
+        return { clave: r.clave, servicio: (pl.servicio as string) ?? null, proveedor: (pl.proveedor as string) ?? null, tipo_proveedor: (pl.tipo_proveedor as string) ?? null, valor_total: Number(pl.valor_total) || 0, moneda: (pl.moneda as string) ?? null, trm_costo: pl.trm_costo == null ? null : Number(pl.trm_costo), valor_cop_costo: pl.valor_cop_costo == null ? null : Number(pl.valor_cop_costo) };
       });
     }
     const { data: ec } = await sb.rpc("estado_confirmacion_pago", { p_numero: numero });
@@ -227,6 +238,13 @@ export default async function ContratoDetallePage({
     }
   }
 
+  // NETA-06: TRM de costos del contrato — provisional mientras esté pendiente (previstas), congelada al confirmar (cuentas por pagar). Nunca se infiere: sin obligaciones en USD con TRM, null.
+  const cxpPaso = (cxp ?? []) as { moneda?: string | null; valor_total: number; trm_costo?: number | null; valor_cop_costo?: number | null }[];
+  const trmPrevistaComun = trmComun(previstas.map((f) => ({ moneda: f.moneda, valor: f.valor_total, trm: f.trm_costo ?? null, valorCop: f.valor_cop_costo ?? null })));
+  const trmCostos: { trm: number; fase: "provisional" | "congelada" } | null = venta.estado === "pendiente"
+    ? (trmPrevistaComun != null ? { trm: trmPrevistaComun, fase: "provisional" } : null)
+    : (() => { const t = trmComun(cxpPaso.map((c) => ({ moneda: c.moneda, valor: Number(c.valor_total), trm: c.trm_costo ?? null, valorCop: c.valor_cop_costo ?? null }))); return t != null ? { trm: t, fase: "congelada" } : null; })();
+
   // Datos financieros del contrato (costos, impuesto). Solo existen si quien
   // mira tiene acceso financiero: la consulta de arriba trae la vista
   // `ventas_basica` para los demás, que NO incluye estas columnas. Se separa en
@@ -235,9 +253,22 @@ export default async function ContratoDetallePage({
   // Soportes de pago del aliado (#86). La RLS de la tabla (migración 281) decide qué filas ve cada persona; no se deduce nada por rol aquí.
   const soportesPago = puedeEditar
     ? ((await sb.from("contrato_soportes_pago")
-        .select("id, nombre_original, mime, size_bytes, subido_en, vigente, motivo_retiro, retirado_en, nota_retiro, reemplaza_id")
+        .select("id, nombre_original, mime, size_bytes, subido_en, vigente, motivo_retiro, retirado_en, retirado_por, nota_retiro, reemplaza_id, corrige_id")
         .eq("numero_contrato", numero).is("archivado_en", null).order("id", { ascending: false })).data ?? []) as SoporteInterno[]
     : [];
+  // S339-02 (345): estado del correo al aliado por cada rechazo (la RLS lo deja ver solo a quien puede rechazar) y nombre de quien rechazó (acotado a los rechazos de ESTE contrato).
+  const idsRechazados = soportesPago.filter((s) => s.motivo_retiro === "rechazo").map((s) => s.id);
+  const avisosRechazo: Record<number, AvisoRechazo> = {};
+  const nombresRechazo: Record<string, string> = {};
+  if (idsRechazados.length > 0) {
+    const { data: av } = await sb.from("soporte_rechazo_aviso").select("soporte_id, estado, intentos, error").in("soporte_id", idsRechazados);
+    for (const a of av ?? []) avisosRechazo[a.soporte_id] = { estado: a.estado, intentos: a.intentos, error: a.error };
+    const quienes = [...new Set(soportesPago.filter((s) => s.motivo_retiro === "rechazo" && s.retirado_por).map((s) => s.retirado_por as string))];
+    if (verFinanzas && quienes.length > 0) {
+      const { data: us } = await createAdminClient().from("usuarios").select("id, nombre").in("id", quienes); // identidad:n/a — solo lectura de nombres
+      for (const u of us ?? []) nombresRechazo[u.id] = u.nombre ?? "";
+    }
+  }
   // O-3: evidencia que el aliado adjuntó a la COTIZACIÓN de origen, para verla ANTES de registrar un abono (no es un pago). La RLS de `cotizacion_evidencias` decide quién la ve.
   const evidenciaPrevia = puedeEditar ? await cargarEvidenciaAliado(sb, await cotizacionesDeContrato(sb, numero)) : { evidencias: [], codigos: {} };
   const fin = verFinanzas
@@ -345,7 +376,7 @@ export default async function ContratoDetallePage({
     <div className="mx-auto max-w-4xl p-4 md:p-8">
       <AvisoContratoCambio numero={venta.numero_contrato} uid={venta.contrato_uid ?? null} />
       {confirmacionPendiente && <div className="mt-3"><ConfirmacionPagoPendiente numero={venta.numero_contrato} identidad={identidad} /></div>}
-      {previstas.length > 0 && <div className="mt-3"><ObligacionesPrevistasPanel filas={previstas} /></div>}
+      {previstas.length > 0 && <div className="mt-3"><ObligacionesPrevistasPanel filas={previstas} numero={venta.numero_contrato} identidad={identidad} puedeEditarTrm={verFinanzas} /></div>}
       <Link href="/dashboard/contratos" className="text-sm text-gray-400 hover:text-gray-600">
         ← Contratos
       </Link>
@@ -370,6 +401,16 @@ export default async function ContratoDetallePage({
                 className="text-xs font-medium text-[#1D7C9A] hover:underline"
               >
                 Ver empaquetado de origen →
+              </Link>
+            )}
+            {/* #40: el record del vuelo se registra DESPUÉS desde el contrato (editor operativo; solo toca los tramos de ESTE contrato, nunca la Promoción de origen). */}
+            {enlaceEditorVuelos && (
+              <Link
+                href={`/dashboard/vuelos/contrato/${encodeURIComponent(venta.numero_contrato)}`}
+                className="inline-flex items-center gap-1 text-xs font-medium text-[#1D7C9A] hover:underline"
+                data-testid="enlace-editor-vuelos"
+              >
+                <Plane size={12} aria-hidden /> Registrar o editar vuelo y record →
               </Link>
             )}
           </div>
@@ -480,6 +521,7 @@ export default async function ContratoDetallePage({
           numero={venta.numero_contrato}
           pax={venta.pax ?? 0}
           serviciosDisp={serviciosDisp}
+          moneda={(venta as { moneda?: string | null }).moneda ?? "COP"}
           seleccionInicial={seleccionServicios}
         />
       )}
@@ -533,6 +575,7 @@ export default async function ContratoDetallePage({
         formasPago={formasPago}
         moneda={(venta.moneda as string) ?? "COP"}
         monedaCobro={cobro.moneda}
+        trmCostos={trmCostos}
         totalCobro={cobro.total}
         notaCobro={notaCobro}
         proveedoresCatalogo={(proveedoresCatalogo ?? []).map((p) => p.nombre)}
@@ -542,7 +585,7 @@ export default async function ContratoDetallePage({
 
       <AdjuntosContrato identidad={identidad} numeroContrato={numero} adjuntos={(adjuntos ?? []) as Adjunto[]} puedeEditar={puedeEditar} />
 
-      <SoportesPagoInterno soportes={soportesPago} abonos={(abonos ?? []).length} />
+      <SoportesPagoInterno soportes={soportesPago} abonos={(abonos ?? []).length} identidad={identidad} puedeRechazar={verFinanzas} avisos={avisosRechazo} nombres={nombresRechazo} />
 
       <EditarAsesorPasajeros
         identidad={identidad}
@@ -567,6 +610,11 @@ export default async function ContratoDetallePage({
         destinos={destinos ?? []}
         puedeEditar={puedeEditar}
       />
+
+      {/* #103: envío de la solicitud estructurada al proveedor por correo + seguimiento (entregada / respondió / decisión). Solo roles internos con acceso a operación. */}
+      {puedeEditar && verFinanzas && (
+        <SolicitudesProveedorSeccion numero={numero} identidad={identidad} />
+      )}
 
       {esSuperadmin && (
         <ContenidoContratoEditor

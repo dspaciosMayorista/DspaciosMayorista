@@ -1,7 +1,10 @@
 // Avisos internos (#86): textos y reglas PURAS de presentación. Sin red ni next/*.
 // Un aviso lleva tipo + número de contrato y nada más: ni cliente, ni montos, ni nombre de archivo.
 
-export type TipoAviso = "soporte_pago_nuevo" | "soporte_pago_reemplazado" | "solicitud_contrato";
+export type TipoAviso = "soporte_pago_nuevo" | "soporte_pago_reemplazado" | "solicitud_contrato" | "cotizacion_publica";
+
+/** Tipos de aviso cuyo destino es la ficha de una COTIZACIÓN (llevan `cotizacion_id`); el resto apunta al contrato. */
+export const TIPOS_AVISO_DE_COTIZACION: readonly string[] = ["solicitud_contrato", "cotizacion_publica"];
 
 export type AvisoVista = {
   id: number;
@@ -9,6 +12,8 @@ export type AvisoVista = {
   numero_contrato: string;
   creado_en: string;
   leido: boolean;
+  /** #78: la cotización pública de este aviso ya se CONVIRTIÓ a contrato (solo esa condición; leído y descartar no cuentan). Solo aplica a `cotizacion_publica`. */
+  atendida: boolean;
   /** Destino al abrirlo, calculado en el servidor según quién mira (portal del aliado o ficha interna). */
   href: string;
 };
@@ -31,6 +36,7 @@ export const INTERVALO_SONDEO_MS = 30_000;
 
 export function textoAviso(tipo: TipoAviso, numeroVisible: string): string {
   if (tipo === "solicitud_contrato") return `Solicitud de contrato de un aliado: cotización ${numeroVisible}`;
+  if (tipo === "cotizacion_publica") return `Nueva cotización de un visitante del tarifario: ${numeroVisible}`;
   return tipo === "soporte_pago_reemplazado"
     ? `Se reemplazó un soporte de pago en el contrato ${numeroVisible}`
     : `Nuevo soporte de pago en el contrato ${numeroVisible}`;

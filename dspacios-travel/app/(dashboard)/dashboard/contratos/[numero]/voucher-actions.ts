@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { formatFechaLarga, calcularEdad } from "@/lib/utils";
 import type { Json } from "@/types/database";
 import { fechaNegocio } from "@/lib/fechaNegocio";
+import { construirVouchersVuelo, type FilaVueloBasica } from "@/lib/voucher/vuelo";
 
 // "Adultos" o "Adultos y niños" según las edades de los pasajeros.
 function tipoPaxDe(pasajeros: { fecha_nacimiento: string | null }[], fechaRef: string | null): string {
@@ -13,7 +14,7 @@ function tipoPaxDe(pasajeros: { fecha_nacimiento: string | null }[], fechaRef: s
   return hayMenores ? "Adultos y niños" : "Adultos";
 }
 
-type Result = { ok: true; creados?: number } | { ok: false; error: string };
+type Result = { ok: true; creados?: number; actualizados?: number; retirados?: number; avisos?: string[] } | { ok: false; error: string };
 
 // Contenido editable de un voucher de servicios (uno por proveedor).
 export type VoucherContenido = {
@@ -175,7 +176,7 @@ export async function generarVouchersServicios(numero: string, identidad: Identi
   // Regenera: borra los vouchers de servicios previos de este contrato (todo lo
   // que no sea el voucher de hotel — el tipo puede ser "servicios", "traslado"
   // o "asistencia" según la categoría del proveedor, ver tipoVoucherDeCategorias).
-  await sb.from("vouchers").delete().eq("numero_contrato", numero).neq("tipo", "hotel");
+  await sb.from("vouchers").delete().eq("numero_contrato", numero).not("tipo", "in", "(hotel,vuelo)");
 
   const filas: { numero_contrato: string; tipo: string; proveedor: string; contenido: Json }[] = [];
   for (const [proveedor, g] of porProveedor) {
@@ -321,6 +322,58 @@ export async function generarVoucherHotel(numero: string, identidad: IdentidadCo
   if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
   revalidatePath(`/dashboard/contratos/${numero}`);
   return { ok: true, creados: 1 };
+}
+
+// #18: voucher de servicio aéreo (UNO por contrato Y POR SERVICIO CONTRATADO, ADL-041/042; el servicio es la asociación GUARDADA `contrato_vuelos.servicio_aereo`, no el PNR). Solo datos guardados (contrato_vuelos_basica: el record solo para quien gestiona el contrato) y los pasajeros del contrato; lo ausente sale como «No registrado».
+export async function generarVoucherVuelo(numero: string, identidad: IdentidadContrato): Promise<Result> {
+  const sb = await createClient(parseIdentidad(identidad));
+  // La HUELLA de cada servicio se lee ANTES que los tramos: si los tramos cambian después, la base la ve distinta al escribir y rechaza (nunca se guarda como vigente un itinerario leído de tramos que ya no son los guardados).
+  const { data: huellas, error: errHuellas } = await sb.rpc("servicios_aereos_contrato", { p_numero: numero });
+  if (errHuellas) return { ok: false, error: mensajeSiIdentidad(errHuellas) ?? "No se pudieron leer los servicios aéreos del contrato. Intenta de nuevo." };
+  const [{ data: venta, error: errVenta }, { data: filas, error: errVuelos }, { data: pasajeros, error: errPasajeros }] = await Promise.all([
+    sb.from("ventas").select("*").eq("numero_contrato", numero).single(),
+    sb.from("contrato_vuelos_basica").select("id, record, servicio_aereo, aerolinea, direccion, origen_codigo, origen_ciudad, destino_codigo, destino_ciudad, numero_vuelo, fecha_salida, hora_salida, hora_llegada, servicios, orden, vuelo_ida, vuelo_regreso, hora_salida_ida, hora_llegada_ida, hora_salida_reg, hora_llegada_reg, fecha_regreso").eq("numero_contrato", numero).order("orden"),
+    sb.from("contrato_pasajeros").select("nombre, nombres, apellidos").eq("numero_contrato", numero).order("orden"),
+  ]);
+  // Codex F2: toda lectura obligatoria se comprueba; un fallo NUNCA se convierte en «sin pasajeros» ni reemplaza un voucher existente.
+  if (!venta) return { ok: false, error: errVenta && errVenta.code !== "PGRST116" ? "No se pudo leer el contrato. Intenta de nuevo." : "Contrato no encontrado." };
+  if (errVuelos) return { ok: false, error: "No se pudieron leer los vuelos del contrato. Intenta de nuevo." };
+  if (errPasajeros) return { ok: false, error: "No se pudieron leer los pasajeros del contrato. Intenta de nuevo." };
+  const vendedor =
+    venta.tipo_asesor === "agencia" ? (venta.agencia_asesor ?? venta.agencia_nombre ?? "")
+    : venta.tipo_asesor === "freelance" ? (venta.freelance_nombre ?? "")
+    : (venta.asesor_firma_nombre ?? venta.asesor ?? "");
+  const { servicios, sinAsociar } = construirVouchersVuelo({
+    filas: (filas ?? []) as unknown as FilaVueloBasica[],
+    pasajeros: (pasajeros ?? []).map((p) => (`${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim() || p.nombre || "")),
+    titular: venta.cliente ?? "", nReserva: numero, vendedor, emision: fechaNegocio(),
+  });
+  if (sinAsociar.length) {
+    // ADL-042: nunca se adivina a qué servicio pertenece un tramo (ni por PNR, ni por posición, ni por id): se rechaza ANTES de escribir nada.
+    return { ok: false, error: `Hay ${sinAsociar.length} tramo(s) del contrato sin servicio aéreo asociado. Asócialos a su servicio en el editor de vuelos del contrato y vuelve a generar. No se cambió ningún voucher.` };
+  }
+  if (!servicios.length) return { ok: false, error: "Este contrato no tiene vuelos registrados: no hay datos para emitir el voucher aéreo." };
+  // ADL-041 (migración 338): UN voucher por contrato Y POR SERVICIO guardado (grupo de tramos con el mismo PNR guardado; clave = tramo ancla). Una sola llamada = una sola transacción para todos los
+  // servicios (atomicidad); regenerar actualiza la MISMA fila (id y enlace público intactos) y solo un cambio REAL de contenido sube la revisión (señal interna en Gestión de contratos).
+  // Un reintento idéntico no cambia nada. El PNR guardado va en el contenido del servicio; la página lo muestra solo con el contrato 100 % pagado. Un fallo no cambia nada.
+  const huellaDe = new Map((huellas ?? []).filter((h) => h.servicio).map((h) => [h.servicio!.toLowerCase(), h]));
+  if (servicios.some((s) => !huellaDe.has(s.clave))) return { ok: false, error: "Los vuelos del contrato cambiaron mientras se generaba el voucher. No se cambió nada: vuelve a generar." };
+  const payload = servicios.map((s) => ({ ...s, huella: huellaDe.get(s.clave)!.huella }));
+  const { data: guardado, error } = await sb.rpc("guardar_vouchers_vuelo", { p_numero: numero, p_servicios: payload as unknown as Json });
+  if (error) {
+    // La base rechaza ANTES de escribir si lo guardado cambió mientras se generaba (otro guardado del editor de vuelos): no es un fallo, hay que reintentar.
+    if (error.message?.startsWith("SERVICIOS_CAMBIARON")) return { ok: false, error: "Los vuelos del contrato cambiaron mientras se generaba el voucher. No se cambió nada: vuelve a generar." };
+    if (error.message?.startsWith("SERVICIO_AEREO_SIN_ASOCIAR")) return { ok: false, error: "Hay tramos del contrato sin servicio aéreo asociado. Asócialos en el editor de vuelos y vuelve a generar. No se cambió nada." };
+    return { ok: false, error: mensajeSiIdentidad(error) ?? error.message };
+  }
+  const vigentes = (guardado ?? []).filter((g) => !g.retirado);
+  if (vigentes.length !== servicios.length) return { ok: false, error: "No se pudo guardar el voucher de vuelo. Intenta de nuevo." };
+  revalidatePath(`/dashboard/contratos/${numero}`);
+  const retirados = (guardado ?? []).filter((g) => g.retirado).length;
+  return {
+    ok: true, creados: vigentes.filter((g) => g.creado).length, actualizados: vigentes.filter((g) => g.actualizado).length, retirados,
+    ...(retirados ? { avisos: [`${retirados} voucher(s) de un servicio que ya no existe quedaron retirados (su enlace dejó de mostrar el itinerario; el historial se conserva).`] } : {}),
+  };
 }
 
 export async function actualizarVoucher(id: number, contenido: VoucherContenido, numero: string, identidad: IdentidadContrato): Promise<Result> {

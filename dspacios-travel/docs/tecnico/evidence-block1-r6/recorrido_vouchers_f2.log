@@ -1,0 +1,185 @@
+
+### F2 · air vouchers per CONTRACTED SERVICE (ADL-041/042): saved service identity (not the PNR), issued URLs through the serving boundary, reconciliation, signals, atomicity, roles
+
+-- A1 generation WITHOUT a saved PNR is allowed; the legs of a reservation share ONE service by default
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+OK    no PNR saved: the voucher is created ({"ok":true,"creados":1,"actualizados":0,"retirados":0}) and carries no PNR field
+OK    the legs got ONE saved service by default (88863348-ab2c-4a41-a31a-77d26d12e95c) and the voucher key IS that saved service, not a leg id, name or position
+OK    both legs of the round trip are in ONE voucher; the 3 passengers are listed once (not one voucher per passenger)
+
+-- A2 unpaid contract: the ally cannot open it
+OK    ally, contract not paid: denied (pago_incompleto)
+
+-- A3 the PNR is saved LATER on each leg with DIFFERENT PNRs (real flight editor): the voucher is flagged, regeneration keeps the SAME link
+OK    the editor saves a different PNR per leg and both legs stay in the SAME service (ok)
+OK    the saved change flags the issued voucher «revisar» at once (revision 1) — before anyone regenerates
+OK    regeneration: SAME row and link, back to «vigente», one real content change ({"ok":true,"creados":0,"actualizados":1,"retirados":0}, revision 2)
+OK    ONE voucher shows each saved record against ITS leg (XYZ123 on the outbound, QWE456 on the return); no passenger-to-leg assignment invented
+
+-- A4 internal preview of the UNPAID contract hides every PNR (and says so); the ally is still denied
+OK    internal staff open the preview before payment
+OK    unpaid: no PNR reaches what the page renders and a note is shown (payment lookups for this view: 1)
+OK    ally, still unpaid: denied
+
+-- A5 paid contract: the ally opens it and sees both PNRs with NO extra payment lookup; internal staff see them too
+OK    paid: the ally opens the voucher (payment lookups in the existing access check: 1)
+OK    the ally view shows XYZ123 / QWE456 per leg and adds 0 requests
+OK    internal preview of the paid contract shows the PNRs (one payment lookup, only because a PNR exists)
+OK    if the balance rises again the ally is blocked again (nothing is deleted)
+OK    a colleague venta user and the other agency cannot open it
+
+-- A6 the contract (customer document) never receives the PNR
+OK    ContratoDocumento and the contract page do not read or render record/PNR in code (the customer contract keeps hiding it)
+
+-- A7 the PNRs removed again: regeneration is still allowed (absence never blocks) and keeps the link
+OK    regenerated without PNR: same link, no PNR field, «vigente»
+OK    hotel and service vouchers are byte-identical after all the air regenerations
+
+-- B1 one service with DIFFERENT PNRs per leg = ONE voucher; two services with the SAME PNR = TWO vouchers; services with NO PNR stay separate
+OK    5 saved services (PNRs: AAA111+BBB222 / SAME00 / SAME00 / none / none) → exactly 5 vouchers with 5 distinct links ({"ok":true,"creados":5,"actualizados":0,"retirados":0})
+OK    the round trip with two PNRs is ONE voucher that shows each record on its leg; the same-record services keep only their own legs
+OK    passengers stay a contract-level list and the document still says no passenger-to-segment assignment is registered
+
+-- B2 identical replay: nothing changes, no revision, no new link
+OK    identical retry by another operator: {"ok":true,"creados":0,"actualizados":0,"retirados":0} and every row (id, token, revision, content, state) is identical
+
+-- B3 regenerate after ONE service changed: its link is kept, the other services and the hotel voucher are untouched
+OK    editing a leg flags ONLY its own service «revisar» (the other four stay «vigente»)
+OK    service 122 regenerated at the SAME link; every voucher «vigente» again ({"ok":true,"creados":0,"actualizados":1,"retirados":0})
+OK    the other four services are byte-identical
+OK    the hotel voucher is byte-identical
+
+-- B4 a leg with NO saved service is refused BEFORE anything is written (never assigned by PNR, position or id)
+OK    generation refused with a clear message (Hay 1 tramo(s) del contrato sin servicio aéreo asociado. Asócialos a su servicio en el edi)
+OK    no voucher was created, changed or retired by the refused attempt (the orphaned service's voucher is flagged by the leg change itself)
+OK    staff associate the leg explicitly in the flight editor (to service 124)
+OK    the leg joining service 124 flags that voucher «revisar» at once (its itinerary changed) — before anyone regenerates
+OK    after the explicit association the generation works; the service left without legs is «retirado» and kept ({"ok":true,"creados":0,"actualizados":1,"retirados":0})
+
+-- C1 Gestión de contratos: acknowledge, replay, leg change (before regenerating), regeneration, re-acknowledge
+OK    no acknowledgment yet: 6 vouchers = 5 air (one retired earlier) + the hotel one, delivery pending, no «updated» signal, the retired one counted as not current (pendiente, aereoNoVigente 1)
+OK    the superadmin registers the manual delivery: «entregado» (an acknowledgment of the staff, nothing sent)
+OK    an IDENTICAL regeneration after the delivery raises NO signal
+OK    a leg change after the delivery already raises the signal, BEFORE regenerating: pendiente + updated + 2 vouchers not current (the changed one + the retired one), earlier acknowledgment still visible
+OK    regenerating returns the voucher to current; the communication stays pending until staff register it again
+OK    retrying adds nothing: the notice is not duplicated
+OK    the other contract (also acknowledged, not touched) is not flagged
+OK    retiring the superseded acknowledgment is refused (there is nothing current to retire)
+OK    registering the communication again clears the signal; it never claimed delivery, reading or acceptance by the customer
+
+-- C2 roles: only the superadmin sees Gestión or registers acknowledgments
+   {"ADMIN":"sin_permiso/no","A":"sin_permiso/no","VENTA_DUENO":"sin_permiso/no","ALIADO":"sin_permiso/no"}
+OK    administracion, operaciones, venta and the ally: no Gestión, no acknowledgment
+
+-- D1 remove the lowest-id leg («anchor») of a service through the flight editor: the issued URL stops serving the old itinerary; regeneration keeps the SAME link
+OK    both issued URLs open for the paid ally (current)
+OK    the anchor leg 11 is removed through the real editor (ok)
+OK    the OLD issued URL no longer serves the old itinerary to the ally (no_vigente)
+OK    internal staff still reach it, marked «revisar» (the page prints an explicit «desactualizado» banner)
+OK    the other service's URL is untouched and current
+OK    Gestión counts one air voucher as not current
+OK    regeneration keeps the SAME link for the SAME service; it now serves the UPDATED itinerary (1 leg), «vigente» ({"ok":true,"creados":0,"actualizados":1,"retirados":0})
+
+-- D2 remove a whole service through the editor: its URL is RETIRED (history kept), regeneration never revives or recreates it
+OK    the removed service's URL is «retirado» immediately: the ally gets no itinerary; staff see the state (no_vigente)
+OK    regeneration after the removal: the retired voucher row (token, history) is kept, not revived, not duplicated; the surviving service stays current
+OK    Gestión keeps showing the retired voucher as not current until it is dealt with
+
+-- D3 MERGE two services explicitly in the editor: the absorbed one is retired, the surviving one keeps its link and shows both legs after regeneration
+OK    the staff move the legs of service 172 into service 171 (explicit choice in the editor)
+OK    after the merge neither old URL serves an itinerary until regenerated (absorbed = retirado; surviving = revisar)
+OK    the surviving service keeps its link and now lists the 4 legs; the absorbed URL stays retired ({"ok":true,"creados":0,"actualizados":1,"retirados":0})
+
+-- D4 SPLIT explicitly: a leg moves to «nuevo:1» — the original keeps its link; the new service gets a NEW voucher/link on regeneration
+OK    the split creates a second saved service and flags the original
+OK    original keeps its link (now 1 leg); the new service has its own voucher and link ({"ok":true,"creados":1,"actualizados":1,"retirados":0})
+
+-- D5 the contract-content editor (superadmin) re-creates the legs of a SINGLE service: link kept; with several services it refuses and changes nothing
+OK    legs re-created with NEW ids inherit the single saved service; the voucher is flagged «revisar»
+OK    regeneration keeps voucher 49 and its link (key 00000000-0000-4000-9000-000000000141 unchanged although every leg id changed)
+OK    with several services the content editor refuses BEFORE touching anything (no guessing which service the new legs belong to)
+
+-- D6 ambiguous editor input is rejected before any mutation
+OK    a new leg with no service among several services, and an unknown service id, are both rejected; legs and vouchers are untouched
+
+-- E1 atomic: a failure on the SECOND service rolls back the whole regeneration
+OK    service 2 fails (INYECTADO: fallo al guardar el voucher): service 1 was NOT updated either — rows, tokens, revisions and states are as before
+OK    the retry applies both changes at once, links unchanged, both «vigente»
+
+-- E2 failure on the RETIREMENT step rolls back everything too
+OK    failure while retiring the legacy voucher: the service upsert is rolled back too (INYECTADO: fallo al guardar el voucher)
+OK    retry: the legacy voucher without a service is retired, the current one is «vigente» ({"ok":true,"creados":0,"actualizados":1,"retirados":1,"avisos":["1 voucher(s) de un servicio que ya no existe quedaron retirados (su enlace dejó de mostrar el itinerario; el historial se conserva)."]})
+
+-- E3 stale read: a flight-editor save lands between the application's read and the database write → rejected, nothing stored as «vigente»
+OK    the held regeneration is refused with SERVICIOS_CAMBIARON (Los vuelos del contrato cambiaron mientras se generaba el voucher. No ); the issued URL does NOT serve the stale itinerary as current
+OK    retrying after the concurrent save produces the up-to-date itinerary at the same link
+
+-- E4 two simultaneous first generations of a two-service contract (held at the HTTP layer, released together)
+OK    both succeed, TWO rows, each created exactly once, revision 0 ([{"ok":true,"creados":2,"actualizados":0,"retirados":0},{"ok":true,"creados":0,"actualizados":0,"retirados":0}])
+
+-- V5-1 two real sessions: the voucher write is paused AFTER the fingerprint validation; a flight edit is attempted meanwhile
+
+-- V1 existing vouchers, same-field edit during the pause; an UNRELATED contract is not held
+OK    while the write was paused (validation already done) the generation held the contract lock and the flight edit was BLOCKED, not applied
+OK    both complete after the release (generation {"ok":true,"creados":0,"actualizados":2,"retirados":0}; edit ok)
+OK    legs hold the LATER edit (12:22); the voucher content is the earlier validated one (10:11)
+OK    the voucher is «revisar»: the later invalidation was NOT overwritten by the stale generation
+OK    the issued URL does not serve the stale 10:11 itinerary as current (no_vigente)
+OK    links are stable (same tokens)
+OK    regeneration restores «vigente» with the UPDATED content (12:22) at the SAME link
+OK    an UNRELATED contract's generation completed while this contract's write was paused (the lock is per contract)
+
+-- V2 FIRST generation (no voucher yet) paused after validation; edit meanwhile
+OK    first generation created the voucher; the edit waited and then applied ({"ok":true,"creados":1,"actualizados":0,"retirados":0})
+OK    the brand-new voucher is «revisar» (not a stale «vigente»): content older than the saved legs is flagged
+OK    its URL is not served as current
+OK    regeneration: updated content, same link
+
+-- V3 service removal during the pause
+OK    the removal of service 302 waited for the generation and then applied ({"ok":true,"creados":0,"actualizados":2,"retirados":0})
+OK    the removed service's voucher is «retirado» (the stale generation did not resurrect it as vigente) and its URL is not served
+OK    the surviving service stays current at its same link
+
+-- V4 atomic failure of the paused generation: the edit still lands, nothing is left «vigente» with stale content
+OK    the generation failed and rolled back (INYECTADO: fallo al guardar el voucher); the edit applied after it
+OK    both vouchers stay «revisar»: no partial write, no vigente with stale content
+OK    the retry produces the up-to-date content for both
+
+-- V6 the contract-content editor (plain statements, NO ventas lock) is protected by the leg trigger alone
+OK    the content editor's leg statements waited for the paused generation (leg trigger lock) and then applied
+OK    voucher «revisar» (not stale vigente), same row and link
+OK    regeneration restores the updated content
+
+-- V7 lock-order storm: generations and edits of the same contract in parallel never deadlock and never leave a stale «vigente»
+OK    20 concurrent operations (12 refused as «cambiaron mientras se generaba» / editor conflicts, 0 deadlocks or timeouts: [])
+OK    invariant after the storm: every «vigente» voucher shows exactly the hours saved in its legs
+OK    a final regeneration leaves both current and consistent
+
+-- V5-2 legacy single-row itinerary: every rendered legacy field invalidates the issued URL; regeneration restores the content at the same link
+OK    the legacy row renders as TWO legs (outbound LG100, return LG200 with the return date)
+   [["vuelo_ida",true,"revisar",true,true,true,true],["vuelo_regreso",true,"revisar",true,true,true,true],["hora_salida_ida",true,"revisar",true,true,true,true],["hora_llegada_ida",true,"revisar",true,true,true,true],["hora_salida_reg",true,"revisar",true,true,true,true],["hora_llegada_reg",true,"revisar",true,true,true,true],["fecha_regreso",true,"revisar",true,true,true,true]]
+OK    each of the 7 legacy fields: identical save flags nothing; a real change makes the OLD url non-current before regeneration (ally: no_vigente, staff: revisar), raises the Gestión signal, and regeneration restores the updated value at the SAME link
+OK    renumbering orden without changing the order (+100 on both legs) flags nothing
+OK    swapping the two legs (a different order in the issued document) makes the voucher non-current
+OK    regeneration lists the legs in the new order and restores «vigente»
+OK    viewers who must not see it get nothing: unpaid ally pago_incompleto, colleague venta sin_permiso, other agency sin_permiso
+OK    the unpaid contract's changed legacy voucher is «revisar» for staff (flagged even though nobody outside may open it)
+
+-- E5 deleting a contract that has legs: 338 adds NO new failure mode (the voucher trigger is not in the way)
+OK    same outcome with and without an issued air voucher (with: Este contrato cambió desde que abriste la página ( · without: Este contrato cambió desde que abriste la página () — 338 does not change contract deletion
+
+-- F1 a failed REQUIRED read is rejected and the vouchers are kept
+OK    passenger read error is NOT an empty list (No se pudieron leer los pasajeros del contrato. Intenta de nuevo.)
+OK    flight read error rejected, vouchers unchanged (No se pudieron leer los vuelos del contrato. Intenta de nuevo.)
+
+-- F2 roles/tenants: who can write the air vouchers
+   {"VENTA_DUENO":"Contrato no encontrado.","VENTA_OTRO":"Contrato no encontrado.","CONTROL_VUELO":"Contrato no encontrado.","MINORISTA":"Contrato no encontrado.","ALIADO":"Contrato no encontrado."}
+OK    venta, control_vuelo, the other agency and the ally are all refused and nothing changes
+OK    operaciones (same agency) can regenerate
+
+-- F3 regenerating the SERVICE vouchers (real action) leaves the air vouchers and the hotel voucher untouched
+OK    air vouchers (id, token, content, revision, state) and hotel voucher byte-identical after the service vouchers were regenerated ({"ok":true,"creados":1})
+OK    a contract with no saved legs produces no voucher
+
+=== 0 fallo(s) de 106

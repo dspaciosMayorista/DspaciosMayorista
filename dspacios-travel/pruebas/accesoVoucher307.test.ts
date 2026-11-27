@@ -124,7 +124,7 @@ describe("cableado: el candado está en el SERVIDOR, no en el botón", () => {
     const p = leer("app/voucher/[token]/page.tsx");
     assert.equal((p.match(/accesoVoucherPorToken\(token\)/g) ?? []).length, 2, "generateMetadata y la página");
     assert.doesNotMatch(p, /createAdminClient|share_token/);
-    assert.match(p, /if \(!r\.ok\) notFound\(\)/);
+    assert.match(p, /if \(!r\.ok\) \{[\s\S]*?notFound\(\); \}/);
   });
   test("la resolución real usa el pago de la base (RPC) y la RLS de la sesión para el interno", () => {
     const s = leer("lib/voucher/accesoVoucher.server.ts");

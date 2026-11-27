@@ -1,0 +1,70 @@
+  cargado: 20260601000334_destinos_aereos_alternativos_integridad.sql
+  cargado: 20260601000335_vuelos_sistema_exige_componente_aereo.sql
+  cargado: 20260601000336_conversion_cotizacion_reclamo.sql
+  cargado: 20260601000337_voucher_vuelo_atomico.sql
+  cargado: 20260601000338_voucher_vuelo_por_servicio_y_revision.sql
+  cargado: semilla_visual_historial_h81.sql
+PostgREST en http://127.0.0.1:55937 contra vc_d50fdfd1cd39
+app compilada respondiendo en http://127.0.0.1:3099 · BUILD_ID ELPK6LteTxZvxC8Kigs6m
+
+== 1. Control de vuelo en el record AAA111 (salidas del traslado, retiro, anterior incompleto, límites de día) ==
+OK    página compilada /dashboard/vuelos/9501 (control de vuelo): pestaña «Cambios» y sección del historial (ok:8)
+OK    AAA111 muestra 8 operaciones (8; 10 filas guardadas: el traslado agrupa 3)
+OK    retiro cuyo motivo menciona BBB222: se presenta como «Retiro de cupo», destino «No aplica», sin lenguaje de traslado (el motivo aparece solo como texto libre)
+OK    ese retiro: motivo rotulado «texto libre», 23/11/2026 23:30 (hora de Bogotá) y el actor largo completo
+OK    traslado agrupado visto desde AAA111: «Salieron 3 cupo(s)…», 05/10/2026 10:00, 3 sillas, origen→destino, cupos 12 → 9, sillas #10, #11, #12
+OK    pasajero movido con su cupo: entra desde BBB222, 02/11/2026 15:15, contrato guardado
+OK    historial anterior incompleto: «tipo no guardado», actor/destino/cupos «No guardado», nada inferido del motivo que nombra CCC333, 02/01/2026 07:00
+OK    anterior con origen y destino guardados: «Cambio entre records (registro anterior)», 03/01/2026 07:00
+OK    fechas visibles en hora de Bogotá, incluidos los límites del día (04:59Z → 22/11 23:59; 05:00Z → 23/11 00:00; año nuevo → 31/12/2025 23:59), de la más reciente a la más antigua (15,864,1210,1569,1942,2364,2730,3135)
+
+== 2. Mismo traslado visto desde el record destino BBB222 ==
+OK    desde BBB222 el mismo traslado se lee como entrada: «Entraron 3 cupo(s)… desde AAA111», cupos 6 → 9, sillas #7, #8, #9
+OK    desde BBB222 el pasajero movido con cupo se lee como salida hacia AAA111
+
+== 3. Detalle por silla expandido, texto largo y diseño a 1280 / 820 / 390 px (viewport real) ==
+OK    control de vuelo · /dashboard/vuelos/9501 · 1280px · detalle por silla cerrado: historial presente
+OK    control de vuelo · /dashboard/vuelos/9501 · 1280px · detalle por silla cerrado: sin desborde (scroll 1280/1280), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9501 · 1280px · detalle por silla abierto: historial presente
+OK    control de vuelo · /dashboard/vuelos/9501 · 1280px · detalle por silla abierto: sin desborde (scroll 1280/1280), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9501 · 1280px · detalle por silla abierto: el detalle expandido lista cada silla (#10 → #7, #11 → #8, #12 → #9, #3 → #13 con contrato)
+OK    control de vuelo · /dashboard/vuelos/9501 · 820px · detalle por silla cerrado: historial presente
+OK    control de vuelo · /dashboard/vuelos/9501 · 820px · detalle por silla cerrado: sin desborde (scroll 820/820), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9501 · 820px · detalle por silla abierto: historial presente
+OK    control de vuelo · /dashboard/vuelos/9501 · 820px · detalle por silla abierto: sin desborde (scroll 820/820), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9501 · 820px · detalle por silla abierto: el detalle expandido lista cada silla (#10 → #7, #11 → #8, #12 → #9, #3 → #13 con contrato)
+OK    control de vuelo · /dashboard/vuelos/9501 · 390px · detalle por silla cerrado: historial presente
+OK    control de vuelo · /dashboard/vuelos/9501 · 390px · detalle por silla cerrado: sin desborde (scroll 390/390), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9501 · 390px · detalle por silla abierto: historial presente
+OK    control de vuelo · /dashboard/vuelos/9501 · 390px · detalle por silla abierto: sin desborde (scroll 390/390), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9501 · 390px · detalle por silla abierto: el detalle expandido lista cada silla (#10 → #7, #11 → #8, #12 → #9, #3 → #13 con contrato)
+OK    control de vuelo · /dashboard/vuelos/9502 · 1280px · detalle por silla cerrado: historial presente
+OK    control de vuelo · /dashboard/vuelos/9502 · 1280px · detalle por silla cerrado: sin desborde (scroll 1280/1280), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9502 · 1280px · detalle por silla abierto: historial presente
+OK    control de vuelo · /dashboard/vuelos/9502 · 1280px · detalle por silla abierto: sin desborde (scroll 1280/1280), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9502 · 820px · detalle por silla cerrado: historial presente
+OK    control de vuelo · /dashboard/vuelos/9502 · 820px · detalle por silla cerrado: sin desborde (scroll 820/820), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9502 · 820px · detalle por silla abierto: historial presente
+OK    control de vuelo · /dashboard/vuelos/9502 · 820px · detalle por silla abierto: sin desborde (scroll 820/820), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9502 · 390px · detalle por silla cerrado: historial presente
+OK    control de vuelo · /dashboard/vuelos/9502 · 390px · detalle por silla cerrado: sin desborde (scroll 390/390), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    control de vuelo · /dashboard/vuelos/9502 · 390px · detalle por silla abierto: historial presente
+OK    control de vuelo · /dashboard/vuelos/9502 · 390px · detalle por silla abierto: sin desborde (scroll 390/390), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    superadmin · /dashboard/vuelos/9501 · 1280px · detalle por silla cerrado: historial presente
+OK    superadmin · /dashboard/vuelos/9501 · 1280px · detalle por silla cerrado: sin desborde (scroll 1280/1280), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    superadmin · /dashboard/vuelos/9501 · 1280px · detalle por silla abierto: historial presente
+OK    superadmin · /dashboard/vuelos/9501 · 1280px · detalle por silla abierto: sin desborde (scroll 1280/1280), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    superadmin · /dashboard/vuelos/9501 · 1280px · detalle por silla abierto: el detalle expandido lista cada silla (#10 → #7, #11 → #8, #12 → #9, #3 → #13 con contrato)
+OK    superadmin · /dashboard/vuelos/9501 · 390px · detalle por silla cerrado: historial presente
+OK    superadmin · /dashboard/vuelos/9501 · 390px · detalle por silla cerrado: sin desborde (scroll 390/390), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    superadmin · /dashboard/vuelos/9501 · 390px · detalle por silla abierto: historial presente
+OK    superadmin · /dashboard/vuelos/9501 · 390px · detalle por silla abierto: sin desborde (scroll 390/390), nada fuera del viewport (0), sin solapes, sin texto recortado
+OK    superadmin · /dashboard/vuelos/9501 · 390px · detalle por silla abierto: el detalle expandido lista cada silla (#10 → #7, #11 → #8, #12 → #9, #3 → #13 con contrato)
+INFO  solicitudes al proxy durante toda la sección 3 (16 cargas de página): {"GET /usuarios":144,"POST /rpc/sillas_identidades":16,"GET /sillas":48,"GET /destinos":16,"GET /bloqueos_vuelo":32,"GET /proveedores":16,"GET /rangos_edad":16,"GET /bloqueo_cambios":16,"GET /movimientos_silla":16,"POST /rpc/mi_rol":16,"GET /avisos":16,"HEAD /avisos":16,"POST /rpc/agencia_activa_sesion":8}
+OK    cambiar de pestaña (Pasajeros ↔ Cambios) no genera solicitudes ({})
+
+== 4. Acceso: un asesor de ventas no entra al módulo ==
+OK    asesor de ventas: la página del record no muestra el historial (COMERCIAL  Tarifario ↗ Reservar Cotizaciones Contratos  EXTE…)
+OK    sin excepciones de JavaScript en las pestañas (0)
+
+RESULTADO: TODO OK · BUILD_ID ELPK6LteTxZvxC8Kigs6m

@@ -40,10 +40,10 @@ Object.assign(globalThis, {
 Object.defineProperty(globalThis, "navigator", { value: w.navigator, configurable: true });
 
 // ── «Servidor» de avisos (misma semántica que las funciones de la 281) ────
-type Av = { id: number; tipo: "soporte_pago_nuevo" | "soporte_pago_reemplazado"; numero_contrato: string; creado_en: string; leido: boolean; notificado: boolean };
+type Av = { id: number; tipo: "soporte_pago_nuevo" | "soporte_pago_reemplazado" | "cotizacion_publica"; numero_contrato: string; creado_en: string; leido: boolean; notificado: boolean; atendida?: boolean };
 let avisos: Av[] = [];
 let llamadas = 0;
-const vista = (a: Av) => ({ id: a.id, tipo: a.tipo, numero_contrato: a.numero_contrato, creado_en: a.creado_en, leido: a.leido, href: `/dashboard/contratos/${a.numero_contrato}` });
+const vista = (a: Av) => ({ id: a.id, tipo: a.tipo, numero_contrato: a.numero_contrato, creado_en: a.creado_en, leido: a.leido, atendida: a.atendida === true, href: `/dashboard/contratos/${a.numero_contrato}` });
 const servidor = {
   async sondear(reclamar: boolean) {
     llamadas++;
@@ -223,4 +223,22 @@ test("una instancia oculta por CSS (p. ej. el encabezado móvil en escritorio) n
   await montar();
   await sondeoAhora();
   assert.ok(llamadas > 0);
+});
+
+// #78 (340) — «Atendida» = la cotización pública se CONVIRTIÓ en contrato. Se ve en la lista, es independiente de leído/no leído y solo aparece cuando el servidor lo dice.
+test("la campana marca «Atendida · convertida a contrato» solo cuando el servidor lo indica; leer o abrir no la marca, y un aviso sin convertir no la muestra", async () => {
+  nuevoAviso(1, "cotizacion_publica"); nuevoAviso(2, "cotizacion_publica"); nuevoAviso(3, "soporte_pago_nuevo");
+  avisos.find((a) => a.id === 2)!.atendida = true;
+  const tab = await montar(); await sondeoAhora(); await abrirCampana(tab);
+  const items = [...tab.contenedor.querySelectorAll("li")].map((li) => li.textContent ?? "");
+  const conMarca = items.filter((t) => /Atendida/.test(t));
+  assert.equal(conMarca.length, 1, `solo la convertida lleva la marca: ${JSON.stringify(items)}`);
+  assert.match(conMarca[0], /Nueva cotización de un visitante del tarifario: DTM-8102/);
+  assert.ok(!items.some((t) => /Atendida/.test(t) && /DTM-8101|DTM-8103/.test(t)), "ni la pública sin convertir ni el soporte de pago llevan la marca");
+  // Leer la atendida no cambia que esté atendida, y leer la no atendida no la vuelve atendida.
+  await act(async () => { await servidor.marcar([1, 2]); await tick(); });
+  await sondeoAhora();
+  const despues = [...tab.contenedor.querySelectorAll("li")].map((li) => li.textContent ?? "");
+  assert.equal(despues.filter((t) => /Atendida/.test(t)).length, 1, "tras leer, sigue habiendo exactamente una atendida");
+  assert.ok(avisos.every((a) => (a.id === 2) === (a.atendida === true)), "el servidor no cambió el estado atendida por leer");
 });

@@ -38,6 +38,8 @@ export type TramoGuardado = {
   hora_llegada: string | null;
   servicios: string | null;
   orden: number;
+  /** 338: servicio aéreo guardado del tramo. */
+  servicio_aereo: string | null;
 };
 
 type ResultTramos = { ok: true; tramos: TramoGuardado[] } | { ok: false; error: string };
@@ -101,6 +103,7 @@ export async function guardarTramosContrato(numeroContratoIn: unknown, tramosIn:
       horaSalida: oNull(t.horaSalida),
       horaLlegada: oNull(t.horaLlegada),
       servicios: oNull(t.servicios),
+      servicio: oNull(t.servicio),
     })),
   });
   if (error) return { ok: false, error: mensajeSiIdentidad(error) ?? mensajeSeguro(error, "guardar_tramos_contrato") };

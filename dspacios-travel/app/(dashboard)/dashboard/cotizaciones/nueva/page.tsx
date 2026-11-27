@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { cargarCatalogoManual } from "@/lib/catalogo/cargarCatalogoManual";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { puedeFijarNeto } from "@/lib/cotizacion/netoHija";
 import Link from "next/link";
@@ -11,11 +12,15 @@ export default async function NuevaCotizacionPage() {
   const { data: { user } } = await sb.auth.getUser();
   const { data: perfil } = user ? await sb.from("usuarios").select("rol, nombre").eq("id", user.id).single() : { data: null };
 
-  const [{ data: asesores }, { data: aliados }, { data: paramDist }, { data: paramsCom }] = await Promise.all([
+  const [{ data: asesores }, { data: aliados }, { data: paramDist }, { data: paramsCom }, catalogo, { data: destinos }] = await Promise.all([
     sb.from("usuarios").select("nombre, email").eq("rol", "venta").eq("activo", true).order("nombre"),
     sb.from("aliados").select("id, nombre, tipo, pct_comision").order("nombre"),
     sb.from("parametros_tributarios").select("valor").eq("parametro", "recobro_pct_aliado_b2b").maybeSingle(),
     sb.from("parametros_tributarios").select("parametro, valor").in("parametro", ["COMISION_AGENCIA", "COMISION_FREELANCE"]),
+    // #95: catálogo (hoteles, aerolíneas, servicios y proveedores) para PRECARGAR nombre y proveedor, editables; nunca precios.
+    cargarCatalogoManual(sb),
+    // B95-13: el destino se elige del catálogo del dueño (y decide qué hoteles se ofrecen).
+    sb.from("destinos").select("id, nombre, codigo_iata").order("nombre"),
   ]);
   const pctAliadoB2B = Number(paramDist?.valor ?? 0.5);
   // #48: vista previa del NETO (mismos % que `sellar_hija`); la base decide al guardar. Solo roles que pueden fijarlo ven la opción.
@@ -36,6 +41,8 @@ export default async function NuevaCotizacionPage() {
         aliados={(aliados ?? []) as { id: number; nombre: string; tipo: string | null; pct_comision: number | null }[]}
         miNombre={perfil?.nombre ?? ""}
         miRolVenta={perfil?.rol === "venta"}
+        catalogo={catalogo}
+        destinos={destinos ?? []}
         pctAliadoB2B={pctAliadoB2B}
         neto={{ rol: perfil?.rol ?? null, pctAgencia: parametro("COMISION_AGENCIA"), pctFreelance: parametro("COMISION_FREELANCE"), reglaParticipacion }}
       />

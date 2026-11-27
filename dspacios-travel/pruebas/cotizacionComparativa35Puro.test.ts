@@ -66,9 +66,9 @@ describe("manual: totales por opción", () => {
       assert.ok(!JSON.stringify(pl.payload).includes("opcionRef"), "la hija no arrastra la etiqueta de opción");
     }
   });
-  test("recobro y niños entran en cada opción (iguales) y el recobro nunca sale en el resumen público", () => {
-    const d = construir({ recobro: 100000, ninos: 1, tarifaNino: 250000 });
-    assert.deepEqual(d.opciones.map((o) => o.total), [1_600_000 + 100_000 + 250_000, 1_800_000 + 100_000 + 250_000]);
+  test("recobro y niños entran en cada opción (el recobro igual; el niño a la tarifa de SU hotel) y el recobro nunca sale en el resumen público", () => {
+    const d = construir({ recobro: 100000, ninos: 1, tarifaNinoPorOpcion: { A: 250000, B: 180000 } });
+    assert.deepEqual(d.opciones.map((o) => o.total), [1_600_000 + 100_000 + 250_000, 1_800_000 + 100_000 + 180_000]);
     for (const o of d.opciones) {
       const pub = JSON.stringify(o.resumen_publico);
       assert.ok(!/recobro|costo_neto|proveedor|plataforma/i.test(pub), "el resumen público no revela neto, proveedor ni recobro");

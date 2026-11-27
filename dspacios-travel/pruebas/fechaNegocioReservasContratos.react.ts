@@ -114,7 +114,10 @@ test("contrato manual a las 19:30 con fecha de emisión elegida: CxP y asiento l
 });
 
 // ── actualizarServiciosContrato ────────────────────────────────────────────
-const semillaServicios = (cxpExistente: boolean) => ({
+// RC-3: desde la regla #51/B95-2 (R2-2) una obligación de servicio solo es EDITABLE si el contrato muestra su línea «Servicio · {nombre}» (prueba de que fue un opcional elegido); sin esa línea se
+// conserva y volver a elegir el servicio se rechaza como solapamiento. Una CxP «existente» del servicio de este escenario representa un opcional ya reservado, así que su contrato trae la línea.
+const semillaServicios = (cxpExistente: boolean, conLineaOpcional = cxpExistente) => ({
+  contrato_items: conLineaOpcional ? [{ id: 1, numero_contrato: "DTM-0451", descripcion: "Servicio · Tour bahía", adultos: 2, ninos: 0, tarifa_adulto: 75_000, tarifa_nino: 0, orden: 1, modo_precio: "por_persona", valor_total: null }] : [],
   ventas: [{
     numero_contrato: "DTM-0451", tenant: "mayorista", moneda: "COP", estado: "pendiente", pax: 2, precio_venta: 3_000_000,
     paquete_armado_id: 7, fecha_salida: "2026-11-01", fecha_regreso: "2026-11-04", plazo: "2026-10-15",
@@ -160,6 +163,14 @@ test("editar servicios a las 19:30 con CxP existente: el asiento se re-postea co
   assert.equal(cx.length, 1);
   assert.equal(cx[0].referencia, "cxp:70");
   assert.equal(cx[0].fecha, DIA_BOGOTA, "regla vigente: el asiento lleva el día de la edición (calculado en Bogotá)");
+});
+
+test("control negativo: la misma CxP SIN la línea «Servicio · …» del contrato se conserva y volver a elegir el servicio se rechaza sin escribir nada (la guarda no se debilitó)", async () => {
+  reloj(DESPUES_DEL_CORTE);
+  const bd = usarBD(semillaServicios(true, false));
+  const r = await actualizarServiciosContrato("DTM-0451", [11], {});
+  assert.equal(r.ok, false); assert.match(JSON.stringify(r), /ya tiene una obligación con ese servicio/);
+  assert.equal(bd.filas("cuentas_por_pagar").find((c) => c.id === 70)?.fecha_obligacion, "2026-09-01"); assert.equal(asientos(bd, "cxp").length, 0);
 });
 
 // ── 255 · editar servicios de un contrato PENDIENTE: SIN «GENERAL» y con horario de traslado ─────────────────────────────────────────────────────────

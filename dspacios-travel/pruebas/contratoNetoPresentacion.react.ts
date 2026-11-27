@@ -42,10 +42,15 @@ const inputDeEtiqueta = (raiz: Element, etiqueta: string) =>
 
 /** Monta el formulario con un contrato B2B listo: cliente, PVP 2.000.000, hotel con costo y agencia elegida. */
 async function preparar(costoHotel: number, props: Record<string, unknown> = {}) {
-  const m = await montar(h(NuevoContratoForm, { asesorDefault: "Asesor", agencias: [{ id: 7, nombre: "Agencia Prueba" }], ...props }));
+  const m = await montar(h(NuevoContratoForm, { asesorDefault: "Asesor", agencias: [{ id: 7, nombre: "Agencia Prueba" }], destinos: [{ id: 1, nombre: "Cartagena", codigo_iata: "CTG" }], ...props }));
   desmontar = m.desmontar;
   const raiz = m.contenedor;
   await escribir(raiz.querySelector('input[required]') as HTMLInputElement, "Cliente Prueba");
+  // F6 (B95-13): el destino ahora se elige del catálogo; este archivo prueba la presentación NETO, así que solo cumple ese requisito.
+  const combo = raiz.querySelector('[data-testid="campo-destino"] input[role="combobox"]') as HTMLInputElement;
+  await React.act(async () => combo.focus());
+  await escribir(combo, "Cartagena");
+  await React.act(async () => { document.querySelector('[role="option"]')!.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true })); });
   await escribir(inputDeEtiqueta(raiz, "Tarifa adulto")!, "2000000");
   await clic(botonConTexto(raiz, /Agregar hotel/), "Agregar hotel");
   await escribir(raiz.querySelector('input[title="Costo neto del hotel (interno)"]') as HTMLInputElement, String(costoHotel));

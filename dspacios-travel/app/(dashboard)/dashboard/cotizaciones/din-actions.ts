@@ -11,6 +11,7 @@ import { contextoCotizacion, autorizaTenant } from "@/lib/cotizacion/acceso";
 import { resolverVigenciaCotizacion, hoyBogota } from "@/lib/cotizacion/vigencia";
 import { validarMotivo, validarRevision, mensajeEdicion39 } from "@/lib/cotizacion/edicionServiciosManual";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
+import { avisarYRegistrar } from "@/lib/avisos/cotizacionPublica";
 import { AVISO_PERSONAS_PENDIENTES } from "@/lib/personas/cotizacion";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { resolverSeleccionDin } from "@/lib/paqueteDinamico/seleccion";
@@ -173,6 +174,8 @@ export async function crearCotizacionDin(input: CrearCotizacionDinInput): Promis
     usuarioId: perfil?.id ?? null, sellar: false,
   });
   if (!alta.ok) console.error(logPersonasCotizacion("manual", Number(id), alta));
+  // #78: el visitante SIN sesión (canal público) avisa al equipo dentro de la plataforma; el personal y los aliados no (la base lo re-verifica).
+  if (canal === "publico") await avisarYRegistrar(admin, Number(id));
 
   revalidatePath("/dashboard/cotizaciones");
   let destino: "dashboard" | "portal" | "publico" = "dashboard";

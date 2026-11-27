@@ -4,7 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "../(dashboard)/LogoutButton";
 import { tenantContext } from "@/lib/tenant.server";
-import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox, UserSearch, FileUser, Handshake } from "lucide-react";
+import { PresenciaActiva } from "@/components/presencia/PresenciaActiva";
+import { Contact, Send, Upload, Settings, Megaphone, Users, Inbox, UserSearch, FileUser, Handshake, Share2 } from "lucide-react";
 
 const NAV = [
   { href: "/crm", label: "Contactos", Icon: Contact },
@@ -24,6 +25,8 @@ const NAV = [
   { href: "/crm/clientes-contratos", label: "Clientes de contratos", Icon: FileUser },
   // #76/#77: clientes de cada aliado B2B (solo lectura, por id de aliado). La página valida rol y agencia por su cuenta.
   { href: "/crm/clientes-aliados", label: "Clientes de aliados", Icon: Handshake },
+  // #76: referidores, su porcentaje (1 % o 2 %), los aliados que trajeron y la elegibilidad de su participación. La página valida rol por su cuenta (superadmin/gerencia gestionan; administración consulta).
+  { href: "/crm/referidos", label: "Referidos", Icon: Share2 },
   { href: "/crm/campanas", label: "Campañas", Icon: Send },
   { href: "/crm/difusion", label: "Difusión", Icon: Megaphone },
   { href: "/crm/b2b", label: "Cargar B2B", Icon: Upload },
@@ -46,6 +49,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       className="crm-shell flex min-h-screen flex-col"
       style={{ background: "linear-gradient(160deg, #dceef3 0%, #e6f3ee 55%, #eef6f1 100%)" }}
     >
+      <PresenciaActiva />
       {/* Barra superior del CRM (degradado de marca) */}
       <header className="bg-brand-gradient text-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3 md:px-8">
@@ -61,6 +65,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2">
+            {/* B3-04: aquí NO va la campana general de avisos del portal. Este lugar se reserva para las notificaciones propias del CRM (ninguna todavía). */}
             <Link
               href="/dashboard"
               className="rounded-lg bg-white/90 px-3 py-1.5 text-sm font-semibold text-[var(--brand-primary)] hover:bg-white"

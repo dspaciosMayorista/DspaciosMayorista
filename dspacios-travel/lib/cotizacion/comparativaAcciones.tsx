@@ -28,6 +28,7 @@ import { bloqueoNeto, pctTexto } from "@/lib/cotizacion/netoHija";
 import { condicionesPorOpcion, etiquetaTotalOpcion, resumenDeAcomodacion, tiquetesDeOpcion, type GrupoHotel, type MenorOpcion, type OpcionVista, type OtroServicioOpcion, type TarifaVisible, type TiqueteVuelo } from "@/lib/cotizacion/comparativa";
 import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
 import type { TarifaPaquete } from "@/lib/cotizacion/tarifaPaquete";
+import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
 
 export type ModoSeleccion = "checkout" | "solicitud" | "interno" | "solo_lectura";
 
@@ -292,7 +293,7 @@ export function SelectorOpciones({
               <div className="mb-3"><VuelosOpcion tiquetes={r.tiquetes ?? tiquetesDeOpcion(null, r.vuelos, null)} /></div>
               {r.items && r.items.length > 0 && (
                 <ul className="mb-3 space-y-1 text-xs text-gray-600">
-                  {r.items.filter((it) => it.descripcion !== "Tarifa por niño").map((it, i) => <li key={i}>{it.descripcion}</li>)}
+                  {r.items.filter((it) => it.descripcion !== "Tarifa por niño" && !esLineaNinoGratis(it.descripcion)).map((it, i) => <li key={i}>{it.descripcion}</li>)}
                 </ul>
               )}
               <div className="mb-3"><ServiciosAdicionalesOpcion servicios={r.servicios} otros={r.otros} /></div>

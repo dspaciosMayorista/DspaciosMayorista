@@ -40,17 +40,17 @@ function base(sobre: Partial<EntradaComparativaManual> = {}): EntradaComparativa
 }
 
 function comun(entrada: EntradaComparativaManual, ref: "A" | "B"): CotizacionManualInput {
-  const { aliadoId: _a, tenant: _t, ...resto } = entrada;
-  void _a; void _t;
+  const { aliadoId: _a, tenant: _t, tarifaNinoPorOpcion: _n, ...resto } = entrada;
+  void _a; void _t; void _n;
   const servicios = entrada.servicios.filter((s) => !s.opcionRef || s.opcionRef === ref).map(({ opcionRef: _o, ...s }) => { void _o; return s; });
-  return { ...resto, servicios } as CotizacionManualInput;
+  return { ...resto, ...(entrada.tarifaNinoPorOpcion ? { tarifaNino: entrada.tarifaNinoPorOpcion[ref] ?? 0 } : {}), servicios } as CotizacionManualInput;
 }
 
 describe("paridad: la plantilla de cada opción = la cotización dinámica que arma la creación", () => {
   for (const [nombre, sobre] of [
     ["interno sin recobro", {}],
     ["interno con recobro oculto", { recobro: 100000 }],
-    ["con niños y recobro", { recobro: 100000, ninos: 2, tarifaNino: 250000 }],
+    ["con niños y recobro (tarifa de niño distinta por opción)", { recobro: 100000, ninos: 2, tarifaNinoPorOpcion: { A: 250000, B: 180000 } }],
     ["B2B agencia con recobro al aliado", { tipoAsesor: "agencia" as const, agenciaNombre: "Agencia Uno", aliadoId: 7, recobro: 100000, recobroAliado: 60000 }],
     ["B2B freelance", { tipoAsesor: "freelance" as const, freelanceNombre: "Free Uno", aliadoId: 8, recobro: 50000, recobroAliado: 20000 }],
     ["USD", { moneda: "USD" }],

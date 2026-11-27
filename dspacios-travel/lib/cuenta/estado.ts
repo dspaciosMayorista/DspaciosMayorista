@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { accesoDocumentoContrato } from "@/lib/auth/accesoDocumentoContrato";
 import { cobroDeVenta } from "@/lib/finanzas/cobro";
+import { estadoDeCuotas } from "@/lib/calc/cuotas";
 import { verificarFichasComisionManual, consultarFichasSupabase, fichaDeContrato } from "@/lib/auth/fichaComisionManual";
 
 export type AbonoCuenta = {
@@ -148,7 +149,7 @@ export async function cargarEstadoCuenta(numero: string): Promise<EstadoCuenta |
   };
 }
 
-export type CuotaPlan = { id: number; orden: number; tipo: string; fecha_limite: string; monto: number; cubierta: boolean };
+export type CuotaPlan = { id: number; orden: number; tipo: string; fecha_limite: string; monto: number; cubierta: boolean; parcial: boolean; faltante: number };
 
 export type PlanCobro = {
   numero_contrato: string;
@@ -174,18 +175,18 @@ export async function cargarPlanCobro(numero: string): Promise<PlanCobro | null>
     .eq("numero_contrato", numero)
     .order("orden", { ascending: true });
 
-  let acum = 0;
-  const cuotas: CuotaPlan[] = (cs ?? []).map((c) => {
-    acum += Number(c.monto ?? 0);
-    return {
-      id: c.id as number,
-      orden: c.orden as number,
-      tipo: c.tipo as string,
-      fecha_limite: c.fecha_limite as string,
-      monto: Number(c.monto ?? 0),
-      cubierta: ec.pagado >= acum,
-    };
-  });
+  // #42: los pagos reales se aplican a las filas en orden (acumulado) con la tolerancia de la moneda; una fila puede quedar parcial.
+  const estados = estadoDeCuotas((cs ?? []).map((c) => Number(c.monto ?? 0)), ec.pagado, ec.moneda === "USD" ? "USD" : "COP");
+  const cuotas: CuotaPlan[] = (cs ?? []).map((c, i) => ({
+    id: c.id as number,
+    orden: c.orden as number,
+    tipo: c.tipo as string,
+    fecha_limite: c.fecha_limite as string,
+    monto: Number(c.monto ?? 0),
+    cubierta: estados[i].cubierta,
+    parcial: estados[i].parcial,
+    faltante: estados[i].faltante,
+  }));
 
   return {
     numero_contrato: ec.numero_contrato,

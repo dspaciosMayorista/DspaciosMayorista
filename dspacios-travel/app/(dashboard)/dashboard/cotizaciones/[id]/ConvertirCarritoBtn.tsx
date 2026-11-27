@@ -464,7 +464,7 @@ export function ConvertirCarritoBtn({
                 value={trmCosto} onChange={(e) => setTrmCosto(e.target.value)} />
               <p className="mt-1 text-[10px] text-gray-400">
                 Se exige solo si algún costo con proveedor está en USD: congela su equivalente en pesos para la contabilidad. No es la TRM de cobro y no se
-                muestra al cliente; no se cambia después de generar el primer contrato.
+                muestra al cliente; es provisional: se corrige en la ficha del contrato mientras esté pendiente y se congela al confirmarlo.
               </p>
             </div>
           )}

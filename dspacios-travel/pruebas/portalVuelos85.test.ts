@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { armarTramosPortal, normalizarHora, type FuenteVuelo, type TramoFila, type VentaRef } from "../lib/portal/vuelosContrato.ts";
+import { armarTramosPortal, expandirTramos, normalizarHora, type FuenteVuelo, type TramoFila, type VentaRef } from "../lib/portal/vuelosContrato.ts";
 import { cargarVuelosPortal, type AdminLectura } from "../lib/portal/vuelosPortalServidor.ts";
 
 const tramo = (o: Partial<TramoFila>): TramoFila => ({
@@ -290,4 +290,15 @@ test("clasificación de servicio: lo que se envía al navegador no contiene reco
   assert.ok(!json.includes("ZZTEST"), "el record no sale");
   assert.ok(!/"record"|bloqueo_ref_id|empaquetado_ref_id|"id":7|tarifa|fee_|notas|costo|cupos/i.test(json));
   assert.ok(json.includes("AV100"), "los datos operativos sí salen");
+});
+
+test("RC-2: una fila heredada editada solo en su ida conserva el regreso guardado en el portal; una moderna normal no inventa regreso", () => {
+  const heredada = tramo({ direccion: null, origen_codigo: "MDE", destino_codigo: "CTG", fecha_salida: "2030-01-10", vuelo_ida: "LG100", vuelo_regreso: "LG200", hora_salida_reg: "17:00", fecha_regreso: "2030-01-13" });
+  assert.deepEqual(expandirTramos([heredada]).map((t) => t.numero_vuelo), ["LG100", "LG200"]);
+  const editada = { ...heredada, direccion: "ida", numero_vuelo: "LG111" };
+  const r = expandirTramos([editada]);
+  assert.deepEqual(r.map((t) => t.numero_vuelo), ["LG111", "LG200"]);
+  assert.deepEqual(r.map((t) => t.direccion), ["ida", "regreso"]);
+  assert.equal(r[1].origen_codigo, "CTG"); assert.equal(r[1].fecha_salida, "2030-01-13");
+  assert.equal(expandirTramos([tramo({ direccion: "ida", numero_vuelo: "XX1" })]).length, 1);
 });

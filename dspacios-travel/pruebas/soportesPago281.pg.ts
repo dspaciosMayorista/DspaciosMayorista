@@ -228,21 +228,25 @@ describe("subir: pertenencia, contenido y mismos bytes", () => {
   });
 });
 
-describe("límite = abonos, reemplazo y retiro con historial", () => {
+describe("límite = abonos + 1 (339), reemplazo y retiro con historial", () => {
   test("el límite se respeta y no deja objetos de más", async () => {
+    // DTM-8101: 3 abonos → máximo 4 soportes vigentes (3 + el adicional de la 339).
     assert.equal(nombreDe(await subir(U.A, "DTM-8101")), "ok");
     assert.equal(nombreDe(await subir(U.A, "DTM-8101")), "ok");
-    assert.equal(vigentes("DTM-8101").length, 3);
+    assert.equal(nombreDe(await subir(U.A, "DTM-8101")), "ok");
+    assert.equal(vigentes("DTM-8101").length, 4);
     const antes = objetosDe("DTM-8101").length;
     const r = await subir(U.A, "DTM-8101");
     assert.equal(r.ok, false);
-    assert.match(r.ok ? "" : r.error, /un soporte vigente por cada abono/);
-    assert.equal(objetosDe("DTM-8101").length, antes, "el 4.º no subió nada a Storage");
+    assert.match(r.ok ? "" : r.error, /máximo de soportes vigentes/);
+    assert.equal(objetosDe("DTM-8101").length, antes, "el 5.º no subió nada a Storage");
   });
 
   test("la base rechaza aunque el aviso temprano falle; el objeto nuevo se limpia y el anterior no se toca", async () => {
-    // DTM-8102: 1 abono y ya 1 soporte vigente. Se anula la lectura del conteo de abonos para saltar el aviso temprano.
+    // DTM-8102: 1 abono → máximo 2 (339). Se llena el cupo adicional y luego se anula la lectura del conteo de abonos para saltar el aviso temprano.
     assert.equal(vigentes("DTM-8102").length, 1);
+    assert.equal(nombreDe(await subir(U.B, "DTM-8102")), "ok", "el cupo adicional");
+    assert.equal(vigentes("DTM-8102").length, 2);
     const original = objetosDe("DTM-8102");
     fallos = [/\/abonos\?select=id/];
     borrados = [];
@@ -251,7 +255,7 @@ describe("límite = abonos, reemplazo y retiro con historial", () => {
     assert.equal(r.ok, false);
     assert.deepEqual(objetosDe("DTM-8102"), original, "compensación: el objeto nuevo se borró y el previo quedó intacto");
     assert.equal(borrados.length, 1);
-    assert.equal(filas("DTM-8102").length, 1);
+    assert.equal(filas("DTM-8102").length, 2);
   });
 
   test("si Storage falla al subir no queda nada; si falla la limpieza el huérfano se REPORTA", async () => {
@@ -276,7 +280,7 @@ describe("límite = abonos, reemplazo y retiro con historial", () => {
     const nuevo = pdf(700);
     const r = await acc.reemplazarSoporte(formulario(nuevo, "corregido.pdf", "application/pdf", { id: String(primero.id) }), idnS(primero.id));
     assert.equal(nombreDe(r), "ok");
-    assert.equal(vigentes("DTM-8101").length, 3, "reemplazar no cambia la cantidad vigente");
+    assert.equal(vigentes("DTM-8101").length, 4, "reemplazar no cambia la cantidad vigente");
     const anterior = filas("DTM-8101").find((f) => f.id === primero.id)!;
     assert.deepEqual([anterior.vigente, anterior.motivo], [false, "reemplazo"]);
     assert.ok(almacen.has(`soportes-pago/${primero.path}`), "el archivo anterior sigue en Storage");
@@ -295,30 +299,30 @@ describe("límite = abonos, reemplazo y retiro con historial", () => {
     assert.deepEqual([f.vigente, f.motivo], [false, "retiro"]);
     assert.ok(almacen.has(`soportes-pago/${v.path}`), "el archivo retirado se conserva");
     assert.equal((await acc.retirarSoporte(v.id, undefined, idnS(v.id))).ok, false);
-    assert.equal(vigentes("DTM-8101").length, 2);
+    assert.equal(vigentes("DTM-8101").length, 3);
   });
 });
 
 describe("contrato EXCEDIDO tras anular un abono (RPC real de la 248)", () => {
   test("reemplazar y retirar funcionan; subir uno nuevo no; la anulación no se bloquea ni borra evidencia", async () => {
-    assert.equal(nombreDe(await subir(U.A, "DTM-8101")), "ok");          // 3/3 de nuevo
+    assert.equal(nombreDe(await subir(U.A, "DTM-8101")), "ok");          // 4/4 de nuevo (3 abonos + el adicional)
     const total = filas("DTM-8101").length;
     const abono = Number(sql("select min(id) from public.abonos where numero_contrato = 'DTM-8101'"));
     const resp = sql(`set role service_role; select public.anular_abono(${abono}, 'DTM-8101', 'mayorista', '${U.GER}', 'prueba exceso')`);
     assert.match(resp, /anulado/);
     assert.equal(Number(sql("select count(*) from public.abonos where numero_contrato = 'DTM-8101'")), 2);
-    assert.equal(vigentes("DTM-8101").length, 3, "3 vigentes > 2 abonos: excedido, calculado");
+    assert.equal(vigentes("DTM-8101").length, 4, "4 vigentes > 2 abonos + 1: excedido, calculado");
     assert.equal(filas("DTM-8101").length, total, "anular no tocó los soportes");
 
     assert.equal((await subir(U.A, "DTM-8101")).ok, false, "excedido: no se agregan nuevos");
     const [v] = vigentes("DTM-8101");
     uidSesion = U.A;
     assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(), "r.pdf", "application/pdf", { id: String(v.id) }), idnS(v.id))), "ok");
-    assert.equal(vigentes("DTM-8101").length, 3, "reemplazar mantiene el conteo aun excedido");
+    assert.equal(vigentes("DTM-8101").length, 4, "reemplazar mantiene el conteo aun excedido");
     const [w] = vigentes("DTM-8101");
     assert.equal(nombreDe(await acc.retirarSoporte(w.id, undefined, idnS(w.id))), "ok");
-    assert.equal(vigentes("DTM-8101").length, 2, "retirar baja el exceso");
-    assert.equal((await subir(U.A, "DTM-8101")).ok, false, "con 2 de 2 tampoco caben más");
+    assert.equal(vigentes("DTM-8101").length, 3, "retirar baja el exceso");
+    assert.equal((await subir(U.A, "DTM-8101")).ok, false, "con 3 de 3 (2 abonos + el adicional) tampoco caben más");
   });
 });
 
@@ -364,7 +368,7 @@ describe("avisos internos", () => {
     assert.equal(new Set(ids).size, ids.length, "sin duplicados");
     assert.equal(ids.length, sinReclamar.noLeidos, "entre las dos salen todos los pendientes, una sola vez");
     const n = (a.nuevos[0] ?? b.nuevos[0])!;
-    assert.deepEqual(Object.keys(n).sort(), ["creado_en", "href", "id", "leido", "numero_contrato", "tipo"], "solo tipo, contrato y destino: ni cliente, ni montos, ni nombre de archivo");
+    assert.deepEqual(Object.keys(n).sort(), ["atendida", "creado_en", "href", "id", "leido", "numero_contrato", "tipo"], "solo tipo, contrato y destino: ni cliente, ni montos, ni nombre de archivo");
     assert.equal(n.href, `/dashboard/contratos/${n.numero_contrato}`);
     assert.equal(a.noLeidos, sinReclamar.noLeidos, "reclamar NO marca leído");
     const otra = await avi.sondearAvisos(true);
@@ -457,14 +461,15 @@ describe("confirmación incierta del registro: nunca se arriesga evidencia regis
   });
 
   test("un rechazo definitivo de la base (límite) SÍ limpia el objeto nuevo, y no toca los registrados", async () => {
+    assert.equal(nombreDe(await subir(U.A, "DTM-8104", pdf(902))), "ok", "llena el máximo: 3 abonos + el adicional (339)");
     const antes = objetosDe("DTM-8104").length;
     fallos = [/\/abonos\?select=id/];                 // salta el aviso temprano: la base decide
     const r = await subir(U.A, "DTM-8104", pdf(903));
     fallos = [];
     assert.equal(r.ok, false);
-    assert.match(r.ok ? "" : r.error, /un soporte vigente por cada abono/);
+    assert.match(r.ok ? "" : r.error, /máximo de soportes vigentes/);
     assert.equal(objetosDe("DTM-8104").length, antes, "se limpió solo el objeto recién subido");
-    assert.equal(vigentes("DTM-8104").length, 3);
+    assert.equal(vigentes("DTM-8104").length, 4);
   });
 });
 
@@ -578,11 +583,12 @@ describe("consecutivo reutilizado (eliminar contrato A con p_reusar → contrato
     assert.equal(JSON.stringify(filas(N)), antes, "las filas de A siguen intactas");
   });
 
-  test("B no CUENTA los soportes de A contra su límite: con 1 abono propio sube 1 y el segundo sí topa", async () => {
+  test("B no CUENTA los soportes de A contra su límite: con 1 abono propio suben 2 (1 + el adicional) y el tercero sí topa", async () => {
     assert.equal(nombreDe(await subir(U.C2, N, pdf(410))), "ok", "su primer soporte cabe (B tiene 1 abono)");
+    assert.equal(nombreDe(await subir(U.C2, N, pdf(412))), "ok", "el adicional también (los soportes de A no cuentan)");
     const r2 = await subir(U.C2, N, pdf(411));
     assert.equal(r2.ok, false);
-    assert.match(r2.ok ? "" : r2.error, /un soporte vigente por cada abono/);
+    assert.match(r2.ok ? "" : r2.error, /máximo de soportes vigentes/);
   });
 
   test("el personal de la agencia no recibe ni ve los avisos antiguos de A, ni los alcanza por sus enlaces; sí los nuevos de B", async () => {
@@ -629,8 +635,9 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
     ids = filas(VIEJO).map((f) => f.id);
     uidSesion = U.C;
     assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(502), "r.pdf", "application/pdf", { id: String(ids[0]) }), idnS(ids[0]))), "ok");
-    assert.equal(filas(VIEJO).length, 3);
-    assert.equal(vigentes(VIEJO).length, 2);
+    assert.equal(nombreDe(await subir(U.C, VIEJO, pdf(503))), "ok", "el soporte adicional (2 abonos + 1, 339)");
+    assert.equal(filas(VIEJO).length, 4);
+    assert.equal(vigentes(VIEJO).length, 3);
     rutasAntes = filas(VIEJO).map((f) => f.path).join(",");
     avisosAntes = Number(sql(`select count(*) from public.avisos where numero_contrato = '${VIEJO}'`));
     assert.ok(avisosAntes > 0);
@@ -643,8 +650,8 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
 
   test("continuidad en la base: filas, historial, conteos y rutas físicas intactos bajo el número nuevo; nada archivado", () => {
     const f = filas(NUEVO);
-    assert.equal(f.length, 3);
-    assert.equal(f.filter((x) => x.vigente).length, 2);
+    assert.equal(f.length, 4);
+    assert.equal(f.filter((x) => x.vigente).length, 3);
     assert.equal(f.filter((x) => x.motivo === "reemplazo").length, 1, "el historial conserva el reemplazo");
     assert.equal(f.map((x) => x.path).join(","), rutasAntes, "las rutas físicas no cambiaron");
     assert.equal(filas(VIEJO).length, 0, "nada queda bajo el número viejo");
@@ -657,25 +664,25 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
   test("el aliado dueño sigue LISTANDO, ABRIENDO, REEMPLAZANDO y RETIRANDO bajo el número nuevo, y el límite continúa", async () => {
     const lista = await soportesVigentesFn([NUEVO]);
     assert.equal(lista.completa, true);
-    assert.equal(lista.filas.length, 2, "lista los 2 vigentes");
+    assert.equal(lista.filas.length, 3, "lista los 3 vigentes");
     assert.deepEqual((await soportesVigentesFn([VIEJO])).filas, [], "y nada bajo el viejo");
     uidSesion = U.C;
     const [v1, v2] = vigentes(NUEVO);
     const url = await acc.urlSoporteAliado(v1.id, idnS(v1.id));
     assert.equal(url.ok, true, "abre");
-    assert.equal((nombreDe(await subir(U.C, NUEVO, pdf(510))) ?? "").includes("un soporte vigente por cada abono"), true, "2 abonos / 2 vigentes: el límite sigue vigente tras renumerar");
+    assert.equal((nombreDe(await subir(U.C, NUEVO, pdf(510))) ?? "").includes("máximo de soportes vigentes"), true, "2 abonos + 1 adicional = 3 vigentes: el límite sigue vigente tras renumerar");
     assert.equal(nombreDe(await acc.reemplazarSoporte(formulario(pdf(511), "r2.pdf", "application/pdf", { id: String(v1.id) }), idnS(v1.id))), "ok", "reemplaza");
-    assert.equal(vigentes(NUEVO).length, 2, "el reemplazo mantiene la cantidad");
+    assert.equal(vigentes(NUEVO).length, 3, "el reemplazo mantiene la cantidad");
     assert.equal(nombreDe(await acc.retirarSoporte(v2.id, "baja", idnS(v2.id))), "ok", "retira");
-    assert.equal(vigentes(NUEVO).length, 1);
-    assert.equal(filas(NUEVO).length, 4, "y el historial crece sin perder nada");
+    assert.equal(vigentes(NUEVO).length, 2);
+    assert.equal(filas(NUEVO).length, 5, "y el historial crece sin perder nada");
   });
 
   test("el personal sigue con acceso: gerencia y asesor del contrato ven TODA la evidencia (vigentes e historial) y los avisos con el número nuevo", async () => {
     for (const uid of [U.GERMIN, U.VENTAMIN]) {
       const sb = clienteLocal(jwt({ role: "authenticated", sub: uid }), { id: uid, email: PERFIL[uid].email });
       const { data } = await sb.from("contrato_soportes_pago").select("id, vigente").eq("numero_contrato", NUEVO);
-      assert.equal((data ?? []).length, 4, `${PERFIL[uid].nombre} ve las 4 filas (vigentes e historial)`);
+      assert.equal((data ?? []).length, 5, `${PERFIL[uid].nombre} ve las 5 filas (vigentes e historial)`);
       const { data: viejo } = await sb.from("contrato_soportes_pago").select("id").eq("numero_contrato", VIEJO);
       assert.equal((viejo ?? []).length, 0);
     }
@@ -704,13 +711,14 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
       assert.equal((await acc.retirarSoporte(id, undefined, idnS(id))).ok, false, "no retira");
     }
     assert.equal(JSON.stringify(filas(NUEVO)), antesR, "la evidencia de R no cambió");
-    assert.equal(nombreDe(await subir(U.C2, VIEJO, pdf(520))), "ok", "los soportes de R NO cuentan contra el límite de B (1 abono: cabe 1)");
+    assert.equal(nombreDe(await subir(U.C2, VIEJO, pdf(520))), "ok", "los soportes de R NO cuentan contra el límite de B (1 abono: caben 2)");
+    assert.equal(nombreDe(await subir(U.C2, VIEJO, pdf(522))), "ok", "el adicional de B");
     const r2 = await subir(U.C2, VIEJO, pdf(521));
     assert.equal(r2.ok, false);
-    assert.match(r2.ok ? "" : r2.error, /un soporte vigente por cada abono/);
+    assert.match(r2.ok ? "" : r2.error, /máximo de soportes vigentes/);
 
     // el personal de B (mismo tenant) y su asesor ven SOLO lo de B bajo el número viejo
-    for (const [uid, esperados] of [[U.GERMIN, 1], [U.VENTAMIN, 0]] as const) {   // el asesor de R no es el asesor de B: no ve nada de B, y menos aún de R
+    for (const [uid, esperados] of [[U.GERMIN, 2], [U.VENTAMIN, 0]] as const) {   // el asesor de R no es el asesor de B: no ve nada de B, y menos aún de R
       const sb = clienteLocal(jwt({ role: "authenticated", sub: uid }), { id: uid, email: PERFIL[uid].email });
       const { data } = await sb.from("contrato_soportes_pago").select("id").eq("numero_contrato", VIEJO);
       const vistos = (data ?? []).map((x: { id: number }) => x.id);
@@ -724,7 +732,7 @@ describe("renumerar un contrato (fn_renumerar_contrato real): sigue siendo el MI
     assert.equal(Number(sql(`select count(*) from public.avisos where numero_contrato = '${VIEJO}' and soporte_id in (${idsR.join(",")})`)), 0, "ningún aviso de R quedó bajo el número viejo");
     // R sigue plenamente accesible para su dueño
     uidSesion = U.C;
-    assert.equal((await soportesVigentesFn([NUEVO])).filas.length, 1, "R conserva su soporte vigente bajo el número nuevo");
+    assert.equal((await soportesVigentesFn([NUEVO])).filas.length, 2, "R conserva sus soportes vigentes bajo el número nuevo");
     // evidencia conservada (archivos)
     for (const x of filas(NUEVO)) assert.ok(almacen.has(`soportes-pago/${x.path}`));
   });

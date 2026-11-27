@@ -7,6 +7,10 @@ import { HotelCategoriasRegimenesEditor } from "./HotelCategoriasRegimenesEditor
 import { HotelDocumentos } from "./HotelDocumentos";
 import { HotelFotos } from "./HotelFotos";
 import { HotelBlackouts } from "./HotelBlackouts";
+import { CodigosPromocion, type CodigoFila } from "./CodigosPromocion";
+import { EstadoTarifarios } from "./EstadoTarifarios";
+import { estadoTarifariosDeHotel } from "../../../paquetes/actions";
+import type { ConjuntoFechas, RangoFechas } from "@/lib/hoteles/conjuntosFechas";
 import { HotelPromociones, type ReglaFila, type EstadoCombinacion } from "./HotelPromociones";
 import { HotelAcomodacionesEditor } from "./HotelAcomodacionesEditor";
 import { CalculadoraEditor, type VigenciaConGrupos } from "./CalculadoraEditor";
@@ -26,14 +30,15 @@ export const dynamic = "force-dynamic";
 // Las Server Actions de esta pantalla regeneran tarifarios (por lotes) tras guardar: el maxDuration de la página rige su duración. Literal igual a VENTANA_PETICION_MS (lib/tarifario/controladorPublicacion.ts).
 export const maxDuration = 60;
 
-export default async function HotelDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string | string[] }> }) {
+export default async function HotelDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: string | string[]; vigencia?: string | string[] }> }) {
   const { id } = await params;
-  const { tab } = await searchParams;
+  const { tab, vigencia } = await searchParams;
   const hotelId = Number(id);
+  const vigenciaUrl = Number(Array.isArray(vigencia) ? vigencia[0] : vigencia);   // B3-03: `?vigencia=<id>` resalta la vigencia que una alerta de compra señala
   if (isNaN(hotelId)) notFound();
   const sb = await createClient();
 
-  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }, { data: reglasDescuento, error: errorReglas }, { data: combinaciones, error: errorComb }, { data: miRol }] = await Promise.all([
+  const [{ data: hotel }, { data: cats }, { data: regs }, { data: temporadas }, { data: tarifas }, { data: rangos }, { data: acoms }, { data: calc }, { data: todasCats }, { data: todosRegs }, { data: documentos }, { data: otrosHoteles }, { data: fotos }, { data: blackouts }, { data: destinos }, { data: proveedores }, { data: tarifasUnidad }, { data: reglasDescuento, error: errorReglas }, { data: combinaciones, error: errorComb }, { data: miRol }, conjuntosRes] = await Promise.all([
     sb.from("hoteles").select("*, destinos(nombre), proveedores(nombre)").eq("id", hotelId).single(),
     // #45 (303): textos de la categoría en este hotel. Sin la 303 la columna no existe (42703): se leen sin textos.
     (async () => {
@@ -60,9 +65,19 @@ export default async function HotelDetallePage({ params, searchParams }: { param
     sb.rpc("promociones_combinacion_estado", { p_hotel: hotelId }),
     // Rol para la vista explicativa de promociones dinámicas (netos): suma UNA solicitud por carga; corre en paralelo con las demás.
     sb.rpc("mi_rol"),
+    // Conjuntos de fechas con nombre y año (migración 327): UNA lectura más en paralelo. Si la tabla aún no existe la página sigue y el editor lo indica.
+    sb.from("conjuntos_fechas").select("id, nombre, anio, tipo, rangos, nota").order("anio", { ascending: false }).order("nombre"),
   ]);
 
   if (!hotel) notFound();
+  // #103 (H2): deuda de regeneración persistida (revisión de fuente vs publicada). Si no se puede leer, no se muestra nada (nunca se afirma «todo al día» sin saberlo).
+  const estadoTarifarios = await estadoTarifariosDeHotel(hotelId).catch(() => null);
+  // #103 (C): códigos de promoción exigidos por vigencia (migración 328). Sin la migración la tabla no existe: la sección simplemente no aparece.
+  const codigosRes = await sb.from("hotel_codigos_promocion").select("vigencia_id, requerido, codigo, nota").eq("hotel_id", hotelId);
+  const codigosDisponibles = !codigosRes.error;
+  const codigosFilas: CodigoFila[] = (codigosRes.data ?? []).map((c) => ({ vigenciaId: c.vigencia_id, requerido: c.requerido, codigo: c.codigo, nota: c.nota }));
+  const conjuntosDisponibles = !conjuntosRes.error;
+  const conjuntos: ConjuntoFechas[] = (conjuntosRes.data ?? []).map((c) => ({ id: c.id, nombre: c.nombre, anio: c.anio, tipo: c.tipo, nota: c.nota, rangos: Array.isArray(c.rangos) ? (c.rangos as unknown as RangoFechas[]) : [] }));
 
   // Historial interno de tarifas (migración 203): primera página por la MISMA
   // acción paginada que usa el componente (búsqueda y "Ver más" en servidor).
@@ -161,6 +176,7 @@ export default async function HotelDetallePage({ params, searchParams }: { param
   return (
     <div className="mx-auto max-w-7xl p-4 md:p-8">
       <Link href="/dashboard/producto/hoteles" className="text-sm text-gray-400 hover:text-gray-600">← Hoteles</Link>
+      {estadoTarifarios?.ok && estadoTarifarios.texto && <div className="mt-2"><EstadoTarifarios hotelId={hotelId} texto={estadoTarifarios.texto} hayPorReanudar={estadoTarifarios.porReanudar > 0} reanudarSolo={estadoTarifarios.reanudarSolo} /></div>}
       <div className="mb-1 mt-2 flex flex-wrap items-center gap-2">
         <h1 className="text-2xl font-semibold text-gray-900">{h.nombre}</h1>
         {((h as { moneda?: string | null }).moneda) === "USD" && (
@@ -196,7 +212,11 @@ export default async function HotelDetallePage({ params, searchParams }: { param
           adultsOnly={h.adults_only ?? false}
           mostrarTarifaPersona={modeloTarifario === "persona"}
           moneda={moneda}
+          conjuntos={conjuntos}
+          conjuntosDisponibles={conjuntosDisponibles}
+          codigosPromocion={codigosDisponibles ? <CodigosPromocion hotelId={hotelId} codigos={codigosFilas} puedeEditar={["superadmin", "gerencia", "administracion", "operaciones"].includes(String(miRol ?? ""))} vigencias={(temporadas ?? []).map((t) => ({ id: t.id, nombre: t.nombre, fechas: t.fecha_inicio && t.fecha_fin ? `${t.fecha_inicio} a ${t.fecha_fin}` : "sin fechas" }))} /> : null}
           pestanaInicial={Array.isArray(tab) ? tab[0] : tab}
+          vigenciaDestacada={vigenciaUrl > 0 && Number.isInteger(vigenciaUrl) ? vigenciaUrl : undefined}
           configuracion={
             <>
         <ModeloTarifarioEditor hotelId={hotelId} inicial={modeloTarifario} />

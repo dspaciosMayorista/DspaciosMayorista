@@ -1,0 +1,29 @@
+✖ CE elegido: el contacto se guarda con tipo CE y documento literal; la solicitud sigue
+✖ DinamicoModal muestra el cotizador del carrito sin condicionarlo al acceso (ni aviso de 'sin permiso')
+✖ Incluye/No incluye y add-ons dependen de LA OFERTA elegida (hotel.paqueteId), nunca de un paqueteId fijo ni de precio/disponibilidad — usan los componentes compartidos SeccionesIncluye/AddonsPaquete
+✖ UbicacionHotel (mapa) sigue sin cambios — sin control expandible agregado
+✖ VistaBooking.tsx (tarjeta de exploración — 'O explora todos los alojamientos'/'Hoteles disponibles'): muestra el badge compacto 'Con condiciones'
+✖ aparecen en el orden exacto: Salidas < Motor interno < Incluye < Servicios add-on
+✖ colisión 23505: la solicitud OK, un solo insert, nada se sobrescribe y no se registra ningún error
+✖ conserva foto/video, categoría, etiquetas, condición, descripción — usa los componentes compartidos, nunca JSX reinventada
+✖ conserva foto/video, categoría, etiquetas, condición, descripción — usa los mismos componentes compartidos que Resultado
+✖ conserva ubicación/mapa vía el componente compartido UbicacionHotel
+✖ crm_lead_actualizar exige el formulario completo antes de bloquear y la app manda esas claves
+✖ el botón 'Ver opciones' llama abrirHotel (no setAbierto directo, que saltaría el detalle)
+✖ el código SQL no usa los helpers globales con deuda ni soy_asesor_del_contrato
+✖ el código de la migración 289 solo emite motivos que la interfaz conoce
+✖ el mensaje de éxito incluye r.aviso cuando viene presente
+✖ el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja
+✖ es Server Component (sin 'use client'), lee QUICK_LOGIN_ENABLED e inactivo de searchParams, y los pasa a LoginClient
+✖ failing tests:
+✖ la consulta es SECURITY DEFINER y solo authenticated la ejecuta
+✖ la vitrina con precio base NO la usa
+✖ las 4 secciones existen dentro de HotelModal
+✖ las opciones de zona/estrellas del panel salen de recomendados + resto combinados (universoFiltrable) — nunca solo del resto
+✖ las tablas no se conceden a anon ni authenticated
+✖ persistencia: la composición guardada conserva el desglose por tramos (y se lee de vuelta), con neto = suma
+✖ pull_request normal, solo lectura, sin secretos, con timeout y limpieza
+✖ reservarProgramaInterno: 36 puntos de rechazo pasan por _rechazarValidacionPrograma(); el log de éxito ('ok') aparece UNA sola vez
+✖ tarjetas filtra los recomendados con filtrarPorFiltros y ordena el resto con ordenarYFiltrarResto, usando el MISMO filtrosVistaEfectivos
+✖ ubicación: usa el componente compartido UbicacionHotel, con info?.ubicacion del hotel FÍSICO (nunca de la oferta)
+✖ workflow endurecido: pull_request, solo lectura, sin secretos ni Supabase remoto, limpieza always()

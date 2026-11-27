@@ -38,6 +38,13 @@ export function fechaNegocio(instante: Date = new Date()): string {
  * La fecha que el usuario eligió, tal cual; si no eligió ninguna (vacía o
  * ausente), el día de negocio. Nunca reinterpreta ni corre una fecha elegida.
  */
+/** Suma `dias` (enteros, puede ser negativo) a una fecha calendario YYYY-MM-DD sin pasar por la zona horaria del servidor (aritmética en UTC, sin horario de verano). */
+export function sumarDiasIso(iso: string, dias: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Math.trunc(dias));
+  return d.toISOString().slice(0, 10);
+}
+
 export function fechaElegidaONegocio(elegida: string | null | undefined, instante: Date = new Date()): string {
   const f = (elegida ?? "").trim();
   return f || fechaNegocio(instante);

@@ -1,0 +1,74 @@
+# Correction round 3 for the #95 · #61 · #41 · #42 · #51 · #33 block (Codex re-audit R3-1, R3-2)
+
+Date: 2026-11-23. Worktree: `.worktrees/95-bloque-copia-pagos` (branch `claude/95-copia-pagos-documentos`). Audit read first: `docs/tecnico/codex-review-manual-copy-payments-documents-r3-2026-11-23.md`.
+Status: **executor evidence for the Codex re-audit only. No owner acceptance is requested.** Nothing staged, committed or pushed; no remote SQL, live mail or deployment. #103 and #88 worktrees and every owner review database (`rev_*`, `dspacios_*`) were not touched.
+Builds on `…corrections-2026-11-23.md` (round 1) and `…corrections-r2-2026-11-23.md` (round 2).
+
+## 0. Smallest coherent implementation (as requested, before the details)
+
+| Need | Where the defect really was | Smallest coherent change | Reuses |
+|---|---|---|---|
+| R3-1 exact total / zero balance | **Not** the document: the SQL conversion `p75_priv.convertir_cotizacion_base` (migration 288) stores ONE package line with `tarifa_adulto = round(subtotal / adultos)` (whole pesos, **also in USD**). Lines then sum ±pesos away from `ventas.precio_venta`; the document prints Σ lines, so a fully paid contract showed a 1-peso (or 1-dollar-scale) balance. | **Migration 333**: the public conversion calls one new helper right after the base. The helper works from persisted data only: package-line tariff rounded to the currency unit (peso COP / **cent USD**), and the exact residual in ONE «Ajuste de redondeo del reparto del hotel» line (adults 1, tariff = residual, may be negative). Document side: USD amounts print with their cents (they were rounded to whole dollars). | The #120 rounding-adjustment line and its client label «Ajuste por redondeo»; `formatoExacto` (already used by the NETO path). The grouped package row and the genuine child tariff are untouched. |
+| R3-2 edited hotel copy | Category/regime/accommodation live only in `cotizaciones.payload.servicios[]`; the conversion never read them. | Same helper writes «{hotel} · {category} · {regime} · {accommodation}» into the existing «Servicio / Plan» field (`ventas.plan_nombre`) from the SAVED copy. | The «Servicio / Plan» box the contract document already prints for category/regime. No new table; `contrato_hoteles` is not written (Codex allowed another established representation). |
+
+Scope limits stated up front: contracts created by the conversion of a dynamic quotation (simple and comparative hija) — a NETO contract is excluded (its document computes from the NETO snapshot and already splits exactly); other creation paths (cart/reservar) have their own rounding and were not changed; **historical contracts are not rewritten** (see §3).
+
+## 1. Final source, build and environment
+
+- Final source fingerprint (sha256 over sorted contents of `app lib components styles public types proxy.ts next.config.ts package.json`, 1042 files): **`86d39f898819057b6574e6eaa87b227ab2f595fd95e7c325ad717a45a1006759`**; production build `next build` exit 0, **BUILD_ID `4M-GiclW8LKnuqiUZXzV7`**; no file under those paths is newer than the build; `tsc --noEmit` clean. Raw: `evidencia-r3-95-2026-11-23/build_final_r3_raw.txt`.
+- **Build caveat:** this build bakes the LOCAL gateway URL (`NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54395`) and a locally signed anon key (needed for the compiled-screen run); the source is the final source. The earlier round-2 build (`UiTVLNA0cHXVA6h3JOC0F`) is superseded.
+- Migration 333 is new and UNAPPLIED (owner gate: preflight → 331 → 332 → 333 → postcheck; `preflight_333…`, `postcheck_333…`, `rollback_333…`). Run on a clone: preflight 6 checks OK → apply → postcheck 6 checks OK (0 REVISAR) → rollback restores the 288 body → preflight OK again (`scripts_333_preflight_postcheck_rollback_raw.txt`). **Note:** the 333 guard refuses to replace a conversion function that no longer has the 288 shape. The existing wiring test `cotizacionesTenant.wiring` (which pins which migrations define the conversion) was updated to treat 333 like 288.
+- Disposable stack (same as round 2): container `pg304` + database cloned from `t307` + migrations 308–326 + 331 + 332 + 333, throwaway PostgREST, real `@supabase/supabase-js` sessions. Launcher `supabase/scripts/test_r2_95_acciones.sh` (new: `R2_SIN_333=1` negative control, `R2_DESPUES` to run the compiled-screen script on the same database). Scratch databases/roles/networks were dropped (verified); `pg304` stopped.
+- Round-2 fixture files `contrato_opcion_A/B.json` (rows showing the defect) were **deleted by me** when the recorrido was rewritten; their content is described in the R3 audit table. New fixtures are under `evidencia-r3-95-2026-11-23/`.
+
+## 2. R3-1 — exact rounding, no invented balance
+
+**Implementation (migration 333, `p75_priv.completar_conversion_manual`)**: from `ventas.precio_venta` and the persisted package line: `adultSubtotal = precio − niños × tarifa_niño`; `tarifa_adulto = round(adultSubtotal / adultos, 0|2)`; residual `adultSubtotal − tarifa × adultos` → one adjustment line when ≠ 0. A residual larger than one currency unit per adult is not rounding: the conversion **aborts** (`CONVERSION_REDONDEO_INCOHERENTE`). Idempotent (a replay returns the existing contract; no duplicate line). `ContratoDocumento` also stops counting the adjustment line as an adult (`alojPersonasSinNG`).
+**Document (USD cents):** `ContratoDocumento` and `CotizacionManualDocumento` now print USD with cents when present (`USD $1,582.55`; whole dollars unchanged). Before, `formatUSD` rounded every USD amount to the dollar: total `USD $1,583`, paid `$801`, balance `$782`, child tariff `$151`, adjustment `$0` for the 1.582,55 contract — a second, larger customer-visible defect found while testing the USD boundary. COP rendering is unchanged.
+
+**Tolerance removed.** `pruebas/r2Documento95.react.ts` (which accepted ≤ 2 pesos and asserted the wrong sum) is replaced by `pruebas/documentoConversion95.react.ts`: no tolerance anywhere.
+
+**Real-action matrix** (`pruebas/r2Acciones95.pg.ts`: real `crearComparativaManual` / `crearCotizacionManual` → `elegirOpcionComparativa` → `registrarPagoPrevio` → `convertirCotizacionManualAContrato` → `registrarAbono` for the balance; persisted rows re-read by SQL). Totals worked out by hand per scenario:
+
+| Scenario | Option / total | Rounding | Persisted lines |
+|---|---|---|---|
+| odd COP, 2 adults | A free child 1.330.455 · B child 150.000 1.580.455 | 665.227,5 → 665.228 / 715.227,5 → 715.228 | package 2 × 665.228 + child 0 / 2 × 715.228 + child 150.000; adjustment **−1** each |
+| even COP | A 1.330.000 · B 1.580.000 | exact | no adjustment line |
+| odd COP, 3 adults | A 1.330.456 · B 1.580.455 | 443.485,33 → 443.485 / 476.818,33 → 476.818 | adjustment **+1** each |
+| USD cents, 3 adults | A 1.331,00 · B 1.582,55 (child 150,55) | 443,6666 → 443,67 (**−0,01**) / 477,3333 → 477,33 (**+0,01**) | package 3 × 443,67 / 3 × 477,33 + child 150,55 |
+| simple (non-comparative) quotation | 3 adults odd | same conversion | same adjustment (+1) |
+
+For every scenario/option the test asserts at the cent: chosen quotation price = `ventas.precio_venta` = Σ contract lines (package + adjustment); the package row is kept (grouped, correct adults and children) and the child tariff is the real one; partial payment (first payment + top-up to the minimum; the minimum is ~58 % of the total) and then **full payment with the real `registrarAbono`**: `pagado == precio` and balance exactly 0, Σ lines − paid = 0. Idempotent replay and «historical contract untouched» (md5 of a pre-333-shaped contract's lines unchanged after new conversions) also pass. **14/14**. Raw: `recorrido_real_y_pantallas_compiladas_final_raw.txt`.
+**Negative control:** the same driver on a database WITHOUT 333 (`R2_SIN_333=1`, `control_negativo_sin_333_raw.txt`) fails 9 of the 11 tests (the 8 scenario/option tests and the simple one: Σ lines ≠ price and no hotel copy) — only «replay» and «historical» pass, as expected.
+**Document** (`documentoConversion95.react.ts`, **17/17**, real `ContratoDocumento` + `CotizacionManualDocumento` rendered from the persisted rows of every scenario in both the partial and the fully-paid phase): printed total = price, printed paid = paid, printed balance = price − paid (0 when fully paid; a real positive balance when partial); «Ajuste por redondeo» only when there is a residual, with dashes in persons/tariffs and without the internal wording; the package row shows the real child tariff; the chosen quotation prints the same total.
+
+## 3. Historical data (not rewritten)
+The 333 does not touch existing contracts. Contracts already converted keep a package line that can sum ±pesos from their price (preflight check 5 counts them; the postcheck asserts the count is unchanged). Whether to backfill them is an owner decision; nothing in this round depends on it.
+
+## 4. R3-2 — edited hotel information survives conversion and later reads
+Representation: `ventas.plan_nombre` («Servicio / Plan» on the contract document, the `/dashboard/contratos` ficha and `ventas_basica`), built from the SAVED copy in `cotizaciones.payload.servicios[]`. Tests (same driver): option A of a comparative takes hotel #HOT from the catalog (`Estandar` / `Desayuno` / `doble`) but the advisor EDITED the copy to «Superior · PAM · Triple» → the contract shows **«Hotel A · Superior · PAM · Triple»** (not the catalog values); option B (free text, «Estándar · PC · Doble») → **«Hotel B · Estándar · PC · Doble»**; the other option's hotel never appears; `contrato_hoteles` stays empty; a checksum of the catalog rows (hotel, acomodaciones, tarifas, armado) is identical before/after. Same for the simple quotation. When the payload carries none of the three fields, `plan_nombre` is left exactly as the base wrote it. Read back through the real compiled document (§6): «SERVICIO / PLAN Hotel A · Superior · PAM · Triple».
+Limit: the regime/category are plain text in `plan_nombre` (not structured columns); `ventas.hotel` is unchanged (name only).
+
+## 5. Final 332: concurrency and injected failures (`pruebas/planCobroConcurrencia332.pg.ts`, 8/8, `concurrencia_fallos_332_final_raw.txt`)
+Real HTTP sessions, one connection per call: **12 simultaneous** `reemplazar_plan_cobro` → 12/12 ok, ONE plan of 4 rows (orders 0..3, Σ 1.000.000); **16 mixed** (4-row and 2-row plans) → exactly one complete plan; **6 simultaneous regenerations with the real action** → all ok, one plan, repeating does not accumulate; **injected INSERT failure** (trigger) → `FALLA_INYECTADA_INSERT` and the previous plan identical (same ids), the real action answers «se conservó el anterior»; **injected DELETE failure** → same; after removing the faults the next replacement works; roles: administración ok, `venta` owner ok, other advisor rejected by RLS with no change. Local request measurement: one regeneration with the real action = **6 REST requests** (contract, conditions, config, payments, agreement + 1 rpc); hosted cost is NOT measured.
+
+## 6. Compiled screens and PDFs (`supabase/scripts/r3_pantallas/`, 49/49, `pantallas/`)
+Production build served by `next start`; a local gateway answers `/auth/v1/user` (JWT check) and forwards `/rest/v1`; roles are real (users + RLS): superadmin, administración, `venta`. Edge (Playwright), desktop 1366 and mobile 390.
+- `/contrato/{n}` for 4 recorridos (odd, USD cents, odd paid-B, even): HTTP 200, «Total del contrato» exact, no horizontal overflow (desktop and mobile), screenshots + A4 PDF each (4 pages).
+- `/cotizacion/{hija}` for odd COP and USD cents: 200, screenshots + A4 PDF (5 pages).
+- Ficha → Cartera → «Generar plan de cobro» (compiled Server Action → `reemplazar_plan_cobro`) as superadmin (desktop + mobile), administración and `venta` (the button is shown; the RLS decides the write); the plan saved (Σ = price exact) and two browsers regenerating at the same time leave ONE plan.
+- **Every PDF page was rasterized with pdf.js (`pdf_a_png.mjs`) and inspected:** contract odd-A pages 1–4, USD-B 1–2, odd-B 1, even-A 1 (pages 3–4 are byte-identical boilerplate across all four contracts, page 2 identical per hotel A/B); quotation odd-A pages 1–3 and 5, USD-B 1–2 (3–5 identical across both quotes). Page 1 of each contract: total, paid, **«Saldo pendiente $0 / USD $0»**, package row + «Ajuste por redondeo −$1 / USD $0.01», «Servicio / Plan» with the edited copy. Printed PDF page counts come from pdf.js, not from a regex.
+- **Defect found and fixed by this inspection:** in the USD quotation PDF the «Total cotización» box was split across two pages (label on page 1, amount on page 2). `CotizacionManualDocumento` «Valores» section now has `break-inside-avoid`; re-rendered and re-inspected (box intact on page 2). Mobile view: the item table keeps its own horizontal scroll area (existing behaviour); the page itself has no overflow.
+- Fixtures: the agency's fiscal identity in the scratch database got a **synthetic RNT («RNT-PRUEBA-1»)** because documents refuse to print without one (#49); the razón social/NIT shown are the template's. Nothing real was changed.
+- Observation: the condition table on the contract page lists component names (e.g. airline «Avianca», «Hotel B») — names only, no costs/providers; existing behaviour.
+
+## 7. Other verification
+- Focused unit set (classifier, plan sources, child tariff per option, tenant wiring pin, suites registry, minimum agreement): **76/76**. React documents that reference either document component (21 files + the new one): **269/269** before the last small edits and **74/74 + 28/28** after them; `test:react:bloque95` 17/17. `suitesPruebas` registry 8/8 (the new React file is in `test:react:bloque95`, appended to `test:react:all`).
+- Pre-existing, unrelated failures noted earlier remain (`medicionFlujoWiring` «reservarProgramaInterno…», `convertirCotizacionCarritoBernaloWiring` pins `valorVisibleContratoItem(it)` ×3 that the document no longer uses, a workflow YAML test): they fail on the unmodified source too; no unrelated full-suite rerun was done, as requested.
+- Reused, with attribution to round 2 (unchanged paths): #61 duplicate-package and #41 flight-copy evidence, R2-1 database table `db332_r2_raw.txt` (22/22; 332 itself is unchanged this round), R2-2 real-action sequence (re-run inside the same driver, 3/3 on the final source).
+
+## 8. Gaps and notes for the re-audit
+- Historical contracts keep their old lines (owner decision on backfill). NETO contracts and other creation paths are out of this change.
+- The adjustment line reuses the existing wording «Ajuste de redondeo del reparto del hotel» in the stored item (internal), shown to clients as «Ajuste por redondeo»; adults = 1 by the #120 convention (the document no longer counts it as a person).
+- The R2 limit on `config_cobros` (mutable, unlocked) is unchanged.
+- Local measurements only; hosted Supabase/Vercel cost is unknown.

@@ -216,6 +216,8 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci�
     ["app/(dashboard)/dashboard/vuelos/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],
     ["app/(dashboard)/dashboard/vuelos/historico/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],
     ["app/(dashboard)/dashboard/vuelos/empaquetados/[id]/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],
+    // #41: «Duplicar»: lee la fila del empaquetado de origen con la sesión de quien consulta (RLS) solo para precargar el formulario de uno NUEVO; misma ruta y roles que la ficha (cerrada a `venta`).
+    ["app/(dashboard)/dashboard/vuelos/empaquetados/nuevo/page.tsx", { cliente: "sesion", roles: "modulo vuelos (sin venta)" }],
     ["app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts", { cliente: "sesion", roles: "5 roles de escritura" }],
     ["lib/paquetes/destinosAereos67.ts", { cliente: "sesion", roles: "armado interno o service-role" }],
     ["lib/reservar/computoReservaBernalo.ts", { cliente: "servicio", roles: "service-role" }],
@@ -231,6 +233,9 @@ describe("inventario de lectores de la tabla base `empaquetados` en la aplicaci�
     ["lib/tarifario/datos.ts", { cliente: "servicio", roles: "service-role" }],
     ["lib/tarifario/composicionIncluidos.ts", { cliente: "servicio", roles: "service-role (solo fecha_ida de empaquetados: no lee precios ni costos)" }],
     ["lib/tarifario/datosBernalo.ts", { cliente: "servicio", roles: "service-role" }],
+    // #13 (bloque 3): avisos de fin de compra. Lee SOLO id/activo/compra_fin/ruta/fecha_ida y el nombre/estado de los paquetes vinculados (nunca tarifas, fee ni estados de pago). Lo ejecuta la pantalla de Paquetes
+    // (módulo cerrado a venta) con la sesión del usuario, o el correo diario con service-role.
+    ["lib/paquetes/vencimientoCompraDatos.ts", { cliente: "sesion", roles: "pantalla Paquetes (sin venta) o service-role en el correo diario; solo fechas y nombres" }],
     // #120: hotel bajo solicitud. datosSolicitud y solicitudHotelActions leen SOLO fechas/estado/ruta del empaquetado vinculado (sin costos, a la página pública);
     // solicitudHotelServidor lee tarifa_para_empaquetar/fee_infante con service-role SOLO para calcular el precio de la cotización (nunca viaja al navegador).
     ["lib/tarifario/datosSolicitud.ts", { cliente: "servicio", roles: "service-role (fechas y estado; sin costos)" }],

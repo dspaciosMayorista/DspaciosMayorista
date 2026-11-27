@@ -6,7 +6,8 @@ import { leerTemporadasServicio } from "@/lib/reservar/temporadasServicio";
 import { separarFranjas, type FilaTemporadaConFranjas } from "@/lib/reservar/liquidacionServicio";
 import { reglasHotelFicha, reglasHotelManual, type ReglasHotelDin } from "@/lib/paqueteDinamico/menores";
 import type { FichaServicioDin } from "@/lib/paqueteDinamico/servicioFicha";
-import type { VueloDetalle } from "@/lib/paqueteDinamico/publico";
+import type { PresentacionHotelCatalogo, VueloDetalle } from "@/lib/paqueteDinamico/publico";
+import { galeriaPorHotel, leerFotosHotel } from "@/lib/tarifario/fotosHotel";
 import type { FilaHotelDin, FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -67,6 +68,30 @@ export async function cargarInfoHotelesFicha(admin: Admin, hotelIds: number[]): 
   // Un fallo de lectura NUNCA se confunde con «la ficha no tiene el dato»: quien llama decide detenerse.
   if (error) throw new Error(`No se pudo leer la información de las fichas de hotel: ${error.message ?? "error de lectura"}`);
   for (const x of data ?? []) out.set(x.id, { estrellas: Number.isInteger(x.estrellas) && x.estrellas >= 1 && x.estrellas <= 5 ? x.estrellas : null, descripcion: String(x.descripcion ?? "").trim(), ubicacion: String(x.ubicacion ?? "").trim() });
+  return out;
+}
+
+/**
+ * Presentación PÚBLICA de los hoteles del catálogo vinculados a los paquetes publicados (#88): estrellas, clasificación, descripción, ubicación y galería de fotos.
+ * Exactamente DOS lecturas por lote de ids (hoteles + hotel_fotos), sin importar cuántos hoteles o paquetes haya: nada por tarjeta. Solo columnas de presentación pública (jamás notas, contactos, costos ni documentos).
+ * Las estrellas fuera de 1–5 se descartan (null) y los textos se recortan: lo que la ficha no tiene queda vacío (nunca se inventa). Un fallo de lectura LANZA: quien llama decide degradar a lo guardado en el paquete.
+ */
+export async function cargarPresentacionHoteles(admin: Admin, hotelIds: number[]): Promise<Map<number, PresentacionHotelCatalogo>> {
+  const out = new Map<number, PresentacionHotelCatalogo>();
+  const ids = [...new Set(hotelIds)];
+  if (!ids.length) return out;
+  const [h, f] = await Promise.all([
+    (admin as unknown as Suelto).from("hoteles").select("id, estrellas, clasificacion, descripcion, ubicacion").in("id", ids),
+    leerFotosHotel(admin, ids),
+  ]);
+  if (h.error) throw new Error(`No se pudo leer la presentación de los hoteles del catálogo: ${h.error.message ?? "error de lectura"}`);
+  if (f.error) throw new Error(`No se pudo leer las fotos de los hoteles del catálogo: ${f.error.message}`);
+  const galerias = galeriaPorHotel(f.data);
+  const texto = (v: unknown) => String(v ?? "").trim();
+  for (const x of (h.data ?? []) as { id: number; estrellas: unknown; clasificacion: unknown; descripcion: unknown; ubicacion: unknown }[]) {
+    const e = x.estrellas;
+    out.set(x.id, { estrellas: typeof e === "number" && Number.isInteger(e) && e >= 1 && e <= 5 ? e : null, clasificacion: texto(x.clasificacion), descripcion: texto(x.descripcion), ubicacion: texto(x.ubicacion), fotos: galerias[x.id] ?? [] });
+  }
   return out;
 }
 

@@ -10,6 +10,8 @@ const { registerHooks } = nodeModule as unknown as { registerHooks: (h: { resolv
 const datos = (src: string) => `data:text/javascript,${encodeURIComponent(src)}`;
 const FRONTERAS: Record<string, string> = {
   "@/lib/supabase/server": datos("export async function createClient() { return globalThis.__dash59.cliente(); }"),
+  // B3-02: el área ALERTAS lee con el cliente de servicio (una sola llamada por carga de página, sin sondeo); se sirve el mismo cliente sintético.
+  "@/lib/supabase/admin": datos("export function createAdminClient() { return globalThis.__dash59.cliente(); }"),
   "@/lib/tenant.server": datos("export async function getTenant() { return 'mayorista'; }"),
 };
 registerHooks({ resolve(s, c, next) { return FRONTERAS[s] ? { url: FRONTERAS[s], shortCircuit: true } : next(s, c); } });
@@ -23,6 +25,7 @@ function builder(tipo: Llamada["tipo"], nombre: string, args: unknown[]) {
   const resultado = () => {
     if (nombre === "usuarios") return { data: { nombre: "Prueba", rol: estado.rol }, error: null };
     if (nombre === "fn_dashboard_cupos_activos") return { data: CUPOS, error: null };
+    if (nombre === "alertas_compra_listar") return { data: [], error: null };
     return { data: null, error: null, count: 0 };
   };
   const q: Record<string, unknown> = {};
@@ -76,9 +79,9 @@ test("venta (sin módulo de vuelos): la tarjeta no enlaza al inventario", async 
 });
 
 test("sin consultas nuevas: el enlace no cambia las llamadas de la página; la ventana sigue siendo hoy..hoy+14", async () => {
-  // Listas exactas de la página antes de #59 (el diff no añade ninguna llamada a Supabase): con o sin enlace.
+  // Listas exactas de la página: #59 no añade ninguna llamada (con o sin enlace). La única llamada añadida DESPUÉS es la de B3-02 (alertas de fin de compra, solo roles que escriben paquetes), fijada aquí a propósito para que no crezca sin aviso.
   const BASE = ["from:bloqueos_vuelo", "from:paquetes", "from:usuarios", "rpc:fn_dashboard_contratos_por_estado", "rpc:fn_dashboard_cupos_activos"];
-  const INTERNO = [...BASE, "from:meta_ventas_mensual", "rpc:fn_dashboard_cartera_por_moneda", "rpc:fn_dashboard_cxp_resumen", "rpc:fn_dashboard_ventas_mes"].sort();
+  const INTERNO = [...BASE, "from:meta_ventas_mensual", "rpc:fn_dashboard_cartera_por_moneda", "rpc:fn_dashboard_cxp_resumen", "rpc:fn_dashboard_ventas_mes", "rpc:alertas_compra_listar"].sort();
   assert.deepEqual((await pintar("operaciones")).llamadas, INTERNO);
   assert.deepEqual((await pintar("venta")).llamadas, BASE);
   estado.rol = "operaciones";

@@ -171,6 +171,7 @@ export default async function CotizacionImprimiblePage({
               cliente={payload?.cliente ?? {}}
               incluye={d?.incluye ?? null}
               noIncluye={d?.noIncluye ?? null}
+              hoteles={Array.isArray(d?.hoteles) ? d.hoteles : null}
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={cot.created_at ? String(cot.created_at).slice(0, 10) : null}
               agencia={agencia}

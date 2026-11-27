@@ -10,11 +10,12 @@ import {
   COPYRIGHT_PREFIJO,
   POWERED_BY,
 } from "@/lib/contrato/plantilla";
-import { formatMoneda, formatFechaLarga } from "@/lib/utils";
+import { formatMoneda as formatMonedaBase, formatFechaLarga } from "@/lib/utils";
 import { formatoExacto, repartoPorPersona, tarifaCuadra } from "@/lib/contrato/repartoTarifa";
 import type { Agencia } from "@/types/database";
 import type { LogoAliadoDoc } from "@/lib/aliados/logo";
 import { EmisorLinea, LogoAliado } from "@/components/cotizacion/MarcaAliado";
+import type { AlojamientoDoc } from "@/lib/cotizacion/alojamientosDocumento";
 
 const PRIMARY = COLOR_DOCUMENTO;
 
@@ -30,6 +31,9 @@ function TarifaUnitaria({ it, moneda }: { it: ItemSnap; moneda: string }) {
   if (!r || r.exacto) return <>{r ? formatoExacto(r.tarifa, moneda) : "—"}</>;
   return <span className="block" data-testid="reparto-tarifa">{r.partes.map((p, i) => <span key={i} className="block whitespace-nowrap">{p.cantidad} × {formatoExacto(p.tarifa, moneda)}</span>)}</span>;
 }
+
+// R3-1 (USD): un importe en USD con centavos (USD $1,582.55) NO se redondea al dólar en el documento: el total, lo pagado, el saldo y las tarifas se imprimen con sus centavos cuando los tienen (sin centavos queda igual: USD $1,331). COP no cambia.
+const formatMoneda = (valor: number, moneda?: string | null): string => ((moneda ?? "COP").toUpperCase() === "USD" ? formatoExacto(valor, moneda) : formatMonedaBase(valor, moneda));
 
 type ItemSnap = {
   descripcion: string;
@@ -66,6 +70,8 @@ type Props = {
   cliente: ClienteSnap;
   incluye?: string | null;
   noIncluye?: string | null;
+  /** B95-15/18: alojamiento elegido (de `detalle.hoteles`): hotel, categoría, plan de alimentación, acomodación. Vacío/ausente (cotizaciones anteriores) = la sección no se pinta. */
+  hoteles?: AlojamientoDoc[] | null;
   vigenciaHasta?: string | null;
   fechaEmision?: string | null;
   /** Fila de `agencias` del tenant de la cotización (RNT, NIT, cuenta). #49: sin fila o sin razón social/NIT/RNT el documento falla; no hay fallback a `EMPRESA` (identidad de Minorista). */
@@ -91,7 +97,7 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, vigenciaHasta, fechaEmision, agencia, logoAliado = null }: Props) {
+export function CotizacionManualDocumento({ codigo, venta, items, cliente, incluye, noIncluye, hoteles = null, vigenciaHasta, fechaEmision, agencia, logoAliado = null }: Props) {
   const idAgencia = identidadAgencia(agencia);
   const empresa = { ...idAgencia, titular: idAgencia.razonSocial };
   const moneda = venta.moneda ?? "COP";
@@ -169,6 +175,24 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
           </div>
         </section>
 
+        {/* ── Alojamiento elegido (B95-15/18): hotel, categoría, plan de alimentación y acomodación; nunca proveedor ni costo ─ */}
+        {(hoteles ?? []).length > 0 && (
+          <section data-testid="alojamiento-cotizacion">
+            <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>Hoteles y Servicios</h2>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {(hoteles ?? []).map((h, i) => (
+                <div key={i} className="break-inside-avoid rounded-lg border border-gray-200 p-3">
+                  <div className="font-semibold text-gray-700">{h.nombre}{h.categoria ? ` · ${h.categoria}` : ""}</div>
+                  {h.ciudad && <div className="mt-1 text-xs text-gray-600">Ciudad: {h.ciudad}</div>}
+                  <div className="text-xs text-gray-600">Alimentación: {h.alimentacion ?? "—"} · Acomodación: {h.acomodacion ?? "—"}</div>
+                  {h.detalle_acomodacion && <div className="text-xs text-gray-500">{h.detalle_acomodacion}</div>}
+                  {h.fecha_ingreso && h.fecha_salida && <div className="mt-1 text-xs text-gray-500">{formatFechaLarga(h.fecha_ingreso)} → {formatFechaLarga(h.fecha_salida)}</div>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* ── Servicios ────────────────────────────────────────── */}
         <section>
           <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>Servicios cotizados</h2>
@@ -240,7 +264,8 @@ export function CotizacionManualDocumento({ codigo, venta, items, cliente, inclu
         )}
 
         {/* ── Valores ──────────────────────────────────────────── */}
-        <section>
+        {/* R3: el total no se parte entre dos páginas del PDF (la caja «Total cotización» quedaba con la etiqueta en una página y el importe en la siguiente). */}
+        <section className="break-inside-avoid">
           <h2 className="mb-2 text-sm font-semibold" style={{ color: PRIMARY }}>Valores</h2>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
             <div className="rounded-lg p-3 text-white" style={{ backgroundColor: PRIMARY }}>

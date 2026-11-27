@@ -1,0 +1,32 @@
+  cargado: 20260601000339_soportes_pago_cupo_adicional.sql
+  cargado: semilla_visual_soportes339.sql
+PostgREST en http://127.0.0.1:64536 contra vc_2a081b15b82d
+app compilada respondiendo en http://127.0.0.1:3099 · BUILD_ID vzjltR-QtYjToJEKEVRcz
+
+== 1. Portal del aliado (Cartera → Soportes de pago): estados de cupo en la página compilada ==
+FALLO DTM-8301: la tarjeta existe (contrato sin pagos incluido)
+FALLO DTM-8301: «»
+FALLO DTM-8301: mensaje de disponibilidad (/Aún no hay pagos registrados: puedes adjuntar un soporte/)
+FALLO DTM-8301: botón «Subir soporte» habilitado (observado: undefined)
+FALLO DTM-8302: la tarjeta existe (contrato sin pagos incluido)
+FALLO DTM-8302: «»
+FALLO DTM-8302: mensaje de disponibilidad (/Ya usaste todos los soportes permitidos/)
+FALLO DTM-8302: botón «Subir soporte» deshabilitado (observado: undefined)
+FALLO DTM-8303: la tarjeta existe (contrato sin pagos incluido)
+FALLO DTM-8303: «»
+FALLO DTM-8303: mensaje de disponibilidad (/este es el soporte adicional, para un pago aún sin registrar/)
+FALLO DTM-8303: botón «Subir soporte» habilitado (observado: undefined)
+FALLO DTM-8304: la tarjeta existe (contrato sin pagos incluido)
+FALLO DTM-8304: «»
+FALLO DTM-8304: mensaje de disponibilidad (/Ya usaste todos los soportes permitidos/)
+FALLO DTM-8304: botón «Subir soporte» deshabilitado (observado: undefined)
+FALLO DTM-8305: la tarjeta existe (contrato sin pagos incluido)
+FALLO DTM-8305: «»
+FALLO DTM-8305: mensaje de disponibilidad (/Hay más soportes vigentes de los permitidos/)
+FALLO DTM-8305: botón «Subir soporte» deshabilitado (observado: undefined)
+FALLO DTM-8306: la tarjeta existe (contrato sin pagos incluido)
+FALLO DTM-8306: «»
+FALLO DTM-8306: mensaje de disponibilidad (/Ya usaste todos los soportes permitidos/)
+FALLO DTM-8306: botón «Subir soporte» deshabilitado (observado: undefined)
+
+ABORTADO: la página compilada no muestra el contenido esperado (peticiones al proxy: {} ). Texto: "Cerrar sesión\nPORTAL DE ALIADOS\n\nAgencias y freelance: ingresa o regístrate.\n\nIniciar sesión\nRegistrarse"

@@ -58,6 +58,8 @@ const STUB_PASAJEROS_CONTRATO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "pasaj
 const STUB_ELIMINAR_DESTINO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "eliminarDestinoActionsStub.mjs")).href;
 const STUB_COTIZAR_TARJETA = pathToFileURL(join(AQUI, "stubs", "cotizarTarjetaActionsStub.mjs")).href;
 const STUB_REGLAS_DESCUENTO_ACTIONS = pathToFileURL(join(AQUI, "stubs", "reglasDescuentoActionsStub.mjs")).href;
+// Conjuntos de fechas (migración 327): "./conjuntos-actions" desde CalendarioExclusiones.tsx (Server Action real -> next/headers), montado por HotelDetalleClient.
+const STUB_CONJUNTOS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "conjuntosActionsStub.mjs")).href;
 const STUB_GRUPOS_DIAS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "gruposDiasActionsStub.mjs")).href;
 // #43/#60 entrega 4: "../actions" desde PromocionReglas.tsx (Server Action real -> next/headers).
 const STUB_PROMOCION_REGLAS_ACTIONS = pathToFileURL(join(AQUI, "stubs", "promocionReglasActionsStub.mjs")).href;
@@ -202,6 +204,13 @@ export async function resolve(specifier, context, nextResolve) {
   if (specifier === "./reglas-descuento-actions" && context.parentURL?.endsWith("HotelPromociones.tsx")) {
     return { url: STUB_REGLAS_DESCUENTO_ACTIONS, shortCircuit: true };
   }
+  // NETA-06: la Server Action de corrección de TRM de costos (next/headers + Supabase) -> stub configurable.
+  if (specifier === "@/app/(dashboard)/dashboard/contratos/[numero]/trm-costo-actions" && context.parentURL?.endsWith("/components/contrato/TrmCostoEditor.tsx")) {
+    return { url: pathToFileURL(join(AQUI, "stubs", "trmCostoActionsStub.mjs")).href, shortCircuit: true };
+  }
+  if (specifier === "./conjuntos-actions" && context.parentURL?.endsWith("CalendarioExclusiones.tsx")) {
+    return { url: STUB_CONJUNTOS_ACTIONS, shortCircuit: true };
+  }
   if (specifier === "./actions" && context.parentURL?.endsWith("EliminarDestinoBtn.tsx")) {
     return { url: STUB_ELIMINAR_DESTINO_ACTIONS, shortCircuit: true };
   }
@@ -328,8 +337,12 @@ export async function resolve(specifier, context, nextResolve) {
       context.parentURL?.endsWith("/ConvertirCarritoBtn.tsx") ||
       // Panel del carrito (pruebas/carritoMonedaCheckout.react.ts).
       context.parentURL?.endsWith("/tarifario/CartDrawer.tsx") ||
+      // Duplicar un paquete armado (#61): abre la copia con router.push (pruebas/desdeDoble.react.ts monta el listado, que incluye el botón).
+      context.parentURL?.endsWith("/paquetes/DuplicarPaqueteBtn.tsx") ||
       // Pestaña «Dinámicos» del tarifario público (#82): redirige con router.push tras cotizar.
       context.parentURL?.endsWith("/tarifario/PorDinamicos.tsx") ||
+      // Alertas de fin de compra del tablero (B3-02, pruebas/alertasPresencia344.rev2.react.ts): trae la siguiente tanda con router.refresh().
+      context.parentURL?.endsWith("/components/dashboard/AlertasCompra.tsx") ||
       // Checkout público (pruebas/recorridoComparativa64.react.ts): al abrir la comparativa corrige la URL con router.replace.
       context.parentURL?.endsWith("/tarifario/checkout/page.tsx") ||
       // Facturación (#49, pruebas/tablasMoviles49.react.ts).
@@ -337,7 +350,9 @@ export async function resolve(specifier, context, nextResolve) {
       // Promociones del hotel (#90, pruebas/reglasDescuentoCarga90.react.ts).
       context.parentURL?.endsWith("/HotelPromociones.tsx") ||
       // Montaje del paquete dinámico (#82, pruebas/selectoresDin82.react.ts).
-      context.parentURL?.endsWith("/paquetes/total/PaqueteTotalForm.tsx"))
+      context.parentURL?.endsWith("/paquetes/total/PaqueteTotalForm.tsx") ||
+      // NETA-06: editor de la TRM de costos provisional (pruebas/panelesCostoUsd348.rev2.react.ts).
+      context.parentURL?.endsWith("/components/contrato/TrmCostoEditor.tsx"))
   ) {
     return { url: STUB_NEXT_NAVIGATION, shortCircuit: true };
   }

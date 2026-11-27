@@ -8,7 +8,7 @@ import { getTenant } from "@/lib/tenant.server";
 import { tenantDinamicosVisibles } from "@/lib/paqueteDinamico/solicitud";
 import { hoyBogota } from "@/lib/cotizacion/vigencia";
 import { vistaPublica, type ContextoPublico, type DinamicoPublico } from "@/lib/paqueteDinamico/publico";
-import { cargarFichasServicio, cargarOpcionesHotelFicha, cargarReglasHoteles, cargarVuelosDetalle } from "@/lib/paqueteDinamico/fichas";
+import { cargarFichasServicio, cargarOpcionesHotelFicha, cargarPresentacionHoteles, cargarReglasHoteles, cargarVuelosDetalle } from "@/lib/paqueteDinamico/fichas";
 import { resumenFicha } from "@/lib/paqueteDinamico/servicioFicha";
 import type { FilaHotelDin, FilaPaqueteDin, FilaServicioDin, FilaVueloDin } from "@/lib/paqueteDinamico/modelo";
 
@@ -43,13 +43,16 @@ export async function cargarDinamicosPublicados(): Promise<DinamicoPublico[]> {
     // Reglas de las fichas (hotel: edades y capacidad; servicio: cobro y rango; vuelo: horarios). Solo datos comerciales: ningún costo.
     const hotelesTodos = (h.data ?? []) as unknown as FilaHotelDin[], vuelosTodos = (v.data ?? []) as unknown as FilaVueloDin[], serviciosTodos = (s.data ?? []) as unknown as FilaServicioDin[];
     const admin2 = admin;
-    const [reglasHotel, opcionesFicha, detalleVuelos, fichasSrv] = await Promise.all([
-      cargarReglasHoteles(admin2, hotelesTodos), cargarOpcionesHotelFicha(admin2, hotelesTodos.map((x) => x.hotel_id).filter((x): x is number => x != null)),
+    const idsFicha = hotelesTodos.map((x) => x.hotel_id).filter((x): x is number => x != null);
+    const [reglasHotel, opcionesFicha, detalleVuelos, fichasSrv, catalogo] = await Promise.all([
+      cargarReglasHoteles(admin2, hotelesTodos), cargarOpcionesHotelFicha(admin2, idsFicha),
       cargarVuelosDetalle(admin2, vuelosTodos), cargarFichasServicio(admin2, serviciosTodos.map((x) => x.servicio_id).filter((x): x is number => x != null)),
+      // #88: presentación del catálogo (estrellas, descripción, ubicación, fotos) en 2 lecturas por lote. Si falla, la lista NO se bloquea: cada tarjeta muestra lo guardado en el paquete.
+      cargarPresentacionHoteles(admin2, idsFicha).catch((e: Error) => { console.error("dinamicos: presentación de hoteles del catálogo", e.message); return new Map(); }),
     ]);
     // Adults Only de cada ficha: los importes de menores de ese hotel no se exigen ni se muestran como «faltantes».
     for (const x of hotelesTodos) x.adults_only = reglasHotel.get(x.id)?.adultsOnly === true;
-    const ctx: ContextoPublico = { reglasHotel, vuelos: detalleVuelos, opcionesHotel: new Map(), fichas: new Map() };
+    const ctx: ContextoPublico = { reglasHotel, vuelos: detalleVuelos, opcionesHotel: new Map(), fichas: new Map(), catalogo };
     for (const x of hotelesTodos) if (x.hotel_id != null && opcionesFicha.has(x.hotel_id)) ctx.opcionesHotel!.set(x.id, opcionesFicha.get(x.hotel_id)!);
     for (const x of serviciosTodos) { const f = x.servicio_id != null ? fichasSrv.get(x.servicio_id) : undefined; if (f) ctx.fichas!.set(x.id, resumenFicha(f)); }
     const out: DinamicoPublico[] = [];

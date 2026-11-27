@@ -33,7 +33,7 @@ export function acuerdoDeFila(f: { tipo: string; porcentaje: number | string | n
  */
 export type LecturaAcuerdo =
   | { estado: "ausente" }
-  | { estado: "acuerdo"; acuerdo: AcuerdoMinimo }
+  | { estado: "acuerdo"; acuerdo: AcuerdoMinimo; /** Id de la fila leída (cargarAcuerdoMinimo): sirve para detectar que el acuerdo cambió mientras se generaba un plan. */ id?: number | null }
   | { estado: "error"; motivo: string };
 
 /** Respuesta cruda de PostgREST (`maybeSingle`) → LecturaAcuerdo. Una fila que no se entiende es ERROR, no ausencia. */

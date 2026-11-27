@@ -1,0 +1,250 @@
+{
+  "contratos": {
+    "imparA": {
+      "numero": "DTM-0004",
+      "hija": "5",
+      "precio": "1330455.00"
+    },
+    "imparB": {
+      "numero": "DTM-0005",
+      "hija": "7",
+      "precio": "1580455.00"
+    },
+    "usdB": {
+      "numero": "DTM-0011",
+      "hija": "19",
+      "precio": "1582.55"
+    },
+    "parA": {
+      "numero": "DTM-0006",
+      "hija": "9",
+      "precio": "1330000.00"
+    }
+  },
+  "pdfs": [
+    {
+      "archivo": "contrato_imparA.pdf",
+      "paginas": 4
+    },
+    {
+      "archivo": "contrato_imparB.pdf",
+      "paginas": 4
+    },
+    {
+      "archivo": "contrato_usdB.pdf",
+      "paginas": 4
+    },
+    {
+      "archivo": "contrato_parA.pdf",
+      "paginas": 4
+    },
+    {
+      "archivo": "cotizacion_imparA.pdf",
+      "paginas": 5
+    },
+    {
+      "archivo": "cotizacion_usdB.pdf",
+      "paginas": 5
+    }
+  ],
+  "solicitudesRestTotal": 1113,
+  "resultados": [
+    {
+      "ok": true,
+      "m": "los 4 contratos del recorrido real existen"
+    },
+    {
+      "ok": true,
+      "m": "imparA/escritorio: /contrato/DTM-0004 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "imparA/escritorio: «Total del contrato $1.330.455» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "imparA/escritorio: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "imparA: PDF generado (4 páginas) → contrato_imparA.pdf"
+    },
+    {
+      "ok": true,
+      "m": "imparA/movil: /contrato/DTM-0004 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "imparA/movil: «Total del contrato $1.330.455» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "imparA/movil: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "imparB/escritorio: /contrato/DTM-0005 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "imparB/escritorio: «Total del contrato $1.580.455» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "imparB/escritorio: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "imparB: PDF generado (4 páginas) → contrato_imparB.pdf"
+    },
+    {
+      "ok": true,
+      "m": "imparB/movil: /contrato/DTM-0005 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "imparB/movil: «Total del contrato $1.580.455» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "imparB/movil: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "usdB/escritorio: /contrato/DTM-0011 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "usdB/escritorio: «Total del contrato USD $1,582.55» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "usdB/escritorio: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "usdB: PDF generado (4 páginas) → contrato_usdB.pdf"
+    },
+    {
+      "ok": true,
+      "m": "usdB/movil: /contrato/DTM-0011 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "usdB/movil: «Total del contrato USD $1,582.55» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "usdB/movil: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "parA/escritorio: /contrato/DTM-0006 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "parA/escritorio: «Total del contrato $1.330.000» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "parA/escritorio: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "parA: PDF generado (4 páginas) → contrato_parA.pdf"
+    },
+    {
+      "ok": true,
+      "m": "parA/movil: /contrato/DTM-0006 responde 200 (200)"
+    },
+    {
+      "ok": true,
+      "m": "parA/movil: «Total del contrato $1.330.000» exacto en la pantalla compilada"
+    },
+    {
+      "ok": true,
+      "m": "parA/movil: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "cotización imparA: /cotizacion/5 responde 200"
+    },
+    {
+      "ok": true,
+      "m": "cotización usdB: /cotizacion/19 responde 200"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/escritorio: responde 200"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/escritorio: hay botón de plan de cobro"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/escritorio: el plan quedó guardado (1 filas, suma 1580455 = precio exacto)"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/escritorio: la pantalla muestra «Regenerar plan» tras generarlo"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/escritorio: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "ficha administracion/escritorio: responde 200"
+    },
+    {
+      "ok": true,
+      "m": "ficha administracion/escritorio: hay botón de plan de cobro"
+    },
+    {
+      "ok": true,
+      "m": "ficha administracion/escritorio: el plan quedó guardado (1 filas, suma 1580455 = precio exacto)"
+    },
+    {
+      "ok": true,
+      "m": "ficha administracion/escritorio: la pantalla muestra «Regenerar plan» tras generarlo"
+    },
+    {
+      "ok": true,
+      "m": "ficha administracion/escritorio: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/movil: responde 200"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/movil: hay botón de plan de cobro"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/movil: el plan quedó guardado (1 filas, suma 1580455 = precio exacto)"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/movil: la pantalla muestra «Regenerar plan» tras generarlo"
+    },
+    {
+      "ok": true,
+      "m": "ficha superadmin/movil: sin desbordamiento horizontal"
+    },
+    {
+      "ok": true,
+      "m": "ficha venta/escritorio: responde 200"
+    },
+    {
+      "ok": true,
+      "m": "ficha venta/escritorio: botón de plan visible = true (la RLS de cuotas decide la escritura)"
+    },
+    {
+      "ok": true,
+      "m": "dos navegadores a la vez → UN plan (1 filas, 1 órdenes distintos, suma 1580455)"
+    }
+  ],
+  "fallos": 0
+}

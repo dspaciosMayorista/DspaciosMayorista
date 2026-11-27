@@ -309,7 +309,7 @@ function EstadoCuentaProveedor({ row, catalogo, ivaPct }: { row: PagoRow; catalo
               </tr>
               {row.moneda === "USD" && row.valor_cop_costo != null && row.trm_costo != null ? (
                 <tr className="border-b border-gray-50" data-testid="equivalente-costo">
-                  <td className="px-3 py-2 text-gray-500">Equivalente en pesos (TRM de costos $ {row.trm_costo.toLocaleString("es-CO", { maximumFractionDigits: 4 })})</td>
+                  <td className="px-3 py-2 text-gray-500">Equivalente en pesos (TRM de costos $ {row.trm_costo.toLocaleString("es-CO", { maximumFractionDigits: 4 })}, congelada al confirmar). El pago usa la TRM del día en que se paga.</td>
                   <td className="px-3 py-2 text-right tabular-nums text-gray-500">{formatMoneda(row.valor_cop_costo, "COP")}</td>
                 </tr>
               ) : null}

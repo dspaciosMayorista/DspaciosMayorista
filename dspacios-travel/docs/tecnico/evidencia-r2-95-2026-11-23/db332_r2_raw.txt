@@ -1,0 +1,223 @@
+BEGIN
+CREATE SCHEMA
+GRANT
+CREATE TABLE
+GRANT
+GRANT
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+CREATE FUNCTION
+INSERT 0 1
+INSERT 0 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+SELECT 1
+psql:<stdin>:43: WARNING:  no privileges were granted for "r2_res"
+GRANT
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+RESET
+INSERT 0 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+RESET
+UPDATE 1
+UPDATE 1
+INSERT 0 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+SELECT 1
+SELECT 1
+psql:<stdin>:77: WARNING:  no privileges were granted for "r2_res"
+GRANT
+ reg 
+-----
+ 
+(1 row)
+
+RESET
+UPDATE 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+RESET
+INSERT 0 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+RESET
+UPDATE 1
+UPDATE 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+SELECT 1
+psql:<stdin>:108: WARNING:  no privileges were granted for "r2_res"
+GRANT
+RESET
+INSERT 0 1
+SET
+ como_super 
+------------
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+RESET
+ reg 
+-----
+ 
+(1 row)
+
+ reg 
+-----
+ 
+(1 row)
+
+ n  |                                    control                                     |            observado             |             esperado             | estado 
+----+--------------------------------------------------------------------------------+----------------------------------+----------------------------------+--------
+  1 | S0 la base deriva total=1.000.000, moneda COP, pct=0,3 (condición 300.000)     | 1000000.00|COP|0.3000            | 1000000.00|COP|0.3000            | OK
+  2 | S1 un plan válido (300.000 + 700.000) se guarda                                | ok:2                             | ok:2                             | OK
+  3 | S2 total forjado en p_fuentes (filas suman 500.000) → rechazado                | err:PLAN_COBRO_FUENTES_CAMBIARON | err:PLAN_COBRO_FUENTES_CAMBIARON | OK
+  4 | S2b plan idéntico tras el rechazo                                              | true                             | true                             | OK
+  5 | S3 filas que suman 900.000 con fuentes correctas → rechazado                   | err:reemplazar_plan_cobro        | err:reemplazar_plan_cobro        | OK
+  6 | S3b plan idéntico                                                              | true                             | true                             | OK
+  7 | S4 condición congelada cambió (30 %→50 %), la aplicación usó 0,3 → rechazado   | err:PLAN_COBRO_FUENTES_CAMBIARON | err:PLAN_COBRO_FUENTES_CAMBIARON | OK
+  8 | S4b plan idéntico                                                              | true                             | true                             | OK
+  9 | S4c con el pct vigente (0,5) sí se guarda                                      | ok:2                             | ok:2                             | OK
+ 10 | S5a plan inicial del contrato sin condiciones se guarda                        | ok:2                             | ok:2                             | OK
+ 11 | S5 sin condiciones el pct sale de config_cobros (0,3)                          | 0.3000                           | 0.3000                           | OK
+ 12 | S5b config_cobros cambió a 0,6 con fuentes viejas (0,3) → rechazado            | err:PLAN_COBRO_FUENTES_CAMBIARON | err:PLAN_COBRO_FUENTES_CAMBIARON | OK
+ 13 | S5c plan idéntico                                                              | true                             | true                             | OK
+ 14 | S6a la base deriva total=250 USD y moneda efectiva USD                         | 250.00|USD                       | 250.00|USD                       | OK
+ 15 | S6b la aplicación usó la moneda/total de la OFERTA (COP 1.000.000) → rechazado | err:PLAN_COBRO_FUENTES_CAMBIARON | err:PLAN_COBRO_FUENTES_CAMBIARON | OK
+ 16 | S6c la aplicación omitió la TRM de cobro → rechazado                           | err:PLAN_COBRO_FUENTES_CAMBIARON | err:PLAN_COBRO_FUENTES_CAMBIARON | OK
+ 17 | S6d sin plan guardado tras los rechazos                                        | -                                | -                                | OK
+ 18 | S6e fuentes correctas (USD 250 = 75 + 175) se guardan                          | ok:2                             | ok:2                             | OK
+ 19 | S7 abono nuevo tras calcular → rechazado                                       | err:PLAN_COBRO_FUENTES_CAMBIARON | err:PLAN_COBRO_FUENTES_CAMBIARON | OK
+ 20 | S7b plan idéntico                                                              | true                             | true                             | OK
+ 21 | S8 anon no ejecuta plan_cobro_fuentes                                          | no puede                         | no puede                         | OK
+ 22 | S8b anon no ejecuta reemplazar_plan_cobro                                      | no puede                         | no puede                         | OK
+(22 rows)
+
+               veredicto                
+----------------------------------------
+ VEREDICTO: TODO OK (22 comprobaciones)
+(1 row)
+
+ROLLBACK

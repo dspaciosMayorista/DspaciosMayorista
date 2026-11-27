@@ -22,7 +22,7 @@ import { leerPlanB2BDePayload } from "@/lib/cotizacion/asistidaB2B";
 import { leerRecobroClienteDePayload } from "@/lib/cotizacion/recobroCarrito";
 import { monedaOfertaDeCotizacion } from "@/lib/finanzas/cobroCarrito";
 import { elegibilidadEdicion } from "@/lib/cotizacion/edicionServiciosManual";
-import { servicioDesdeFila } from "@/lib/cotizacion/liquidacionManual";
+import { servicioDesdeFila, serviciosConContenido, type ServicioManual } from "@/lib/cotizacion/liquidacionManual";
 import { resolverVinculosCotizacion } from "@/lib/reservar/vinculoServiciosCheckout";
 import { ROLES_CONTRATO_COMPLETO, puedeEscribir } from "@/lib/roles";
 import { SolicitudPendiente, type DatosSolicitudHotel } from "@/components/cotizacion/SolicitudPendiente";
@@ -46,6 +46,8 @@ import {
 } from "@/lib/personas/cotizacion";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { leerFilaCotizacionPersonas } from "@/lib/personas/altaGuardada";
+import { fichaTitularCotizacion } from "@/lib/cotizacion/fichaTitular";
+import { FichaTitularCotizacion } from "@/components/cotizacion/FichaTitularCotizacion";
 
 const TIPO_SERV_LABEL: Record<string, string> = {
   aereo: "Aéreo", hotel: "Hotel", traslado: "Traslado", asistencia: "Asistencia médica", otro: "Otro",
@@ -119,12 +121,18 @@ export default async function CotizacionDetallePage({
   const avisoPersonas = pendientesPersonas > 0
     ? <ReintentarPersonasBtn pendientes={pendientesPersonas} reintentar={reintentarPersonas} />
     : null;
+  // B2-11/B2-12a: titular y viajeros guardados, visibles antes de aceptar, descartar o convertir (de solo lectura; los puestos solo se leen si el servidor pudo consultarlos).
+  const puestosLeidos = puestosFila ? puestos : null;
+  const fichaBase = fichaTitularCotizacion(c, { puestos: puestosLeidos });
 
   // #35: una comparativa (madre) no tiene editores, pagos ni conversión: tiene su propia ficha.
   if (c.modo === "comparativa") {
     return (
       <>
-        {avisoPersonas && <div className="mx-auto max-w-3xl px-4 md:px-8">{avisoPersonas}</div>}
+        <div className="mx-auto max-w-3xl px-4 md:px-8">
+          <FichaTitularCotizacion ficha={fichaBase} estado={c.estado} />
+          {avisoPersonas}
+        </div>
         <FichaComparativa madre={c} puedeResolver hoy={hoyBogota()} />
       </>
     );
@@ -143,6 +151,7 @@ export default async function CotizacionDetallePage({
     return (
       <div className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-8">
         <SolicitudPendiente codigo={c.codigo} datos={(c.detalle as { solicitudHotel?: DatosSolicitudHotel } | null)?.solicitudHotel ?? null} />
+        <FichaTitularCotizacion ficha={fichaBase} estado={c.estado} />
         {avisoPersonas}
         <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800" data-testid="desglose-pendiente">Pendiente de valoración</p>
         <div className="rounded-xl border border-gray-200 bg-white p-4">
@@ -166,6 +175,14 @@ export default async function CotizacionDetallePage({
   // Abierta con la salida ya pasada (día de negocio de Bogotá): no se continúa ni se convierte; se muestra como tal en vez de «abierta».
   const salidaPasada = abiertaConSalidaPasada(c, hoyBogota());
   const moneda = c.moneda ?? "COP";
+  // #95 (B95-3): categoría / régimen / acomodación que el asesor dejó en cada hotel (viven en el payload guardado; la fila de la tabla no tiene esas columnas). Mismo orden que `orden`.
+  const guardadosManual = serviciosConContenido(((c.payload ?? {}) as { servicios?: ServicioManual[] }).servicios);
+  const detalleHotelGuardado = (orden: number | null): string | null => {
+    const g = orden == null ? undefined : guardadosManual[orden];
+    if (!g || g.tipo !== "hotel") return null;
+    const t = [g.categoria, g.regimen, g.acomodacion].map((x) => (x ?? "").trim()).filter(Boolean);
+    return t.length ? t.join(" · ") : null;
+  };
   const { data: serviciosManual } = esManual
     ? await sb.from("cotizacion_servicios").select("*").eq("cotizacion_id", c.id).order("orden")
     : { data: null };
@@ -370,6 +387,7 @@ export default async function CotizacionDetallePage({
         <Dato label="Asesor" value={c.asesor ?? "—"} />
       </div>
 
+      <FichaTitularCotizacion ficha={fichaTitularCotizacion(c, { puestos: puestosLeidos, pasajerosAliado: pasAliadoFila?.pasajeros })} estado={salidaPasada ? "salida pasada" : c.estado} />
       {avisoPersonas}
 
       {planB2B && <div className="mt-4"><TerminosB2BAsistido plan={planB2B} /></div>}
@@ -396,7 +414,7 @@ export default async function CotizacionDetallePage({
                   <tr key={s.id} className="border-t border-gray-50">
                     <td className="px-4 py-2 text-gray-700" data-label="Tipo">{TIPO_SERV_LABEL[s.tipo_servicio] ?? s.tipo_servicio}</td>
                     <td className="px-4 py-2 text-gray-500" data-label="Plataforma">{s.plataforma ?? "—"}</td>
-                    <td className="px-4 py-2 text-gray-500" data-label="Servicio">{s.nombre_servicio ?? "—"}</td>
+                    <td className="px-4 py-2 text-gray-500" data-label="Servicio">{s.nombre_servicio ?? "—"}{detalleHotelGuardado(s.orden ?? null) && <span className="block text-xs text-gray-400" data-testid="detalle-hotel-guardado">{detalleHotelGuardado(s.orden ?? null)}</span>}</td>
                     <td className="px-4 py-2 text-gray-500" data-label="Proveedor">{s.proveedor ?? "—"}</td>
                     <td className="px-4 py-2 text-right tabular-nums text-gray-700" data-label="Valor">{formatMoneda(s.valor ?? 0, moneda)}</td>
                   </tr>

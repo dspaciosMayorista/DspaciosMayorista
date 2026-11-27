@@ -353,6 +353,21 @@ export async function listarDestinosAereosCandidatos(destinoComercialId: number 
   };
 }
 
+// #61: duplica un paquete armado como BORRADOR (inactivo, sin publicar) en una sola transacción (`duplicar_paquete_armado`, migración 331). La función copia configuración e hijos y reutiliza por
+// referencia los catálogos; nunca copia estado de publicación, ventas ni sillas, y no genera el tarifario. Un fallo en cualquier paso no deja ninguna copia.
+export type ResultadoDuplicar = { ok: true; id: number; nombre: string; omitidas: number } | { ok: false; error: string };
+export async function duplicarPaquete(id: number): Promise<ResultadoDuplicar> {
+  if (!Number.isInteger(id) || id <= 0) return { ok: false, error: "Paquete inválido." };
+  const sb = await createClient(); // identidad:n/a — crea un paquete armado nuevo; no toca contratos
+  const { data, error } = await (sb as unknown as { rpc: (f: string, a: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> }).rpc("duplicar_paquete_armado", { p_origen: id });
+  if (error) return { ok: false, error: error.message.replace(/^F\d{4}:\s*/, "") };
+  const r = data as { id?: number; nombre?: string; salidas_vinculadas_omitidas?: number } | null;
+  const nuevo = Number(r?.id);
+  if (!Number.isInteger(nuevo) || nuevo <= 0) return { ok: false, error: "No se pudo confirmar la copia del paquete." };
+  revalidatePath("/dashboard/paquetes");
+  return { ok: true, id: nuevo, nombre: String(r?.nombre ?? ""), omitidas: Number(r?.salidas_vinculadas_omitidas ?? 0) };
+}
+
 export async function eliminarPaquete(id: number): Promise<Result> {
   const sb = await createClient();
   const { error } = await sb.from("armado_paquetes").delete().eq("id", id);
@@ -2242,6 +2257,54 @@ export async function regenerarTarifariosDeHotelAcotado(hotelId: number, inicioM
     console.error(`regenerarTarifariosDeHotelAcotado: fallo técnico para hotel_id=${hotelId}:`, err);
     return { paquetes: null, actualizados: 0, enCurso: 0, fallidos: [] };
   }
+}
+
+// ── #103 (H2): trabajo de regeneración pendiente de un hotel, leído SOLO del estado persistido ───────────────────────────────────────────────────────────────────────────────────
+// Guardar/borrar una vigencia o un cierre ya no espera la regeneración (corre en `after`). Si ese trabajo nunca arranca, se interrumpe o lo pisa otra edición, la deuda queda en la base (revision_fuente >
+// revision_publicada, ver lib/tarifario/pendientes.ts) y las combinaciones afectadas ya están ocultas (260/315). Estas dos acciones la hacen visible y la completan sin depender de memoria del navegador.
+type ClienteSb = Awaited<ReturnType<typeof createClient>>;
+async function leerPendientesDeHotel(sb: ClienteSb, hotelId: number): Promise<{ ok: true; ids: number[]; c: import("@/lib/tarifario/pendientes").Clasificacion } | { ok: false; error: string }> {
+  const { clasificarPendientes } = await import("@/lib/tarifario/pendientes");
+  const { data: rol } = await sb.rpc("mi_rol");
+  if (!rol || !["superadmin", "gerencia", "administracion", "operaciones"].includes(String(rol))) return { ok: false, error: "No tienes permiso para ver el estado de los tarifarios." };
+  const { ids, error } = await paquetesActivosDeHotel(sb, hotelId);
+  if (error) return { ok: false, error: "No se pudo consultar los paquetes del hotel." };
+  if (!ids.length) return { ok: true, ids, c: clasificarPendientes([], Date.now()) };
+  const { data: pq, error: ePq } = await sb.from("armado_paquetes").select("id, tarifario_estado, tarifario_revision_fuente, tarifario_revision_publicada").in("id", ids);
+  if (ePq) return { ok: false, error: "No se pudo consultar el estado de los tarifarios." };
+  // The moment of the latest unpublished change (tarifario_cambio_fuente has RLS without policies: read-only through the service client, AFTER the role check above).
+  const ult = new Map<number, number>();
+  const { data: cambios } = await (createAdminClient() as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: number[]) => Promise<{ data: { paquete_id: number; revision: number; creado_en: string }[] | null }> } } }).from("tarifario_cambio_fuente").select("paquete_id, revision, creado_en").in("paquete_id", ids);
+  const pub = new Map((pq ?? []).map((p) => [p.id, p.tarifario_revision_publicada ?? 0]));
+  for (const c of cambios ?? []) if (c.revision > (pub.get(c.paquete_id) ?? 0)) ult.set(c.paquete_id, Math.max(ult.get(c.paquete_id) ?? 0, Date.parse(c.creado_en)));
+  return { ok: true, ids, c: clasificarPendientes((pq ?? []).map((p) => ({ id: p.id, estado: p.tarifario_estado, revisionFuente: p.tarifario_revision_fuente, revisionPublicada: p.tarifario_revision_publicada, ultimoCambioMs: ult.get(p.id) ?? null })), Date.now()) };
+}
+
+export async function estadoTarifariosDeHotel(hotelId: number): Promise<{ ok: true; porReanudar: number; enCursoVivo: number; fallidos: number; texto: string | null; masAntiguaSeg: number | null; reanudarSolo: boolean } | { ok: false; error: string }> {
+  if (!hotelId) return { ok: false, error: "Hotel no válido." };
+  const { textoEstadoTarifarios, debeReanudarSolo } = await import("@/lib/tarifario/pendientes");
+  const r = await leerPendientesDeHotel(await createClient(), hotelId);
+  if (!r.ok) return r;
+  return { ok: true, porReanudar: r.c.reanudar.length, enCursoVivo: r.c.enCursoVivo.length, fallidos: r.c.fallidos.length, texto: textoEstadoTarifarios(r.c), masAntiguaSeg: r.c.masAntiguaMs == null || !Number.isFinite(r.c.masAntiguaMs) ? null : Math.round(r.c.masAntiguaMs / 1000), reanudarSolo: debeReanudarSolo(r.c) };
+}
+
+/** Completes ONLY what is still owed (never the whole hotel again): packages already up to date or with a live computation are not touched. Safe to repeat and safe next to a concurrent edit (generation tokens). */
+export async function reanudarTarifariosDeHotel(hotelId: number, inicioMs: number = Date.now(), opciones: { automatica?: boolean } = {}): Promise<{ ok: true; regenerados: number; omitidosVivos: number; fallidos: { paqueteId: number; error: string }[] } | { ok: false; error: string }> {
+  if (!hotelId) return { ok: false, error: "Hotel no válido." };
+  const sb = await createClient();
+  const r = await leerPendientesDeHotel(sb, hotelId);
+  if (!r.ok) return r;
+  // the automatic path leaves `fallido` packages to a person; the manual button retries everything owed
+  const lista = opciones.automatica ? r.c.reanudar.filter((id) => !r.c.fallidos.includes(id)) : r.c.reanudar;
+  const resultados = await ejecutarAcotado(lista, CONCURRENCIA_REGENERACION, (id) => generarTarifario(id, enSegundoPlano(inicioMs)));
+  const fallidos: { paqueteId: number; error: string }[] = [];
+  resultados.forEach((x, i) => {
+    if (x.status === "rejected") fallidos.push({ paqueteId: lista[i], error: "fallo técnico" });
+    else if (!x.value.ok) fallidos.push({ paqueteId: lista[i], error: x.value.error });
+  });
+  for (const x of fallidos) console.error(`reanudarTarifariosDeHotel: paquete_id=${x.paqueteId} hotel_id=${hotelId}: ${x.error}`);
+  revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
+  return { ok: true, regenerados: lista.length - fallidos.length, omitidosVivos: r.c.enCursoVivo.length, fallidos };
 }
 
 // Regenera el tarifario de los paquetes activos que usan un BLOQUEO aéreo. Se

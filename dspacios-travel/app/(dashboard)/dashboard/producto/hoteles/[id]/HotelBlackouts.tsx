@@ -1,7 +1,7 @@
 "use client";
 
 import { DateInput } from "@/components/ui/DateInput";
-import { useState, useTransition } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,31 +26,62 @@ function describirCierre(b: Blackout): string {
 export function HotelBlackouts({ hotelId, blackouts, categorias = [], esUnidad = false }: { hotelId: number; blackouts: Blackout[]; categorias?: string[]; esUnidad?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  // La lista de la página es del servidor y se refresca DESPUÉS; la pantalla no espera ese refresco para reflejar lo que ya se confirmó: un cierre borrado sale al instante
+  // (solo cuando la acción confirmó el borrado) y uno creado entra al instante. Cuando llega la lista nueva del servidor, manda ella.
+  const [ocultos, setOcultos] = useState<ReadonlySet<number>>(new Set());
+  const [agregados, setAgregados] = useState<readonly Blackout[]>([]);
+  const [eliminando, setEliminando] = useState<ReadonlySet<number>>(new Set());
+  const [guardando, setGuardando] = useState(false);
+  const [estado, setEstado] = useState("");
+  // Guardas SÍNCRONAS contra el doble clic (el estado de React aún no se repintó cuando entra el segundo clic).
+  const enVuelo = useRef<Set<number>>(new Set());
+  const guardandoRef = useRef(false);
   const [ini, setIni] = useState("");
   const [fin, setFin] = useState("");
   const [total, setTotal] = useState(true);
   const [acoms, setAcoms] = useState<AcomRoom[]>([]);
   const [cats, setCats] = useState<string[]>([]);
   const [motivo, setMotivo] = useState("");
-  const [pending, start] = useTransition();
   const [err, setErr] = useState("");
 
   function toggleAcom(a: AcomRoom) { setAcoms((p) => (p.includes(a) ? p.filter((x) => x !== a) : [...p, a])); }
   function toggleCat(c: string) { setCats((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c])); }
 
-  function agregar() {
-    setErr("");
-    start(async () => {
+  const visibles = [...blackouts.filter((b) => !ocultos.has(b.id)), ...agregados.filter((a) => !ocultos.has(a.id) && !blackouts.some((b) => b.id === a.id))].sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio));
+
+  async function agregar() {
+    if (guardandoRef.current) return;
+    guardandoRef.current = true;
+    setErr(""); setEstado(""); setGuardando(true);
+    try {
       const r = await crearBlackout({ hotelId, fechaInicio: ini, fechaFin: fin, total, acomodaciones: acoms, categorias: cats, motivo });
-      if (r.ok) { setIni(""); setFin(""); setTotal(true); setAcoms([]); setCats([]); setMotivo(""); if (r.aviso) setErr(r.aviso); router.refresh(); }
-      else setErr(r.error);
-    });
+      if (!r.ok) { setErr(r.error); return; }
+      if (r.id != null) setAgregados((p) => [...p, { id: r.id as number, fecha_inicio: ini, fecha_fin: fin, total, acomodaciones: total || !acoms.length ? null : acoms, categorias: total || !cats.length ? null : cats, motivo: motivo.trim() || null }]);
+      setIni(""); setFin(""); setTotal(true); setAcoms([]); setCats([]); setMotivo("");
+      if (r.aviso) setErr(r.aviso); else if (r.regeneracion === "diferida") setEstado("Cierre guardado. Los tarifarios se están actualizando en segundo plano.");
+      router.refresh();
+    } catch { setErr("No se pudo guardar el cierre. Intenta de nuevo."); }
+    finally { guardandoRef.current = false; setGuardando(false); }
+  }
+
+  async function eliminar(b: Blackout) {
+    if (enVuelo.current.has(b.id)) return;
+    enVuelo.current.add(b.id);
+    setErr(""); setEstado(""); setEliminando((p) => new Set(p).add(b.id));
+    try {
+      const r = await eliminarBlackout(b.id, hotelId);
+      if (!r.ok) { setErr(r.error); return; }   // no se confirmó: la fila se queda
+      setOcultos((p) => new Set(p).add(b.id));
+      if (r.aviso) setErr(r.aviso); else if (r.regeneracion === "diferida") setEstado("Cierre eliminado. Los tarifarios se están actualizando en segundo plano.");
+      router.refresh();
+    } catch { setErr("No se pudo eliminar el cierre. Intenta de nuevo."); }
+    finally { enVuelo.current.delete(b.id); setEliminando((p) => { const n = new Set(p); n.delete(b.id); return n; }); }
   }
 
   return (
     <section className="mb-6 rounded-xl border border-gray-200 bg-white">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-4 py-3 text-left">
-        <span className="text-sm font-semibold text-gray-700">Black out general <span className="font-normal text-gray-400">({blackouts.length})</span></span>
+        <span className="text-sm font-semibold text-gray-700">Black out general <span className="font-normal text-gray-400">({visibles.length})</span></span>
         <span className="text-gray-400">{open ? "▾" : "▸"}</span>
       </button>
       {open && (
@@ -108,20 +139,21 @@ export function HotelBlackouts({ hotelId, blackouts, categorias = [], esUnidad =
           )}
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1"><label className="mb-1 block text-xs text-gray-600">Motivo (opcional)</label><Input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. Sin disponibilidad / mantenimiento" /></div>
-            <Button onClick={agregar} disabled={pending} style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Agregar cierre"}</Button>
+            <Button onClick={agregar} disabled={guardando} style={{ backgroundColor: "var(--brand-primary)" }}>{guardando ? "Guardando…" : "Agregar cierre"}</Button>
           </div>
-          {err && <p className="text-sm text-red-600">{err}</p>}
+          {err && <p role="alert" className="text-sm text-red-600">{err}</p>}
+          {estado && <p role="status" className="text-sm text-gray-500">{estado}</p>}
 
-          {blackouts.length > 0 && (
+          {visibles.length > 0 && (
             <ul className="divide-y divide-gray-100">
-              {blackouts.map((b) => (
+              {visibles.map((b) => (
                 <li key={b.id} className="flex items-center justify-between py-2 text-sm">
                   <span className="text-gray-700">
                     {b.fecha_inicio} → {b.fecha_fin} · {b.total ? "Cierre total" : describirCierre(b)}
                     {b.motivo ? ` · ${b.motivo}` : ""}
                     {esUnidad && cierreNoAplicaAUnidad(b) && <span data-testid="cierre-no-aplica" className="ml-2 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">No aplica: tarifa por unidad</span>}
                   </span>
-                  <button type="button" onClick={() => start(() => { void eliminarBlackout(b.id, hotelId).then((r) => { setErr(r.ok ? (r.aviso ?? "") : r.error); router.refresh(); }); })} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+                  <button type="button" disabled={eliminando.has(b.id)} onClick={() => void eliminar(b)} className="text-xs text-gray-400 hover:text-red-500 disabled:opacity-50">{eliminando.has(b.id) ? "Eliminando…" : "Eliminar"}</button>
                 </li>
               ))}
             </ul>

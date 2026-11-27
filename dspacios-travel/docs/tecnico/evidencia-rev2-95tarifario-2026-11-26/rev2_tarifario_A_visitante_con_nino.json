@@ -1,0 +1,406 @@
+{
+  "contexto": {
+    "opcion": "A",
+    "conNino": true,
+    "canal": "visitante",
+    "total": 1020000
+  },
+  "venta": {
+    "numero_contrato": "DTM-0005",
+    "cliente": "Visitante Tarifario",
+    "cliente_documento": "900956001",
+    "estado": "confirmado",
+    "moneda": "COP",
+    "precio_venta": 1020000,
+    "pax": 3,
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "asesor": "Asesor 95T",
+    "tipo_asesor": "interno",
+    "tenant": "mayorista",
+    "destino": "CARTAGENA 95T",
+    "plan_nombre": "Estandar · Desayuno",
+    "hotel": "Hotel Alfa 95T",
+    "tours_traslados": null,
+    "asistencia_medica": true
+  },
+  "items": [
+    {
+      "id": 12,
+      "numero_contrato": "DTM-0005",
+      "descripcion": "1 hab Doble (2 pax) · Estandar / Desayuno",
+      "adultos": 2,
+      "ninos": 0,
+      "tarifa_adulto": 375000,
+      "tarifa_nino": 0,
+      "orden": 0,
+      "modo_precio": "por_persona"
+    },
+    {
+      "id": 13,
+      "numero_contrato": "DTM-0005",
+      "descripcion": "Niño 1 · Estandar / Desayuno",
+      "adultos": 0,
+      "ninos": 1,
+      "tarifa_adulto": 0,
+      "tarifa_nino": 150000,
+      "orden": 50,
+      "modo_precio": "por_persona"
+    },
+    {
+      "id": 14,
+      "numero_contrato": "DTM-0005",
+      "descripcion": "Servicio · Asistencia médica 95T — CARTAGENA 95T",
+      "adultos": 1,
+      "ninos": 0,
+      "tarifa_adulto": 120000,
+      "tarifa_nino": 0,
+      "orden": 9000,
+      "modo_precio": "por_persona"
+    }
+  ],
+  "hoteles": [
+    {
+      "id": 5,
+      "numero_contrato": "DTM-0005",
+      "nombre": "Hotel Alfa 95T",
+      "ciudad": "CARTAGENA 95T",
+      "alimentacion": "Desayuno",
+      "acomodacion": "Estandar",
+      "detalle_acomodacion": "1 hab Doble (2 pax), 1 Niño 1",
+      "fecha_ingreso": "2030-03-01",
+      "fecha_salida": "2030-03-04",
+      "orden": 0,
+      "categoria": "Estandar",
+      "proveedor": "Proveedor 95T",
+      "condiciones_tarifa": [],
+      "compra_origen": null,
+      "plataforma": null
+    }
+  ],
+  "pasajeros": [
+    {
+      "id": 12,
+      "numero_contrato": "DTM-0005",
+      "nombre": "Visitante Tarifario",
+      "tipo_id": "CC",
+      "identificacion": "900956001",
+      "fecha_nacimiento": "1990-01-01",
+      "es_infante": false,
+      "orden": 0,
+      "nacionalidad": "Colombiana",
+      "responsable_id": null,
+      "nombres": "Visitante",
+      "apellidos": "Tarifario"
+    },
+    {
+      "id": 13,
+      "numero_contrato": "DTM-0005",
+      "nombre": "Acompañante Tarifario",
+      "tipo_id": "CC",
+      "identificacion": "900956002",
+      "fecha_nacimiento": "1991-02-02",
+      "es_infante": false,
+      "orden": 1,
+      "nacionalidad": "Colombiana",
+      "responsable_id": null,
+      "nombres": "Acompañante",
+      "apellidos": "Tarifario"
+    },
+    {
+      "id": 14,
+      "numero_contrato": "DTM-0005",
+      "nombre": "Menor Tarifario",
+      "tipo_id": "TI",
+      "identificacion": "900956003",
+      "fecha_nacimiento": "2022-01-01",
+      "es_infante": false,
+      "orden": 2,
+      "nacionalidad": "Colombiana",
+      "responsable_id": null,
+      "nombres": "Menor",
+      "apellidos": "Tarifario"
+    }
+  ],
+  "resumen": [
+    {
+      "numero_contrato": "DTM-0005",
+      "resumen": {
+        "moneda": "COP",
+        "version": 1,
+        "unidades": [
+          {
+            "ref": "item-0",
+            "hotel": "Hotel Alfa 95T",
+            "grupos": [
+              {
+                "tipo": "adulto",
+                "cupos": [
+                  "adulto:doble#1",
+                  "adulto:doble#2"
+                ],
+                "incluye": [
+                  "Asistencia médica 95T"
+                ],
+                "cantidad": 2,
+                "tarifaCentavos": 41500000,
+                "subtotalCentavos": 83000000,
+                "tarifaExactaCentavos": 41500000
+              },
+              {
+                "tipo": "nino",
+                "cupos": [
+                  "nino#1"
+                ],
+                "incluye": [
+                  "Asistencia médica 95T"
+                ],
+                "cantidad": 1,
+                "tarifaCentavos": 19000000,
+                "subtotalCentavos": 19000000,
+                "tarifaExactaCentavos": 19000000
+              }
+            ],
+            "paquete": {
+              "id": 9560,
+              "nombre": "Porción 95T"
+            },
+            "regimen": "Desayuno",
+            "categoria": "Estandar",
+            "totalCentavos": 102000000,
+            "ajusteCentavos": 0
+          }
+        ],
+        "modalidad": "pvp",
+        "totalCentavos": 102000000
+      },
+      "created_at": "2026-11-27T03:46:31.013538+00:00"
+    }
+  ],
+  "servicios": [],
+  "pagado": 1020000,
+  "cotizacion_hija": {
+    "id": 17,
+    "codigo": "C-0017",
+    "modo": "simple",
+    "tipo": "carrito",
+    "estado": "convertida",
+    "moneda": "COP",
+    "precio_venta": 1020000,
+    "pax": 3,
+    "cliente": "Visitante Tarifario",
+    "destino": "CARTAGENA 95T",
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "vigencia_hasta": "2026-11-27",
+    "detalle": {
+      "cobro": {
+        "trm": null,
+        "moneda": "COP"
+      },
+      "items": [
+        {
+          "id": 1,
+          "ninos": 0,
+          "adultos": 2,
+          "descripcion": "Hotel Alfa 95T — CARTAGENA 95T · 1 hab Doble (2 pax) · Estandar / Desayuno",
+          "tarifa_nino": 0,
+          "tarifa_adulto": 375000
+        },
+        {
+          "id": 2,
+          "ninos": 1,
+          "adultos": 0,
+          "descripcion": "Hotel Alfa 95T — CARTAGENA 95T · Niño 1 · Estandar / Desayuno",
+          "tarifa_nino": 150000,
+          "tarifa_adulto": 0
+        },
+        {
+          "id": 3,
+          "ninos": 0,
+          "adultos": 1,
+          "descripcion": "Servicio · Asistencia médica 95T — CARTAGENA 95T",
+          "tarifa_nino": 0,
+          "tarifa_adulto": 120000
+        }
+      ],
+      "venta": {
+        "pax": 3,
+        "asesor": null,
+        "estado": "pendiente",
+        "moneda": "COP",
+        "cliente": "Visitante Tarifario",
+        "destino": "CARTAGENA 95T",
+        "plan_nombre": "Estandar · Desayuno",
+        "fecha_salida": "2030-03-01",
+        "fecha_emision": "2026-11-26",
+        "fecha_regreso": "2030-03-04",
+        "numero_contrato": "",
+        "tours_traslados": null,
+        "cliente_telefono": "3009560001",
+        "asistencia_medica": true,
+        "cliente_direccion": null,
+        "cliente_documento": "900956001",
+        "asesor_firma_cargo": null,
+        "asesor_firma_nombre": null,
+        "cliente_tipo_documento": null
+      },
+      "vuelos": [],
+      "agrupar": "todo",
+      "hoteles": [
+        {
+          "id": 1,
+          "ref": "item-0",
+          "ciudad": "CARTAGENA 95T",
+          "nombre": "Hotel Alfa 95T",
+          "foto_url": null,
+          "categoria": "Estandar",
+          "proveedor": null,
+          "acomodacion": "Estandar",
+          "alimentacion": "Desayuno",
+          "fecha_salida": "2030-03-04",
+          "nota_regimen": null,
+          "fecha_ingreso": "2030-03-01",
+          "edades_menores": [
+            8
+          ],
+          "condiciones_tarifa": [],
+          "detalle_acomodacion": "1 hab Doble (2 pax), 1 Niño 1",
+          "distribucion_menores": [
+            {
+              "acom": "doble",
+              "nino": 1,
+              "nino2": 0,
+              "indice": 0,
+              "adultos": 2,
+              "infantes": 0
+            }
+          ],
+          "menores_clasificados": {
+            "nino": 1,
+            "nino2": 0,
+            "infantes": 0
+          }
+        }
+      ],
+      "incluye": "Alojamiento en Hotel Alfa 95T (Estandar, plan Desayuno)\nAsistencia médica (Asistencia médica 95T)",
+      "contratos": [
+        "DTM-0005"
+      ],
+      "noIncluye": "",
+      "pasajeros": [],
+      "identidades": {
+        "DTM-0005": "d29f9746-7638-462e-ad39-d5df9d6c2006"
+      },
+      "resumenPrecios": {
+        "moneda": "COP",
+        "version": 1,
+        "unidades": [
+          {
+            "ref": "item-0",
+            "hotel": "Hotel Alfa 95T",
+            "grupos": [
+              {
+                "tipo": "adulto",
+                "cupos": [
+                  "adulto:doble#1",
+                  "adulto:doble#2"
+                ],
+                "incluye": [
+                  "Asistencia médica 95T"
+                ],
+                "cantidad": 2,
+                "tarifaCentavos": 41500000,
+                "subtotalCentavos": 83000000,
+                "tarifaExactaCentavos": 41500000
+              },
+              {
+                "tipo": "nino",
+                "cupos": [
+                  "nino#1"
+                ],
+                "incluye": [
+                  "Asistencia médica 95T"
+                ],
+                "cantidad": 1,
+                "tarifaCentavos": 19000000,
+                "subtotalCentavos": 19000000,
+                "tarifaExactaCentavos": 19000000
+              }
+            ],
+            "paquete": {
+              "id": 9560,
+              "nombre": "Porción 95T"
+            },
+            "regimen": "Desayuno",
+            "categoria": "Estandar",
+            "totalCentavos": 102000000,
+            "ajusteCentavos": 0
+          }
+        ],
+        "modalidad": "pvp",
+        "totalCentavos": 102000000
+      },
+      "contratosPorGrupo": {
+        "__sin_destino__": "DTM-0005"
+      },
+      "composicionBernalo": [],
+      "habitacionesBernalo": []
+    },
+    "payload": {
+      "items": [
+        {
+          "pax": 3,
+          "ref": "item-0",
+          "ninos": 1,
+          "modulo": "porcion_terrestre",
+          "ninos2": 0,
+          "noches": 3,
+          "precio": 900000,
+          "destino": "CARTAGENA 95T",
+          "hotelId": 9561,
+          "regimen": "Desayuno",
+          "fechaIda": "2030-03-01",
+          "infantes": 0,
+          "bloqueoId": null,
+          "categoria": "Estandar",
+          "paqueteId": 9560,
+          "hotelNombre": "Hotel Alfa 95T",
+          "fechaRegreso": "2030-03-04",
+          "habitaciones": {
+            "doble": 1
+          },
+          "edadesMenores": [
+            8
+          ],
+          "cantidadMenores": 1
+        }
+      ],
+      "tours": [
+        {
+          "pax": 3,
+          "moneda": "COP",
+          "noches": 3,
+          "nombre": "Asistencia médica 95T",
+          "precio": 120000,
+          "destino": "CARTAGENA 95T",
+          "fechaIda": "2030-03-01",
+          "hotelRef": "item-0",
+          "categoria": "asistencia",
+          "paqueteId": 9560,
+          "servicioId": 9561,
+          "descripcion": null,
+          "fechaRegreso": "2030-03-04"
+        }
+      ],
+      "cliente": {
+        "email": "visitante.tarifario@example.com",
+        "nombres": "Visitante",
+        "telefono": "3009560001",
+        "apellidos": "Tarifario",
+        "numeroDoc": "900956001"
+      },
+      "serviciosIncluidos": []
+    }
+  }
+}

@@ -1,0 +1,278 @@
+OK   0.1 compiled app answers /login  — 200
+OK   1 webhook no Authorization → 401  — got 401
+OK   1 webhook wrong Bearer → 401  — got 401
+OK   1 webhook Basic scheme with the right secret → 401  — got 401
+OK   1 webhook with the CRON secret → 401  — got 401
+OK   1 webhook right secret, 70 KB body → 413  — got 413
+OK   1 webhook GET (method not allowed) → 405  — got 405
+OK   1 cron no Authorization → 401  — got 401
+OK   1 cron wrong Bearer → 401  — got 401
+OK   1 cron with the WEBHOOK secret → 401  — got 401
+OK   1.x rejected requests made ZERO Mail API calls  — 0 calls
+OK   1.y no event, state or backlog row created by rejected requests
+  run 1: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":5,"revisados":301,"yaRegistrados":0,"nuevos":0,"procesados":0,"progresoParcial":0} wall=7008ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":1000,"con_umbral":true,"version":4}
+  run 2: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":300,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":0} wall=7043ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":700,"con_umbral":true,"version":7}
+  run 3: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":5,"revisados":500,"yaRegistrados":0,"nuevos":0,"procesados":0,"progresoParcial":0} wall=7019ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":200,"con_umbral":true,"version":12}
+  run 4: 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":2,"revisados":196,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":1} wall=7036ms sim=5 cursor={"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":5,"con_umbral":true,"version":14}
+  run 5: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":2,"revisados":5,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":0} wall=4983ms sim=4 cursor={"uid_cubierto":1300,"barrido_tope":null,"barrido_siguiente":null,"con_umbral":false,"version":15}
+OK   2.1 the first run could not finish a 1,300-message mailbox (202, incomplete)  — status 202
+OK   2.2 each run stayed inside the budget (wall ≤ 11 s, ≤ 60 provider calls)  — 7008ms/5 7043ms/5 7019ms/5 7036ms/5 4983ms/4
+OK   2.3 the position survived an app restart (run 2 resumed below run 1's position)  — {"uid_cubierto":0,"barrido_tope":1300,"barrido_siguiente":1000,"con_umbral":true,"version":4}
+OK   2.4 eventually complete (200) with the cursor at the newest uid  — runs=5, cursor={"uid_cubierto":1300,"barrido_tope":null,"barrido_siguiente":null,"con_umbral":false,"version":15}
+OK   2.5 the three replies hidden behind >1,000 newer unrelated messages were recorded exactly once  — hostinger:ACwalk0000test1:<w1000@proveedor.test>,hostinger:ACwalk0000test1:<w130@proveedor.test>,hostinger:ACwalk0000test1:<w5@proveedor.test>
+  run A: 202 {"completo":false,"pendiente":true,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":1,"pendientesRecuperados":0,"pendientesRestantes":1,"paginas":3,"revisados":3,"yaRegistrados":0,"nuevos":2,"procesados":2,"progresoParcial":0} wall=4386ms
+OK   3.1 a reply whose download keeps failing (503) is PARKED, others still recorded  — parked=1 events=5
+OK   3.2 an incomplete pass answers 202 (never a false 200)  — 202
+  run B (cron): 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":1,"pendientesRestantes":0,"paginas":1,"revisados":0,"yaRegistrados":0,"nuevos":1,"procesados":1,"progresoParcial":0} wall=1665ms
+OK   3.3 the next pass (scheduled drain) recovers the parked reply and clears the backlog without any new email  — parked=0 events=6
+  run C (hang): 202 {"completo":false,"pendiente":true,"barridoEnCurso":true,"conflicto":false,"presupuestoAgotado":true,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":2,"revisados":1,"yaRegistrados":0,"nuevos":0,"procesados":0,"progresoParcial":0} wall=7017ms
+OK   3.4 a provider that never answers cannot hold the request past the budget (wall ≤ 12 s)  — 7017 ms
+OK   3.5 …and the reply is recovered by the next pass  — events=7 parked=0
+  concurrent 0: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":2,"procesados":8,"progresoParcial":0} wall=5691ms
+  concurrent 1: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=5679ms
+  concurrent 2: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=5679ms
+  concurrent 3: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":1,"procesados":8,"progresoParcial":0} wall=5691ms
+  concurrent 4: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":2,"procesados":8,"progresoParcial":0} wall=5679ms
+  concurrent 5: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":0,"procesados":8,"progresoParcial":0} wall=5706ms
+  concurrent 6: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":1,"procesados":8,"progresoParcial":0} wall=5679ms
+  concurrent 7: 200 {"completo":true,"pendiente":false,"barridoEnCurso":false,"conflicto":false,"presupuestoAgotado":false,"pendientesGuardados":0,"pendientesRecuperados":0,"pendientesRestantes":0,"paginas":3,"revisados":8,"yaRegistrados":0,"nuevos":2,"procesados":8,"progresoParcial":0} wall=5690ms
+OK   4.1 every one of the 8 replies recorded exactly once under 8 simultaneous passes  — 8 rows
+OK   4.2 no 5xx and no unauthenticated answer among the concurrent passes  — 200,200,200,200,200,200,200,200
+OK   4.3 the passes really overlapped at the provider (max in-flight > 1)  — maxInflight=9
+OK   4.4 state coherent: cursor at the newest uid, no running sweep, backlog empty  — {"uid_cubierto":1407,"barrido_tope":null,"barrido_siguiente":null,"con_umbral":false,"version":21}
+OK   4.5 on-screen notices created once per new reply (not once per concurrent pass)  — +8
+OK   4.6 internal e-mail notices sent exactly once per new reply (Mailpit)  — +8
+OK   5.1 the same Message-ID under a new uid creates no new event and no notice  — events 15/15, yaRegistrados=1
+OK   5.2 an idle pass costs ONE list call and no downloads  — {"listas":1,"busquedas":0,"descargas":0}
+OK   6.1 replied requests are «respondida» and none is confirmed/rejected by a reply  — ["2:respondida","3:respondida","4:respondida","5:respondida","6:respondida","7:respondida","8:respondida","9:enviada"]
+OK   6.2 the contracts' own state is untouched
+  contracts: DTM-2001:pendiente,DTM-2002:pendiente
+
+JOURNEY PASSED: 32/32 checks
+{
+ "escenarios": {
+  "2-continuation": [
+   {
+    "llamadas": 5,
+    "listas": 1,
+    "busquedas": 4,
+    "descargas": 0,
+    "msTotal": 6038,
+    "maxMs": 1215,
+    "sinAuth": 0,
+    "transaccionesBd": 16,
+    "msPared": 7115,
+    "rssAppMB": 141
+   },
+   {
+    "llamadas": 5,
+    "listas": 0,
+    "busquedas": 3,
+    "descargas": 2,
+    "msTotal": 6032,
+    "maxMs": 1214,
+    "sinAuth": 0,
+    "transaccionesBd": 32,
+    "msPared": 7171,
+    "rssAppMB": 140
+   },
+   {
+    "llamadas": 5,
+    "listas": 0,
+    "busquedas": 5,
+    "descargas": 0,
+    "msTotal": 6046,
+    "maxMs": 1214,
+    "sinAuth": 0,
+    "transaccionesBd": 11,
+    "msPared": 7120,
+    "rssAppMB": 114
+   },
+   {
+    "llamadas": 5,
+    "listas": 0,
+    "busquedas": 2,
+    "descargas": 3,
+    "msTotal": 6062,
+    "maxMs": 1216,
+    "sinAuth": 0,
+    "transaccionesBd": 13,
+    "msPared": 7135,
+    "rssAppMB": 117
+   },
+   {
+    "llamadas": 4,
+    "listas": 1,
+    "busquedas": 1,
+    "descargas": 2,
+    "msTotal": 4828,
+    "maxMs": 1210,
+    "sinAuth": 0,
+    "transaccionesBd": 11,
+    "msPared": 5082,
+    "rssAppMB": 118
+   }
+  ],
+  "3-parked": [
+   {
+    "llamadas": 13,
+    "listas": 2,
+    "busquedas": 1,
+    "descargas": 10,
+    "msTotal": 2,
+    "maxMs": 1,
+    "sinAuth": 0,
+    "transaccionesBd": 15,
+    "msPared": 4486,
+    "rssAppMB": 118
+   },
+   {
+    "llamadas": 5,
+    "listas": 1,
+    "busquedas": 0,
+    "descargas": 4,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 15,
+    "msPared": 1760,
+    "rssAppMB": 120
+   }
+  ],
+  "3-hang": [
+   {
+    "llamadas": 2,
+    "listas": 1,
+    "busquedas": 1,
+    "descargas": 0,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 7,
+    "msPared": 7123,
+    "rssAppMB": 120
+   },
+   {
+    "llamadas": 4,
+    "listas": 1,
+    "busquedas": 1,
+    "descargas": 2,
+    "msTotal": 1,
+    "maxMs": 1,
+    "sinAuth": 0,
+    "transaccionesBd": 10,
+    "msPared": 237,
+    "rssAppMB": 121
+   }
+  ],
+  "4-concurrency": [
+   {
+    "llamadas": 152,
+    "listas": 16,
+    "busquedas": 8,
+    "descargas": 128,
+    "msTotal": 39121,
+    "maxMs": 265,
+    "sinAuth": 0,
+    "transaccionesBd": 295,
+    "msPared": 5812,
+    "rssAppMB": 139
+   }
+  ],
+  "5-dedupe": [
+   {
+    "llamadas": 3,
+    "listas": 2,
+    "busquedas": 1,
+    "descargas": 0,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 55,
+    "msPared": 208,
+    "rssAppMB": 140
+   }
+  ],
+  "5-idle": [
+   {
+    "llamadas": 1,
+    "listas": 1,
+    "busquedas": 0,
+    "descargas": 0,
+    "msTotal": 0,
+    "maxMs": 0,
+    "sinAuth": 0,
+    "transaccionesBd": 21,
+    "msPared": 128,
+    "rssAppMB": 140
+   }
+  ]
+ },
+ "libreMinMB": 4196,
+ "libreInicialMB": 4284,
+ "rssAppInicialMB": 141,
+ "continuacion": {
+  "corridas": [
+   {
+    "run": 1,
+    "status": 202,
+    "wallMs": 7008,
+    "simCalls": 5,
+    "searches": 4,
+    "downloads": 0,
+    "tx": 16
+   },
+   {
+    "run": 2,
+    "status": 202,
+    "wallMs": 7043,
+    "simCalls": 5,
+    "searches": 3,
+    "downloads": 2,
+    "tx": 32
+   },
+   {
+    "run": 3,
+    "status": 202,
+    "wallMs": 7019,
+    "simCalls": 5,
+    "searches": 5,
+    "downloads": 0,
+    "tx": 11
+   },
+   {
+    "run": 4,
+    "status": 202,
+    "wallMs": 7036,
+    "simCalls": 5,
+    "searches": 2,
+    "downloads": 3,
+    "tx": 13
+   },
+   {
+    "run": 5,
+    "status": 200,
+    "wallMs": 4983,
+    "simCalls": 4,
+    "searches": 1,
+    "downloads": 2,
+    "tx": 11
+   }
+  ]
+ },
+ "libreFinalMB": 4245,
+ "rssAppFinalMB": 140,
+ "contenedores": [
+  "v1real_stor 94.62MiB / 256MiB 0.00%",
+  "v1real_rest 97.13MiB / 160MiB 0.33%",
+  "v1real_auth 11.15MiB / 192MiB 0.00%",
+  "v1real_mail 27.37MiB / 64MiB 0.04%",
+  "pg127 228.5MiB / 7.205GiB 2.85%"
+ ],
+ "totales": {
+  "eventos": 15,
+  "avisosEnPantalla": 15,
+  "correosInternos": 15
+ }
+}
+{"exit":0,"abortado":false,"segundos":79,"libreInicialMB":null,"libreMinimaMB":4113,"pisoMB":400}

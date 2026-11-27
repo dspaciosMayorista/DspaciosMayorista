@@ -1,0 +1,75 @@
+OK   O2.1 stop: when the child step fails the exit status is non-zero  — exit 1
+OK   O2.2 …and the output never claims the session stopped
+OK   O2.3 stop: the child step «succeeds» but the OBSERVED state is not stopped → non-zero, honest message
+OK   O2.4 stop: success only when the step succeeded AND the stopped state was observed
+OK   O2.5 start: failing steps → non-zero and «NOT READY» (never «READY»)
+OK   O2.6 start: steps «succeed» but readiness fails → non-zero, NOT READY, the failing check is listed
+OK   O2.7 reset without the explicit flag refuses (exit 2) and runs nothing
+OK   O1.1 start on a seeded review with a missing container record refuses to re-create anything  — This review was already seeded but its dedicated-container record is missing. Refusing to re-create 
+OK   O3.1 every review entry point resolves its settings through ajustesRevision (none calls ajustes() directly)  — review.mjs, review_reply.mjs, seed_review.mjs, review_browser.mjs, review_huella.mjs
+OK   O3.2 with no environment the review folder is %USERPROFILE%\hostinger-review-103 for all of them
+OK   O3.3 HJ_REVIEW_DIR moves every entry point to the same folder
+OK   O3.4 a fresh process of review_reply.mjs honours HJ_REVIEW_DIR (it looks for the config in THAT folder)  — Error: No config at C:\Users\Usuario\AppData\Local\Temp\hj103-reviewchk-6sIJgZ\otra\config.json. Run: node harness.mjs i
+
+REVIEW WRAPPER CHECKS PASSED: 12/12
+R_EXIT=0
+OK   0.1 init generates credentials in a folder OUTSIDE the repository  — config ready in C:\Users\Usuario\AppData\Local\Temp\hj103-checks-7OZG8V (generated credentials stay there; never copy them into the repository)
+OK   0.2 init refuses a work folder inside the repository (credentials never tracked)  — harness: HJ_WORK (C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\hotel-cal-
+OK   0.3 no build is touched: .next/BUILD_ID present and unchanged by the checks
+OK   1.0 two foreign listeners are up (fixture)
+OK   1.1 app-start REFUSES an occupied foreign port (non-zero exit, named reason)  — harness: Refused: port 39471 is already in use by pid 19264 — not ours, left untouched.
+OK   1.2 …and the foreign process was neither killed nor replaced
+OK   1.3 app-stop with NO launcher record is a no-op (nothing owned, nothing stopped)  — {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+OK   1.4 a record pointing at a FOREIGN pid (right start time, wrong command line) is refused, foreign survives  — {"estado":"rechazado","detalle":"pid 19264 is NOT the process this launcher started (command line does not contain the launcher marker); lef
+OK   1.5 PID-reuse protection: right pid, WRONG start time → refused, foreign survives  — {"estado":"rechazado","detalle":"pid 19264 is NOT the process this launcher started (start time differs (record 2020-01-01T00:00:00.0000000Z
+OK   1.6 a stale record of a dead process is just forgotten  — {"estado":"ya-detenido"}
+OK   1.7 a forged record never makes start kill the foreign port owner (start still refuses)  — harness: Refused: port 39471 is already in use by pid 19264 — not ours, left untouched.
+OK   2.1 app-start succeeds on the free port and reports loopback-only  — app listening ONLY on 127.0.0.1:39471 (pid 20524); non-loopback addresses of this machine refuse connections
+OK   2.2 the ONLY listener address is 127.0.0.1  — ["127.0.0.1"]
+OK   2.3 every non-loopback address of this machine (192.168.1.156, 172.31.96.1, 172.25.112.1) refuses a connection to the app  — refused on 192.168.1.156,172.31.96.1,172.25.112.1
+OK   2.4 the listener belongs to the process the launcher started (pid/descendants) and the record carries its start time  — pid 20524
+OK   2.5 the compiled app answers HTTP on 127.0.0.1  — GET /login → 200
+OK   2.6 a second app-start while ours runs is refused and does not disturb it
+OK   2.7 the foreign listener on another port is untouched by all of this
+OK   2.8 app-restart replaces only our process (old pid gone, new pid owns the port)  — 20524 → 16620
+OK   2.9 app-stop stops exactly our verified process; port free; foreign still alive  — {"estado":"detenido","pid":16620}
+OK   2.10 the product build was not touched
+OK   3.1 control: `next start` WITHOUT -H listens beyond loopback and the detector reports it (so 2.2/2.3 are meaningful)  — listeners ::; reachable on 192.168.1.156,172.31.96.1,172.25.112.1
+
+HARNESS CHECKS PASSED: 22/22
+H_EXIT=0
+OK   0.1 init generates credentials outside the repository
+OK   A1.0 control container fixture: roles, databases, data and a held session on a template-named database  — 1 session(s)
+OK   A1.1 up         against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 seed       against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 down       against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 pg-destroy against an unowned container is refused  — harness: Refused: «hj103_check_control» is not the harness-owned PostgreSQL container (hj103_pg). The harness mutates ON
+OK   A1.1 pg-create  against an unowned container is refused  — harness: pg-create makes only the dedicated container hj103_pg; unset HJ_PG_CONTAINER.
+OK   A1.2 …and the control's role verifiers, databases, data and held template session are UNCHANGED  — {"roles":"anon:-;authenticator:SCRAM-SHA-256$4096:96E7DDrS+M+RXfDVTkFoDw==$idlHs…
+OK   A1.3 …and the harness created nothing: no harness container/network exists
+OK   A2.1 up         on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.1 seed       on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.1 down       on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.1 pg-destroy on a labeled look-alike with NO ownership record is refused  — harness: Refused: this work folder has no ownership record for a harness PostgreSQL container. Run: node harne
+OK   A2.2 pg-create refuses to replace/touch an existing container named hj103_pg  — harness: Refused: a container named hj103_pg already exists; it is not touched. If it is the harness
+OK   A2.3 a record with a DIFFERENT container id is refused  — harness: Refused: container hj103_pg is not the one this work folder created (container id differs f
+OK   A2.4 …even then the container holding NON-harness databases is refused (defence in depth)  — harness: Refused: the dedicated container holds non-harness databases (ctl_data); the harness will not change cluster-wi
+OK   A2.5 seed is refused for the same reason
+OK   A2.6 the look-alike's role verifiers, databases, data and held template session are UNCHANGED
+OK   B1 pg-create builds the dedicated container and loads the template read-only  — 34 s; dedicated PostgreSQL container hj103_pg ready (ownership recorded in C:\Users\Usuario\AppD
+OK   B2 ownership record = the container's full id; harness labels set; no published port  — 046bd2e218c6
+OK   B3 up    refuses an owned container that holds a non-harness database  — harness: Refused: the dedicated container holds non-harness databases (foreign_db); the harness will
+OK   B3 seed  refuses an owned container that holds a non-harness database  — harness: Refused: the dedicated container holds non-harness databases (foreign_db); the harness will
+OK   B3.1 …and the cluster roles were not touched by those refusals
+OK   B4 seed on a database the harness did not create (unmarked) is refused with data unchanged  — harness: Refused: database hj103_unmarked_chk exists but is NOT marked as a disposable har
+OK   B4 up   on a database the harness did not create (unmarked) is refused with data unchanged  — harness: Refused: database hj103_unmarked_chk exists but is NOT marked as a disposable har
+OK   B4 down on a database the harness did not create (unmarked) is refused with data unchanged  — harness: Refused: database hj103_unmarked_chk exists but is NOT marked as a disposable har
+OK   B5 up SUCCEEDS on the owned container (template → database → roles → migrations → Mailpit/GoTrue/PostgREST/gateway)  — 19 s
+OK   B6 seed SUCCEEDS on the harness-marked database  — seeded: 4 users, 2 contracts, 8 requests
+OK   B7 the database carries the harness marker and the cluster roles changed ONLY inside the owned container
+OK   B8 down removes the stack and drops the marked database; the template stays
+OK   B9 pg-destroy removes exactly the verified dedicated container and its record
+OK   C1 the source container (template donor) kept its role verifiers and database list through the whole run
+
+PG OWNERSHIP CHECKS PASSED: 32/32
+P_EXIT=0

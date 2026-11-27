@@ -285,8 +285,11 @@ describe("fuente autoritativa: REFERENCIAS_DESTINO == FKs a destinos(id) en las 
 
   test("el conjunto de tablas coincide exactamente (una FK nueva obliga a actualizar el modal)", () => {
     const enMigraciones = [...new Set(fks.map((f) => f.tabla))].sort();
-    const enModulo = REFERENCIAS_DESTINO.map((r) => r.tabla).slice().sort();
+    // 334 (#29): `armado_paquete_destinos_aereos` (220) referencia destinos(id) SIN llave foránea, a propósito; se cuenta igual.
+    const SIN_FK = ["armado_paquete_destinos_aereos"];
+    const enModulo = REFERENCIAS_DESTINO.map((r) => r.tabla).filter((t) => !SIN_FK.includes(t)).sort();
     assert.deepEqual(enModulo, enMigraciones);
+    for (const t of SIN_FK) assert.ok(REFERENCIAS_DESTINO.some((r) => r.tabla === t), `${t} debe seguir contándose en el modal`);
   });
 
   test("ninguna FK a destinos declara ON DELETE: cualquier fila bloquea el borrado (premisa del texto del modal)", () => {
@@ -302,7 +305,7 @@ describe("fuente autoritativa: REFERENCIAS_DESTINO == FKs a destinos(id) en las 
     );
     // #5 D8/D9: la 237 la redefine SOLO para añadir la guarda de Mayorista (SECURITY DEFINER se salta la RLS).
     // #82 (275): una tercera redefinición agrega SOLO el reapuntado de `paquete_din.destinos_extra` (arreglo sin FK); se verifica abajo.
-    assert.deepEqual(redefiniciones, ["20260601000112_fusionar_destino.sql", "20260601000237_catalogos_globales_frontera_mayorista.sql", "20260601000275_paquete_dinamico_auditoria.sql"]);
+    assert.deepEqual(redefiniciones, ["20260601000112_fusionar_destino.sql", "20260601000237_catalogos_globales_frontera_mayorista.sql", "20260601000275_paquete_dinamico_auditoria.sql", "20260601000334_destinos_aereos_alternativos_integridad.sql"]);
     const f237 = sinComentarios(leer("supabase/migrations/20260601000237_catalogos_globales_frontera_mayorista.sql"));
     const cuerpo237 = f237.slice(f237.search(/create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i));
     const fin = cuerpo237.search(/create\s+or\s+replace\s+function\s+public\.generar_tarifas_hotel_calculadora/i);
@@ -319,6 +322,18 @@ describe("fuente autoritativa: REFERENCIAS_DESTINO == FKs a destinos(id) en las 
     const sinExtra = c275.replace(/update public\.paquete_din p[\s\S]*?where p_origen = any \(p\.destinos_extra\);/, "");
     const compacto = (s: string) => s.replace(/\s+/g, "");
     assert.equal(compacto(sinExtra), compacto(soloFusion), "la 275 cambió algo más que el reapuntado de destinos_extra");
+
+    // 334 (#29): el cuerpo es el de la 275 más EXACTAMENTE el bloque de destinos aéreos alternativos antes del DELETE final.
+    const f334 = sinComentarios(leer("supabase/migrations/20260601000334_destinos_aereos_alternativos_integridad.sql"));
+    const desde334 = f334.slice(f334.search(/create\s+or\s+replace\s+function\s+public\.fn_fusionar_destino/i));
+    const c334 = desde334.slice(0, desde334.indexOf("$function$;") + "$function$;".length);
+    assert.match(c334, /delete from public\.armado_paquete_destinos_aereos a/);
+    assert.match(c334, /update public\.armado_paquete_destinos_aereos set destino_id = p_destino where destino_id = p_origen;/);
+    const sinAlt = c334.replace(/delete from public\.armado_paquete_destinos_aereos a[\s\S]*?update public\.armado_paquete_destinos_aereos set destino_id = p_destino where destino_id = p_origen;/, "");
+    assert.equal(compacto(sinAlt), compacto(c275), "la 334 cambió algo más que el tratamiento de destinos aéreos alternativos");
+    // La guarda de borrado directo existe y la fusión la respeta (re-apunta/borra esas filas ANTES del DELETE final).
+    assert.match(f334, /create trigger trg_destino_alternativa_aerea_guard before delete on public\.destinos/);
+    assert.ok(c334.indexOf("delete from public.armado_paquete_destinos_aereos") < c334.indexOf("delete from public.destinos where id = p_origen"));
   });
 });
 

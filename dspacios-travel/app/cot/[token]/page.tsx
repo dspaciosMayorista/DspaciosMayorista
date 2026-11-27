@@ -127,6 +127,7 @@ export default async function CotizacionPublicaPage({ params }: { params: Promis
               cliente={{}}
               incluye={d.incluye ?? null}
               noIncluye={d.noIncluye ?? null}
+              hoteles={Array.isArray((d as { hoteles?: unknown }).hoteles) ? ((d as { hoteles?: unknown }).hoteles as never) : null}
               vigenciaHasta={cot.vigencia_hasta}
               fechaEmision={(d.venta as { fecha_emision?: string } | undefined)?.fecha_emision ?? null}
               agencia={agencia}

@@ -175,6 +175,8 @@ insert into public.aliados (id, nombre, nit, tipo, pct_comision, aplica_retencio
   (9602, 'T206 Freelance', '9607', 'freelance', null, true, 0.11),
   (9603, 'T206 Agencia Dos', '9608', 'agencia', 0.10, false, 0)
 on conflict (id) do update set pct_comision = excluded.pct_comision, tipo = excluded.tipo;
+-- F6 (B95-13): el destino de un contrato/cotización manual NUEVO es del catálogo (por id); este archivo prueba el dinero (NETO/PVP), así que solo siembra uno.
+insert into public.destinos (id, nombre) select 9690, 'CARTAGENA' where not exists (select 1 from public.destinos where nombre = 'CARTAGENA');
 insert into public.escalas_comision (id, nombre) values (9206, 'T206 Escala') on conflict (id) do nothing;
 insert into public.escala_rangos (escala_id, pvp_desde, pvp_hasta, pct, orden) values (9206, 0, null, 5, 1);
 insert into public.usuarios (id, email, nombre, rol, activo, tenant, escala_id, aliado_id) values
@@ -194,6 +196,8 @@ insert into public.usuarios (id, email, nombre, rol, activo, tenant, escala_id, 
 on conflict (id) do update set rol = excluded.rol, activo = excluded.activo, tenant = excluded.tenant,
   escala_id = excluded.escala_id, aliado_id = excluded.aliado_id, nombre = excluded.nombre;
 `);
+// F6 (B95-13): id del destino «CARTAGENA» del catálogo (el sembrado aquí o el que ya traía la plantilla).
+const DEST206 = Number(sql(`select id from public.destinos where nombre = 'CARTAGENA' order by id limit 1`));
 
 // ── Sesión real: @supabase/ssr escribe sus cookies en el tarro ────────────
 async function entrarComo(quien: Quien | null, agencia?: "mayorista" | "minorista"): Promise<void> {
@@ -252,13 +256,15 @@ function entradaContrato(extra: Record<string, unknown> = {}) {
   return {
     tipoPaquete: "dinamico" as const, paqueteId: null, bloqueoId: null,
     cliente: "Cliente 206", clienteDocumento: "", clienteTelefono: "", clienteDireccion: "",
-    destino: "CARTAGENA", fechaSalida: "2026-12-01", fechaRegreso: "2026-12-04", fechaEmision: "2026-10-12",
+    destino: "CARTAGENA", destinoId: DEST206, fechaSalida: "2026-12-01", fechaRegreso: "2026-12-04", fechaEmision: "2026-10-12",
     asistenciaMedica: false, planNombre: "", toursTraslados: "",
     asesorNombre: U.venta.nombre, asesorCargo: "", asesorCc: "", asesorTel: "",
     pasajeros: [],
     hoteles: [{
+      // F6 (B95-15/20): hotel MANUAL con origen de compra directa (proveedor escrito) y habitaciones por tipo (sin pasajeros cargados solo se exige la estructura).
       nombre: "Hotel 206", categoria: "Estándar", proveedor: "Operador 206", ciudad: "Cartagena", alimentacion: "PC",
       acomodacion: "Doble", detalleAcomodacion: "", fechaIngreso: "2026-12-01", fechaSalida: "2026-12-04", costo: 1_500_000,
+      compra: "directa" as const, habitaciones: { doble: 1 },
     }],
     vuelos: [],
     items: [{ descripcion: "Paquete Cartagena", adultos: 1, ninos: 0, tarifaAdulto: 2_000_000, tarifaNino: 0 }],
@@ -293,10 +299,18 @@ async function esperarHasta(listo: () => boolean, ms = 15_000) {
   while (!listo() && Date.now() < fin) await React.act(async () => { await new Promise((r) => setTimeout(r, 100)); });
   return listo();
 }
+/** F6 (B95-13): el destino se ELIGE de la lista del catálogo (ya no se escribe). */
+async function elegirDestinoForm(raiz: Element, nombre = "CARTAGENA") {
+  const combo = raiz.querySelector('[data-testid="campo-destino"] input[role="combobox"]') as HTMLInputElement;
+  await React.act(async () => combo.focus());
+  await escribir(combo, nombre);
+  await React.act(async () => { document.querySelector('[role="option"]')!.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true })); });
+}
 async function formulario(costoHotel: number) {
-  const m = await montar(h(NuevoContratoForm, { asesorDefault: U.venta.nombre, agencias: [{ id: 9601, nombre: "T206 Agencia" }] }));
+  const m = await montar(h(NuevoContratoForm, { asesorDefault: U.venta.nombre, agencias: [{ id: 9601, nombre: "T206 Agencia" }], destinos: [{ id: DEST206, nombre: "CARTAGENA", codigo_iata: null }] }));
   const raiz = m.contenedor;
   await escribir(raiz.querySelector("input[required]") as HTMLInputElement, "Cliente Formulario 206");
+  await elegirDestinoForm(raiz);
   await escribir(inputDeEtiqueta(raiz, "Tarifa adulto")!, "2000000");
   await clic(botonConTexto(raiz, /Agregar hotel/), "Agregar hotel");
   await escribir(raiz.querySelector('input[title="Costo neto del hotel (interno)"]') as HTMLInputElement, String(costoHotel));
@@ -756,12 +770,12 @@ test("N97-5 negociado B2B sin llave de servicio: se rechaza ANTES de numerar", a
 function cotB2B(recobro: number, recobroAliado: number, extra: Record<string, unknown> = {}) {
   return {
     cliente: { nombres: "Ana", apellidos: "Prueba Q97", tipoDoc: "CC", numeroDoc: "1234567890", telefono: "3000000000", email: "ana@x.test", nacimiento: "1990-01-01" },
-    destino: "CARTAGENA", fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2, ninos: 0, tarifaNino: 0,
+    destino: "CARTAGENA", destinoId: DEST206, fechaIda: "2026-12-01", fechaRegreso: "2026-12-04", pax: 2, ninos: 0, tarifaNino: 0,
     recobro, recobroAliado, moneda: "COP", tipoAsesor: "agencia" as const, asesorInterno: "", agenciaNombre: "T206 Agencia", freelanceNombre: "",
     plazo: "", vigenciaHasta: "2026-11-30", observaciones: "", incluye: "", noIncluye: "",
     aliadoId: 9601, bnc: 500_000,
     servicios: [
-      { tipo: "hotel", plataforma: "", nombre: "Hotel Q97", proveedor: "Prov Q97", costoNeto: 800_000, modo: "mk" as const, pctMarkup: 20, ta: 0 },
+      { tipo: "hotel", plataforma: "", nombre: "Hotel Q97", proveedor: "Prov Q97", costoNeto: 800_000, modo: "mk" as const, pctMarkup: 20, ta: 0, compra: "directa" as const, habitaciones: { doble: 1 } },
       { tipo: "aereo", plataforma: "", nombre: "Vuelo Q97", proveedor: "Aero Q97", costoNeto: 400_000, modo: "mk" as const, pctMarkup: 20, ta: 0 },
     ],
     ...extra,
@@ -1020,13 +1034,15 @@ async function llenarCotizacionB2B(raiz: Element, op: { modo: "valor" | "pct"; p
   await escribir(raiz.querySelector('input[aria-label="Fecha de nacimiento"]') as HTMLInputElement, "1990-01-01");
   await escribir(etiq("Número de documento"), "1098765432");
   await cambiar([...raiz.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.value === "CC")), "CC");
-  await escribir(etiq("Destino"), "CARTAGENA");
+  await elegirDestinoForm(raiz);
   await escribir(raiz.querySelector('input[aria-label="Fecha ida"]') as HTMLInputElement, "2026-12-01");
   await escribir(raiz.querySelector('input[aria-label="Fecha regreso"]') as HTMLInputElement, "2026-12-04");
   await escribir(etiq("Adultos"), "2");
   await clic(botonConTexto(raiz, /^\s*Hotel\s*$/), "agregar hotel");
   await clic(botonConTexto(raiz, /^\s*Aéreo\s*$/), "agregar aéreo");
   await escribir(etiq("Nombre del servicio", 0), "Hotel UI97");
+  await cambiar(raiz.querySelector('select[aria-label="Origen de la compra"]') as HTMLSelectElement, "directa");       // F6 (B95-15): cómo se compra el hotel
+  await escribir(raiz.querySelector('input[aria-label="Habitaciones Doble"]') as HTMLInputElement, "1");               // F6 (B95-20): 2 adultos = 1 Doble
   await escribir(etiq("Proveedor", 0), "Prov UI97");
   await escribir(etiq("Costo neto", 0), "800000");
   await escribir(etiq("Nombre del servicio", 1), "Vuelo UI97");
@@ -1055,7 +1071,7 @@ async function guardarCotizacionUI(raiz: Element): Promise<number | null> {
 test("UI97-1 formulario: sin BNC no guarda y lo dice; con BNC y participación en PORCENTAJE muestra el importe y la base, guarda el acuerdo y convierte", async () => {
   await entrarComo("venta");
   const { CotizacionManualForm } = await import("../app/(dashboard)/dashboard/cotizaciones/nueva/CotizacionManualForm.tsx");
-  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: [{ id: 9601, nombre: "T206 Agencia", tipo: "agencia" }], miNombre: U.venta.nombre, miRolVenta: true, pctAliadoB2B: 0.5 }));
+  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: [{ id: 9601, nombre: "T206 Agencia", tipo: "agencia" }], miNombre: U.venta.nombre, miRolVenta: true, pctAliadoB2B: 0.5, destinos: [{ id: DEST206, nombre: "CARTAGENA", codigo_iata: null }] }));
   const raiz = m.contenedor;
   await llenarCotizacionB2B(raiz, { modo: "pct", part: "50", bnc: "" });
   const antes = sql(`select count(*) from public.cotizaciones`);
@@ -1080,7 +1096,7 @@ test("UI97-1 formulario: sin BNC no guarda y lo dice; con BNC y participación e
 test("UI97-2 formulario: participación 0 por VALOR → el recobro permanece en la base; aviso de redondeo en porcentaje", async () => {
   await entrarComo("venta");
   const { CotizacionManualForm } = await import("../app/(dashboard)/dashboard/cotizaciones/nueva/CotizacionManualForm.tsx");
-  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: [{ id: 9601, nombre: "T206 Agencia", tipo: "agencia" }], miNombre: U.venta.nombre, miRolVenta: true, pctAliadoB2B: 0.5 }));
+  const m = await montar(h(CotizacionManualForm, { asesores: [], aliados: [{ id: 9601, nombre: "T206 Agencia", tipo: "agencia" }], miNombre: U.venta.nombre, miRolVenta: true, pctAliadoB2B: 0.5, destinos: [{ id: DEST206, nombre: "CARTAGENA", codigo_iata: null }] }));
   const raiz = m.contenedor;
   await llenarCotizacionB2B(raiz, { modo: "valor", part: "0", bnc: "500000" });
   assert.match(txt(raiz), /sin participación: el recobro permanece en la base/);
@@ -2465,7 +2481,7 @@ test("DOC97-1 USD: confirmado (por el pago mínimo), Cuenta de cobro y Estado de
     const c = await crearCotizacionManual(cotB2B(100, 33, {
       moneda: "USD", tipoAsesor: "freelance", aliadoId: 9602, agenciaNombre: "", freelanceNombre: "T206 Freelance", bnc: 345,
       servicios: [
-        { tipo: "hotel", plataforma: "", nombre: "Hotel USD", proveedor: "Prov USD", costoNeto: 8000, modo: "mk" as const, pctMarkup: 20, ta: 0 },
+        { tipo: "hotel", plataforma: "", nombre: "Hotel USD", proveedor: "Prov USD", costoNeto: 8000, modo: "mk" as const, pctMarkup: 20, ta: 0, compra: "directa" as const, habitaciones: { doble: 1 } },
         { tipo: "aereo", plataforma: "", nombre: "Vuelo USD", proveedor: "Aero USD", costoNeto: 2245, modo: "ta" as const, pctMarkup: 0, ta: 0 },
       ],
     }));

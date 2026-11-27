@@ -1,0 +1,390 @@
+{
+  "ok": false,
+  "total": 62,
+  "resultados": [
+    {
+      "nombre": "0.1 the review state says seeded, the dedicated container record exists",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "0.2 the review browser profile holds exactly the 4 synthetic accounts, each with the review password (no personal profile touched)",
+      "ok": true,
+      "detalle": "admin103@walk.test,ops103@walk.test,sup103@walk.test,venta103@walk.test"
+    },
+    {
+      "nombre": "0.3 saved-account autofill fills the form (fields in :autofill state) and the REAL Auth sign-in reaches the dashboard without typing",
+      "ok": true,
+      "detalle": "{\"correo\":\"admin103@walk.test\",\"largoClave\":17,\"autofill\":true}"
+    },
+    {
+      "nombre": "W1.1 with no click the unfinished-update notice goes away by itself",
+      "ok": true,
+      "detalle": "first read: «(no notice)», gone after 0 s"
+    },
+    {
+      "nombre": "W1.2 after reload there is no notice",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W2 the code SS-2027-X is shown and the missing one is flagged «Exige código pero no se ha digitado»",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W3.1 Editar ALTA opens the exclusion calendar",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W3.2 clicking 30 and 31 December marks both as excluded",
+      "ok": true,
+      "detalle": "30 de diciembre de 2026, incluida | 31 de diciembre de 2026, incluida"
+    },
+    {
+      "nombre": "W3.3 saving persists 30–31 Dec 2026 on the validity",
+      "ok": true,
+      "detalle": "[{\"fecha_fin\": \"2026-12-31\", \"fecha_inicio\": \"2026-12-30\"}]"
+    },
+    {
+      "nombre": "W3.4 the update notice (if shown) clears by itself and the persisted debt is 0",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W3.5 reopening shows the two nights still excluded",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W4.1 the saved set «Semana Santa Walk» (with its year) is offered",
+      "ok": true,
+      "detalle": "Semana Santa Walk · 2027 · 4 noches · Semana Santa"
+    },
+    {
+      "nombre": "W4.2 applying COPIES 4 nights (25–28 March) into the validity being edited",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W4.3 saved: 25 March is in the validity's exclusions",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W4.4 editing the saved set afterwards does NOT change the validity (copy, not link)",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W5.1 the closure «Mantenimiento Walk» is listed",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W5.2 deleting removes the row WITHOUT reloading and the database no longer has it",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W6.1 the contract shows «Solicitudes a proveedores por correo» and the local-capture warning",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W6.2 the preview demands the promotion code (Promo Semana Santa — SS-2027-X)",
+      "ok": true,
+      "detalle": "Solicitudes a proveedores por correo\nProveedor\nHotel Prueba 103 · Hotel\nReceptivo 103 · Servicios\nCorreo(s) del proveedor (máx. 5, separados por coma)\nHotel del catálogo (para el código de promoción)\n— Ninguno —\nHotel Prueba 103\nCódigo de promoción exigido por el hotel\n\nSi estas fechas caen en una p"
+    },
+    {
+      "nombre": "W6.3 «Enviar solicitud» is disabled until the code is chosen",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W6.4 choosing the code enables sending and the preview shows it",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W6.5 exactly ONE message reached the local inbox",
+      "ok": true,
+      "detalle": "messages=1"
+    },
+    {
+      "nombre": "W6.6 it has an HTML table AND plain text with the code, the holder, the three travellers, no prices; Reply-To carries the token",
+      "ok": true,
+      "detalle": "Les enviamos la solicitud de servicio de la reserva DTM-2001. Por favor respondan a este correo confirmando el servicio o indicando cualquier cambio.\r\n\r\nCÓDIGO "
+    },
+    {
+      "nombre": "W6.7 pressing «Enviar solicitud» a second time sends nothing",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W6.8 the history shows «Enviada» with «Código SS-2027-X»",
+      "ok": true,
+      "detalle": "«Entregada» significa que el servidor del proveedor aceptó el correo; «Respondió» que llegó una respuesta asociada a esta solicitud; la confirmación del servicio la registra una persona de la agencia."
+    },
+    {
+      "nombre": "W6.9 (optional) a services supplier previews without a code section and lists the transfer",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W7.1 «Estancias de esta solicitud» lists both hotels",
+      "ok": true,
+      "detalle": "Solicitudes a proveedores por correo\nProveedor\nHotel Prueba 103 · Hotel\nCorreo(s) del proveedor (máx. 5, separados por coma)\nEstancias de esta solicitud\n\nLa solicitud lleva solo lo que marques. Si dos"
+    },
+    {
+      "nombre": "W7.2 with both stays ticked the preview is blocked with the instruction to send one hotel per request",
+      "ok": true,
+      "detalle": "Solicitudes a proveedores por correo\nProveedor\nHotel Prueba 103 · Hotel\nCorreo(s) del proveedor (máx. 5, separados por coma)\nEstancias de esta solicitud\n\nLa solicitud lleva solo lo que marques. Si dos hoteles tienen promociones con código distinto, envía una solicitud por hotel.\n\nHotel Prueba 103\n20"
+    },
+    {
+      "nombre": "W7.3 stay A previews with SS-2027-X and nothing of B",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W7.4 sending stay A succeeds",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W7.5 sending stay B with its own code succeeds",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W7.6 two messages: one with SS-2027-X only (first stay), one with OTRO-CODE only (second stay); none carries both",
+      "ok": true,
+      "detalle": "msgs=2"
+    },
+    {
+      "nombre": "W8.1 `node review_reply.mjs DTM-2001 …` from a fresh shell (only the review-folder setting) triggers the app's inbound route (HTTP 200/202, 1 new reply)",
+      "ok": true,
+      "detalle": "review folder: C:\\Users\\Usuario\\hostinger-rehearsal-103 webhook → HTTP 200 (200 = pass finished, 202 = more work left); new replies recorded: 1; complete: true simulated reply uid 1001 to the latest request of DTM-2001: «Confirmamos disponibilidad con el códig"
+    },
+    {
+      "nombre": "W8.2 the card shows «Respondió», the reply text and «1 respuesta(s) nueva(s)» and is NOT «Confirmada por el proveedor»",
+      "ok": true,
+      "detalle": "Solicitudes a proveedores por correo\n1 respuesta(s) nueva(s) · marcar leídas\nProveedor\nHotel Prueba 103 · Hotel\nReceptivo 103 · Servicios\nCorreo(s) del proveedor (máx. 5, separados por coma)\nVista previa\nEnviar solicitud\n\nModo de captura local: el correo NO sale de esta máquina.\n\nHotel Prueba 103\nRe"
+    },
+    {
+      "nombre": "W8.3 «marcar leídas» clears this contract's notices",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W8.4 an internal notice «Respuesta del proveedor · …» to interno@walk.test is in the local inbox",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W8.5 the reply did not confirm anything: request not confirmed/rejected, contract state unchanged",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W9.0 operaciones signed in through the saved-account autofill",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W9.0b the sample proof file is in the review folder (created by the seed)",
+      "ok": true,
+      "detalle": "C:\\Users\\Usuario\\hostinger-rehearsal-103\\soporte-walk.pdf"
+    },
+    {
+      "nombre": "W9.1 the screen «Aviso de pago a proveedores» opens for operaciones",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W9.2 four payments listed: DTM-2001 COP 1.500.000, DTM-2002 COP 2.500.000, DTM-2003 USD 100,00 and USD 50,00",
+      "ok": true,
+      "detalle": "INCLUIR\n\tRESERVA\tSERVICIO\tFECHA\tVALOR\tSOPORTES\n\tDTM-2003\tTour Walk\t2027-01-20\tUSD 50,00\tsin soporte\n\tDTM-2003\tTour Walk\t2027-01-15\tUSD 100,00\tsin soporte\n\tDTM-2002\tTraslados\t2027-01-15\tCOP 2.500.000\tsin soporte\n\tDTM-2001\tHotel Prueba 103\t2027-01-15\tCOP 1.500.000\tsin soporte"
+    },
+    {
+      "nombre": "W9.3 saving the proof (REAL storage) says «Soporte guardado. Aún no se ha enviado nada»",
+      "ok": true,
+      "detalle": "Soporte guardado. Aún no se ha enviado nada al proveedor."
+    },
+    {
+      "nombre": "W9.4 the preview shows 3 reservations, the partial 1.500.000 of 4.000.000, USD with rates, totals per currency and the file",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W9.5 exactly ONE message with the proof attached (same size) and «AVISO DE PAGO»",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W9.6 a second press sends nothing; payments, accounting entries and reconciliation are unchanged; the history shows «Enviada» not confirmed",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "W10 venta103 cannot use: payment notices",
+      "ok": true,
+      "detalle": "/dashboard · COMERCIAL  Tarifario ↗ Reservar Cotizaciones Contratos  EXTERNO  CRM ↗ Cambiar c"
+    },
+    {
+      "nombre": "W10 venta103 cannot use: hotel page",
+      "ok": true,
+      "detalle": "/dashboard · COMERCIAL  Tarifario ↗ Reservar Cotizaciones Contratos  EXTERNO  CRM ↗ Cambiar c"
+    },
+    {
+      "nombre": "W10 venta103 cannot use: contract request section",
+      "ok": true,
+      "detalle": "/dashboard/contratos/DTM-2001 · COMERCIAL  Tarifario ↗ Reservar Cotizaciones Contratos Nuevo contrato  EXTERNO  "
+    },
+    {
+      "nombre": "W11 at 390 px neither page scrolls sideways as a whole; the payments table scrolls inside its card",
+      "ok": true,
+      "detalle": "hotel overflow 0, payments page overflow 0, table inner overflow 324"
+    },
+    {
+      "nombre": "L1 fingerprint taken before stop covers the database, uploaded files (rows and bytes), captured mail, simulated mailbox, files and saved accounts",
+      "ok": true,
+      "detalle": "{\"tablasNA\":[],\"correo\":\"5:7648fb6995b9ad054f6025fdc6dfca1d9a973ea8bb6c502a1fd2d8636c6b15f0\",\"bytes\":\"9991c8f88b24\"}"
+    },
+    {
+      "nombre": "L2 `review.mjs stop` exits 0 after OBSERVING the stopped state",
+      "ok": true,
+      "detalle": "REVIEW SESSION STOPPED (checked). Nothing was deleted: database, captured mail, uploaded files, simulated mailbox, config, credentials and browser profile are kept in C:\\Users\\Usuario\\hostinger-rehear"
+    },
+    {
+      "nombre": "L3 `review.mjs status` reports STOPPED (clean) with exit 0",
+      "ok": true,
+      "detalle": "STOPPED (clean)"
+    },
+    {
+      "nombre": "L4 files kept while stopped: config, credentials folder content, ownership record, review state, simulated mailbox, browser profile",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "L5 `review.mjs start` RESUMES (no re-creation), every readiness check is observed OK and the browser autofill is re-verified",
+      "ok": true,
+      "detalle": "== resume the stopped environment (nothing re-created, nothing re-seeded) | resumed: gateway 127.0.0.1:19080, mailpit 127.0.0.1:19083, database hj103_journey (no data was changed) | REVIEW SESSION READY (every check above observed, includin"
+    },
+    {
+      "nombre": "L6 fingerprint after start is IDENTICAL to the one before stop (database rows, uploaded bytes, captured mail, simulated mailbox, files, saved accounts)",
+      "ok": false,
+      "detalle": "cuentasNavegador"
+    },
+    {
+      "nombre": "L7 after the resume the earlier request still shows «Respondió» and its history",
+      "ok": true,
+      "detalle": "Solicitudes a proveedores por correo\nProveedor\nHotel Prueba 103 · Hotel\nReceptivo 103 · Servicios\nCorreo(s) del proveedor (máx. 5, separados por coma)\nVista previa\nEnviar solicitud\n\nModo de captura lo"
+    },
+    {
+      "nombre": "L8 a second reply after the restart is recorded exactly once (the simulated mailbox kept its position)",
+      "ok": true,
+      "detalle": "review folder: C:\\Users\\Usuario\\hostinger-rehearsal-103 webhook → HTTP 200 (200 = pass finished, 202 = more work left); new replies recorded: 1; complete: true simulated reply uid 1002 to the latest r"
+    },
+    {
+      "nombre": "L9 harness «up» over seeded review progress is refused",
+      "ok": true,
+      "detalle": "harness: Refused: «up» would DESTROY the owner's review progress (database, uploaded files, captured mail). Use the expl"
+    },
+    {
+      "nombre": "L9 harness «down» over seeded review progress is refused",
+      "ok": true,
+      "detalle": "harness: Refused: «down» would DESTROY the owner's review progress (database, uploaded files, captured mail). Use the ex"
+    },
+    {
+      "nombre": "L9 harness «pg-destroy» over seeded review progress is refused",
+      "ok": true,
+      "detalle": "harness: Refused: «pg-destroy» would DESTROY the owner's review progress (database, uploaded files, captured mail). Use "
+    },
+    {
+      "nombre": "L10 `review.mjs reset` without the explicit flag refuses (exit 2)",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "L11 after those refusals nothing changed (fingerprints equal; environment still running)",
+      "ok": true,
+      "detalle": ""
+    }
+  ],
+  "huellaAntesDeParar": {
+    "tablas": {
+      "ventas": "4:92903709178698f3617ef3f0c6db78db",
+      "contrato_hoteles": "3:8d7a4163e1aba31bf213573f39e11734",
+      "contrato_pasajeros": "5:28003fa5787f68e71d9f15a64387880e",
+      "contrato_servicios": "1:5adb6b1a41c397ef2b0659175773c049",
+      "solicitudes_proveedor": "4:6803c6cd723350f16a842d0125191aab",
+      "solicitud_proveedor_eventos": "5:59506a7b773f386b85b2486c3d3846d0",
+      "solicitud_proveedor_avisos": "2:c3875366b05388d36d21ad24d8898456",
+      "cxp_pagos": "4:a13231bb32ee9240272438211ed6f033",
+      "cuentas_por_pagar": "3:61776e459f5953bc8e748a8235227966",
+      "cxp_pago_soportes": "4:3189a107807a35fd51dca9ddc666885c",
+      "hotel_temporadas": "4:17328a8049282e99f2974721c5cd302b",
+      "hotel_blackouts": "0:-",
+      "hotel_codigos_promocion": "3:cb187b62a999bcf56c6564d57ce3fc91",
+      "conjuntos_fechas": "1:09caef909d1425f7c747618c0e0d70a9",
+      "armado_paquetes": "2:9f79f445cf2f3ba5d7f87ba160662ded",
+      "tarifario_cambio_fuente": "8:66396a134c540fe728acc2d1cba9728b",
+      "usuarios": "4:352f89b3661bbfc74899113915ed2a25",
+      "hostinger_estado_buzon": "1:9836596917a425f686ac9bc5aef97485",
+      "hostinger_respuestas_pendientes": "0:-",
+      "auditoria": "88:7dad3418d9989dff56ea0cac815adfa6",
+      "auth.users": "4:6777b2cf48c38cb53b1ac5fb743cceb6",
+      "storage.objects": "1:36edef8818d9787461f10ef5d640c891"
+    },
+    "ficheros": {
+      "config.json": "ce31c0380c6613ec0c517e9c2083abd6bf93e9e1dfb78c000b473e1489116ac1",
+      "review_credentials.txt": "f3fc2729a8945f25f71d1a29c841277bec2c9cd8452d131bdef8a59ec2b40488",
+      "soporte-walk.pdf": "8d74568a68c5d45c13529556567fe0262230fd38101f057787e718a03fddcfff",
+      "sim-state.json": "e9246993a53f6a58724497a024eff1e2a7e6d4f465103c2be8b73781bcef6bbc",
+      "review-state.json": "d633537dce8c8c781da9ab712d2d287742c2a09e731b5e7343c475e72744753b",
+      "pg.json": "e4a23eac3397107b6c9a154c352a4f03e354772a215b1d4e8f468196be662527"
+    },
+    "correoCapturado": "5:7648fb6995b9ad054f6025fdc6dfca1d9a973ea8bb6c502a1fd2d8636c6b15f0",
+    "bytesAlmacenados": "9991c8f88b2402de9a4ac6d58a8c0f4d68c831c8c74274cd328a3ccb8523901d",
+    "cuentasNavegador": "a530875b000c6edd92cb2de565b7c743b4eef1fb1d950e1922e33f07a8df50c3"
+  },
+  "huellaTrasReanudar": {
+    "tablas": {
+      "ventas": "4:92903709178698f3617ef3f0c6db78db",
+      "contrato_hoteles": "3:8d7a4163e1aba31bf213573f39e11734",
+      "contrato_pasajeros": "5:28003fa5787f68e71d9f15a64387880e",
+      "contrato_servicios": "1:5adb6b1a41c397ef2b0659175773c049",
+      "solicitudes_proveedor": "4:6803c6cd723350f16a842d0125191aab",
+      "solicitud_proveedor_eventos": "5:59506a7b773f386b85b2486c3d3846d0",
+      "solicitud_proveedor_avisos": "2:c3875366b05388d36d21ad24d8898456",
+      "cxp_pagos": "4:a13231bb32ee9240272438211ed6f033",
+      "cuentas_por_pagar": "3:61776e459f5953bc8e748a8235227966",
+      "cxp_pago_soportes": "4:3189a107807a35fd51dca9ddc666885c",
+      "hotel_temporadas": "4:17328a8049282e99f2974721c5cd302b",
+      "hotel_blackouts": "0:-",
+      "hotel_codigos_promocion": "3:cb187b62a999bcf56c6564d57ce3fc91",
+      "conjuntos_fechas": "1:09caef909d1425f7c747618c0e0d70a9",
+      "armado_paquetes": "2:9f79f445cf2f3ba5d7f87ba160662ded",
+      "tarifario_cambio_fuente": "8:66396a134c540fe728acc2d1cba9728b",
+      "usuarios": "4:352f89b3661bbfc74899113915ed2a25",
+      "hostinger_estado_buzon": "1:9836596917a425f686ac9bc5aef97485",
+      "hostinger_respuestas_pendientes": "0:-",
+      "auditoria": "88:7dad3418d9989dff56ea0cac815adfa6",
+      "auth.users": "4:6777b2cf48c38cb53b1ac5fb743cceb6",
+      "storage.objects": "1:36edef8818d9787461f10ef5d640c891"
+    },
+    "ficheros": {
+      "config.json": "ce31c0380c6613ec0c517e9c2083abd6bf93e9e1dfb78c000b473e1489116ac1",
+      "review_credentials.txt": "f3fc2729a8945f25f71d1a29c841277bec2c9cd8452d131bdef8a59ec2b40488",
+      "soporte-walk.pdf": "8d74568a68c5d45c13529556567fe0262230fd38101f057787e718a03fddcfff",
+      "sim-state.json": "e9246993a53f6a58724497a024eff1e2a7e6d4f465103c2be8b73781bcef6bbc",
+      "review-state.json": "d633537dce8c8c781da9ab712d2d287742c2a09e731b5e7343c475e72744753b",
+      "pg.json": "e4a23eac3397107b6c9a154c352a4f03e354772a215b1d4e8f468196be662527"
+    },
+    "correoCapturado": "5:7648fb6995b9ad054f6025fdc6dfca1d9a973ea8bb6c502a1fd2d8636c6b15f0",
+    "bytesAlmacenados": "9991c8f88b2402de9a4ac6d58a8c0f4d68c831c8c74274cd328a3ccb8523901d",
+    "cuentasNavegador": "2e036a947112ebd738406cd54418452edad229052f3989376b56efb601f5fd06"
+  }
+}

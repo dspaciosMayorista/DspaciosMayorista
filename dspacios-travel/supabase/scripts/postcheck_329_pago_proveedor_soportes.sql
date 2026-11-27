@@ -1,0 +1,10 @@
+-- Postcheck 329 (solo lectura, UNA consulta). Esperado: todo OK.
+select n, control, actual, esperado, case when ok then 'OK' else 'FALLA' end as estado from (
+  select 1 as n, 'las 2 tablas existen con RLS activa' as control, (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname in ('cxp_pago_soportes', 'solicitud_proveedor_pagos') and relrowsecurity)::text as actual, '2' as esperado,
+         (select count(*) from pg_class where relnamespace = 'public'::regnamespace and relname in ('cxp_pago_soportes', 'solicitud_proveedor_pagos') and relrowsecurity) = 2 as ok
+  union all select 2, 'anon y authenticated sin escritura sobre las 2 tablas', (select count(*) from information_schema.role_table_grants where table_schema = 'public' and table_name in ('cxp_pago_soportes', 'solicitud_proveedor_pagos') and ((grantee = 'anon') or (grantee = 'authenticated' and privilege_type <> 'SELECT')))::text, '0',
+         (select count(*) from information_schema.role_table_grants where table_schema = 'public' and table_name in ('cxp_pago_soportes', 'solicitud_proveedor_pagos') and ((grantee = 'anon') or (grantee = 'authenticated' and privilege_type <> 'SELECT'))) = 0
+  union all select 3, 'bucket soportes-pago-proveedor privado y sin policy en storage.objects', case when to_regclass('storage.buckets') is null then 'sin storage' else (select count(*) from storage.buckets where id = 'soportes-pago-proveedor' and not public)::text || ' bucket(s), '
+         || (select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' and (coalesce(qual, '') || coalesce(with_check, '')) like '%soportes-pago-proveedor%')::text || ' policy(ies)' end, '1 bucket(s), 0 policy(ies)',
+         to_regclass('storage.buckets') is null or ((select count(*) from storage.buckets where id = 'soportes-pago-proveedor' and not public) = 1 and (select count(*) from pg_policies where schemaname = 'storage' and tablename = 'objects' and (coalesce(qual, '') || coalesce(with_check, '')) like '%soportes-pago-proveedor%') = 0)
+) q order by n;

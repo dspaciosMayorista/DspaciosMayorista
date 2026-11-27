@@ -1,0 +1,155 @@
+
+== tear down the stack and the review database
+app {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+sim {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+gateway {"estado":"sin-registro","detalle":"no record: nothing owned by this launcher, nothing stopped"}
+dropped hj103_journey
+teardown done (the work folder with generated config is kept; delete it by hand if you want)
+
+== remove the dedicated container
+removed hj103_pg
+
+REVIEW DATA DELETED (explicit reset). Config, credentials and browser profile are kept in C:\Users\Usuario\hostinger-rehearsal-103.
+RESET_EXIT=0
+
+== dedicated PostgreSQL container
+dedicated PostgreSQL container hj103_pg ready (ownership recorded in C:\Users\Usuario\hostinger-rehearsal-103\pg.json); template database hj103_template loaded read-only from pg127/plantilla127
+
+== stack
+applying 20260601000315_tarifario_oculta_por_cierre_general.sql
+NOTICE:  trigger "tarifario_trg_hotel_blackouts_ins" for relation "public.hotel_blackouts" does not exist, skipping
+NOTICE:  trigger "tarifario_trg_hotel_blackouts_upd" for relation "public.hotel_blackouts" does not exist, skipping
+NOTICE:  trigger "tarifario_trg_hotel_blackouts_del" for relation "public.hotel_blackouts" does not exist, skipping
+applying 20260601000316_recuperaciones_consumidas.sql
+applying 20260601000317_neto_cotizacion_manual_independiente.sql
+applying 20260601000318_cuenta_cobro_firma_aceptacion.sql
+NOTICE:  trigger "trg_aliado_firmas_inmutable" for relation "public.aliado_firmas" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.aliado_firmas" does not exist, skipping
+NOTICE:  trigger "trg_cuenta_cobro_aceptaciones_inmutable" for relation "public.cuenta_cobro_aceptaciones" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.cuenta_cobro_aceptaciones" does not exist, skipping
+applying 20260601000319_aliado_logo.sql
+NOTICE:  trigger "trg_auditoria" for relation "public.aliado_logos" does not exist, skipping
+applying 20260601000322_clientes_aliado.sql
+NOTICE:  trigger "trg_auditoria" for relation "public.aliado_clientes" does not exist, skipping
+applying 20260601000323_solicitud_contrato_aviso.sql
+applying 20260601000324_registro_b2b_candados.sql
+applying 20260601000325_evidencia_y_pasajeros_aliado_cotizacion.sql
+applying 20260601000326_pasajeros_aliado_tope_universo.sql
+applying 20260601000327_conjuntos_fechas.sql
+NOTICE:  trigger "conjuntos_fechas_tocar" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "conjuntos_fechas: lectura" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "conjuntos_fechas: escritura" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "catalogo global: insertar solo Mayorista" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "catalogo global: actualizar solo Mayorista" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  policy "catalogo global: borrar solo Mayorista" for relation "public.conjuntos_fechas" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.conjuntos_fechas" does not exist, skipping
+applying 20260601000328_solicitudes_proveedor.sql
+NOTICE:  trigger "trg_solicitud_proveedor_uid" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  trigger "trg_codigo_promocion_coherente" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  trigger "trg_solicitud_proveedor_codigo" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  policy "codigos_promocion: lectura" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "codigos_promocion: escritura" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "catalogo global: insertar solo Mayorista" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "catalogo global: actualizar solo Mayorista" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "catalogo global: borrar solo Mayorista" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.hotel_codigos_promocion" does not exist, skipping
+NOTICE:  policy "solicitudes_proveedor: lectura" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_eventos: lectura" for relation "public.solicitud_proveedor_eventos" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_avisos: propios" for relation "public.solicitud_proveedor_avisos" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_avisos: marcar leído" for relation "public.solicitud_proveedor_avisos" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.solicitudes_proveedor" does not exist, skipping
+NOTICE:  trigger "trg_contrato_guarda" for relation "public.solicitudes_proveedor" does not exist, skipping
+applying 20260601000329_pago_proveedor_soportes.sql
+NOTICE:  policy "cxp_pago_soportes: lectura" for relation "public.cxp_pago_soportes" does not exist, skipping
+NOTICE:  policy "solicitud_proveedor_pagos: lectura" for relation "public.solicitud_proveedor_pagos" does not exist, skipping
+NOTICE:  trigger "trg_auditoria" for relation "public.cxp_pago_soportes" does not exist, skipping
+applying 20260601000330_hostinger_entrada_estado.sql
+stack ready: gateway 127.0.0.1:19080, mailpit 127.0.0.1:19083, database hj103_journey
+
+== review data
+review data ready: 4 accounts, 4 contracts (DTM-2001…2004), hotel 20301 with codes/closure/debt, 3 payment obligations. Credentials: see the review folder (review_credentials.txt).
+
+== simulated Mail API
+simulated Mail API on 127.0.0.1:19086 (pid 18048)
+
+== compiled app (loopback only)
+app listening ONLY on 127.0.0.1:3047 (pid 23140); non-loopback addresses of this machine refuse connections
+
+== checking readiness
+  OK   compiled app answers /login
+  OK   sign-in service (GoTrue via gateway)
+  OK   data API (PostgREST via gateway)
+  OK   file storage
+  OK   captured-mail inbox (Mailpit)
+  OK   simulated Mail API
+  OK   review data present (4 active accounts)  — accounts=4
+  OK   app listens only on 127.0.0.1  — 127.0.0.1
+
+REVIEW SESSION READY (every check above observed) — http://127.0.0.1:3047/login   accounts: C:\Users\Usuario\hostinger-rehearsal-103\review_credentials.txt   browser: node review.mjs browser
+Captured outgoing mail: http://127.0.0.1:19083
+START_EXIT=0
+PASS · 0.1 the review state says seeded, the dedicated container record exists
+PASS · 0.2 the review browser profile holds exactly the 4 synthetic accounts, each with the review password (no personal profile touched)
+PASS · 0.3 saved-account autofill fills the form (fields in :autofill state) and the REAL Auth sign-in reaches the dashboard without typing
+PASS · W1.1 with no click the unfinished-update notice goes away by itself
+PASS · W1.2 after reload there is no notice
+PASS · W2 the code SS-2027-X is shown and the missing one is flagged «Exige código pero no se ha digitado»
+PASS · W3.1 Editar ALTA opens the exclusion calendar
+PASS · W3.2 clicking 30 and 31 December marks both as excluded
+PASS · W3.3 saving persists 30–31 Dec 2026 on the validity
+PASS · W3.4 the update notice (if shown) clears by itself and the persisted debt is 0
+PASS · W3.5 reopening shows the two nights still excluded
+PASS · W4.1 the saved set «Semana Santa Walk» (with its year) is offered
+PASS · W4.2 applying COPIES 4 nights (25–28 March) into the validity being edited
+PASS · W4.3 saved: 25 March is in the validity's exclusions
+PASS · W4.4 editing the saved set afterwards does NOT change the validity (copy, not link)
+FAIL · W5.1 the closure «Mantenimiento Walk» is listed · 
+PASS · W5.2 deleting removes the row WITHOUT reloading and the database no longer has it
+PASS · W6.1 the contract shows «Solicitudes a proveedores por correo» and the local-capture warning
+PASS · W6.2 the preview demands the promotion code (Promo Semana Santa — SS-2027-X)
+PASS · W6.3 «Enviar solicitud» is disabled until the code is chosen
+PASS · W6.4 choosing the code enables sending and the preview shows it
+PASS · W6.5 exactly ONE message reached the local inbox
+PASS · W6.6 it has an HTML table AND plain text with the code, the holder, the three travellers, no prices; Reply-To carries the token
+PASS · W6.7 pressing «Enviar solicitud» a second time sends nothing
+PASS · W6.8 the history shows «Enviada» with «Código SS-2027-X»
+PASS · W6.9 (optional) a services supplier previews without a code section and lists the transfer
+PASS · W7.1 «Estancias de esta solicitud» lists both hotels
+PASS · W7.2 with both stays ticked the preview is blocked with the instruction to send one hotel per request
+PASS · W7.3 stay A previews with SS-2027-X and nothing of B
+PASS · W7.4 sending stay A succeeds
+PASS · W7.5 sending stay B with its own code succeeds
+PASS · W7.6 two messages: one with SS-2027-X only (first stay), one with OTRO-CODE only (second stay); none carries both
+PASS · W8.1 `node review_reply.mjs DTM-2001 …` from a fresh shell (only the review-folder setting) triggers the app's inbound route (HTTP 200/202, 1 new reply)
+PASS · W8.2 the card shows «Respondió», the reply text and «1 respuesta(s) nueva(s)» and is NOT «Confirmada por el proveedor»
+PASS · W8.3 «marcar leídas» clears this contract's notices
+PASS · W8.4 an internal notice «Respuesta del proveedor · …» to interno@walk.test is in the local inbox
+PASS · W8.5 the reply did not confirm anything: request not confirmed/rejected, contract state unchanged
+PASS · W9.0 operaciones signed in through the saved-account autofill
+PASS · W9.0b the sample proof file is in the review folder (created by the seed)
+PASS · W9.1 the screen «Aviso de pago a proveedores» opens for operaciones
+PASS · W9.2 four payments listed: DTM-2001 COP 1.500.000, DTM-2002 COP 2.500.000, DTM-2003 USD 100,00 and USD 50,00
+PASS · W9.3 saving the proof (REAL storage) says «Soporte guardado. Aún no se ha enviado nada»
+PASS · W9.4 the preview shows 3 reservations, the partial 1.500.000 of 4.000.000, USD with rates, totals per currency and the file
+PASS · W9.5 exactly ONE message with the proof attached (same size) and «AVISO DE PAGO»
+PASS · W9.6 a second press sends nothing; payments, accounting entries and reconciliation are unchanged; the history shows «Enviada» not confirmed
+PASS · W10 venta103 cannot use: payment notices
+PASS · W10 venta103 cannot use: hotel page
+PASS · W10 venta103 cannot use: contract request section
+PASS · W11 at 390 px neither page scrolls sideways as a whole; the payments table scrolls inside its card
+PASS · L1 fingerprint taken before stop covers the database, uploaded files (rows and bytes), captured mail, simulated mailbox, files and saved accounts
+PASS · L2 `review.mjs stop` exits 0 after OBSERVING the stopped state
+PASS · L3 `review.mjs status` reports STOPPED (clean) with exit 0
+PASS · L4 files kept while stopped: config, credentials folder content, ownership record, review state, simulated mailbox, browser profile
+PASS · L5 `review.mjs start` RESUMES (no re-creation) and every readiness check is observed OK
+PASS · L6 fingerprint after start is IDENTICAL to the one before stop (database rows, uploaded bytes, captured mail, simulated mailbox, files, saved accounts)
+PASS · L7 after the resume the earlier request still shows «Respondió» and its history
+PASS · L8 a second reply after the restart is recorded exactly once (the simulated mailbox kept its position)
+PASS · L9 harness «up» over seeded review progress is refused
+PASS · L9 harness «down» over seeded review progress is refused
+PASS · L9 harness «pg-destroy» over seeded review progress is refused
+PASS · L10 `review.mjs reset` without the explicit flag refuses (exit 2)
+PASS · L11 after those refusals nothing changed (fingerprints equal; environment still running)
+
+REHEARSAL FAILED: 61/62
+REH_EXIT=1

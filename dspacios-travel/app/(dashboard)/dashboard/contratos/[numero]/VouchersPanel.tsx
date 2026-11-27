@@ -6,12 +6,13 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
-import { generarVouchersServicios, generarVoucherHotel, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
+import { generarVouchersServicios, generarVoucherHotel, generarVoucherVuelo, actualizarVoucher, eliminarVoucher, type VoucherContenido } from "./voucher-actions";
 import { ComboCiudad } from "@/components/ComboCiudad";
 import { Info } from "lucide-react";
 import type { DestinoOpt } from "@/components/ComboDestino";
+import type { VoucherVueloContenido } from "@/lib/voucher/vuelo";
 
-export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; share_token: string; contenido: VoucherContenido };
+export type VoucherRow = { id: number; tipo?: string; proveedor: string | null; share_token: string; contenido: VoucherContenido | VoucherVueloContenido; /** 338: cambios reales de contenido tras generarlo (voucher aéreo regenerado en el mismo enlace). */ revision?: number; actualizado_en?: string | null; /** 338 (ADL-042): vigente | revisar (los tramos del servicio cambiaron) | retirado (el servicio ya no existe). */ estado?: string };
 
 const lbl = "mb-1 block text-[11px] font-medium text-gray-500";
 const inp = "w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm";
@@ -38,6 +39,20 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
     });
   }
 
+  function generarVuelo() {
+    setMsg("");
+    start(async () => {
+      const r = await generarVoucherVuelo(numero, identidad);
+      if (r.ok) {
+        const nuevos = r.creados ?? 0, cambiados = r.actualizados ?? 0;
+        const base = nuevos + cambiados === 0 && !(r.retirados ?? 0) ? "✓ Voucher(s) de vuelo sin cambios (mismo contenido y mismo enlace)" : `✓ Voucher(s) de vuelo: ${nuevos} nuevo(s), ${cambiados} actualizado(s) en el mismo enlace`;
+        setMsg([base, ...(r.avisos ?? [])].join(" · "));
+        router.refresh();
+      }
+      else setMsg(r.error);
+    });
+  }
+
   // Solo lectura: el asesor que cubre a un colega no genera ni edita vouchers.
   // Del lado del servidor la migración 148 limita `vouchers` a contratos
   // propios —la tabla guarda `share_token`, que abre la página pública
@@ -58,7 +73,7 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-gray-700">Vouchers</h2>
-          <p className="text-xs text-gray-400">Servicios (uno por proveedor) y hotel. Auto-armados; editables antes de imprimir.</p>
+          <p className="text-xs text-gray-400">Servicios (uno por proveedor), hotel y vuelo (uno por servicio aéreo guardado). Auto-armados; los de servicios y hotel son editables antes de imprimir.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button onClick={generar} disabled={pending || !puedeGenerar} style={{ backgroundColor: "var(--brand-primary)" }}>
@@ -66,6 +81,9 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
           </Button>
           <Button onClick={generarHotel} disabled={pending || !puedeGenerar} variant="outline">
             Voucher de hotel
+          </Button>
+          <Button onClick={generarVuelo} disabled={pending || !puedeGenerar} variant="outline" data-testid="generar-voucher-vuelo">
+            Voucher de vuelo
           </Button>
         </div>
       </div>
@@ -92,6 +110,39 @@ export function VouchersPanel({ numero, vouchers, puedeGenerar, motivoBloqueo, d
 }
 
 function VoucherCard({ numero, v, destinos, identidad }: { identidad: IdentidadContrato; numero: string; v: VoucherRow; destinos: DestinoOpt[] }) {
+  // El voucher de vuelo se arma solo con datos guardados: no tiene formulario de edición, se vuelve a generar para refrescarlo.
+  if (v.tipo === "vuelo") return <VoucherVueloCard numero={numero} identidad={identidad} v={v} />;
+  return <VoucherServiciosCard numero={numero} identidad={identidad} v={{ ...v, contenido: v.contenido as VoucherContenido }} destinos={destinos} />;
+}
+
+function VoucherVueloCard({ numero, v, identidad }: { identidad: IdentidadContrato; numero: string; v: VoucherRow }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const cont = v.contenido as VoucherVueloContenido;
+  const faltan = cont.datosFaltantes?.length ?? 0;
+  const ruta = (cont.tramos ?? []).map((t) => `${t.origen} → ${t.destino}`).join(" · ");
+  return (
+    <div className="rounded-xl border border-gray-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-gray-500">Vuelo</span>
+          <span className="font-medium text-gray-800">{v.proveedor ?? "Servicio aéreo"}</span>
+          {ruta && <span className="text-xs text-gray-500" data-testid="voucher-vuelo-ruta">{ruta}</span>}
+          {faltan > 0 && <span className="text-xs text-amber-700" data-testid="voucher-vuelo-faltantes">{faltan} dato(s) sin registrar</span>}
+          {v.estado === "revisar" && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700" data-testid="voucher-vuelo-desactualizado" title="Los tramos de este servicio cambiaron después de generar el voucher: su enlace no muestra el itinerario anterior. Vuelve a generar los vouchers de vuelo.">Desactualizado: volver a generar</span>}
+          {v.estado === "retirado" && <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-semibold text-gray-700" data-testid="voucher-vuelo-retirado" title="El servicio aéreo de este voucher ya no existe en el contrato. Se conserva como historial; su enlace ya no muestra el itinerario.">Retirado (servicio ya no existe)</span>}
+          {(v.revision ?? 0) > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700" data-testid="voucher-vuelo-actualizado" title="Se regeneró con cambios en el mismo enlace. Señal interna: no indica que el cliente lo haya recibido ni visto.">Actualizado ({v.revision})</span>}
+        </div>
+        <div className="flex items-center gap-3 text-sm">
+          <a href={`/voucher/${v.share_token}`} target="_blank" rel="noopener noreferrer" className="font-medium hover:underline" style={{ color: "var(--brand-primary)" }}>Ver / imprimir →</a>
+          <button type="button" onClick={() => { if (!confirm("¿Eliminar este voucher?")) return; start(async () => { await eliminarVoucher(v.id, numero, identidad); router.refresh(); }); }} disabled={pending} className="text-xs text-gray-400 hover:text-red-500">Eliminar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VoucherServiciosCard({ numero, v, destinos, identidad }: { identidad: IdentidadContrato; numero: string; v: VoucherRow & { contenido: VoucherContenido }; destinos: DestinoOpt[] }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [c, setC] = useState<VoucherContenido>(v.contenido);

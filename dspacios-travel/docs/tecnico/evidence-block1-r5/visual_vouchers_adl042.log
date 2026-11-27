@@ -1,0 +1,113 @@
+compiled app answering on http://127.0.0.1:3099 · BUILD_ID inf1eC8Wl3kHf73y7ywIz
+OK    DTM-9801: the real "Voucher de vuelo" button created 1 air voucher(s) (ok)
+OK    DTM-9802: the real "Voucher de vuelo" button created 1 air voucher(s) (ok)
+OK    DTM-9803: the real "Voucher de vuelo" button created 2 air voucher(s) (ok)
+OK    DTM-9804: the real "Voucher de vuelo" button created 1 air voucher(s) (ok)
+OK    DTM-9805: the real "Voucher de vuelo" button created 2 air voucher(s) (ok)
+OK    DTM-9803 (two saved services, 3 passengers): two vouchers with DISTINCT public links — never one per passenger
+OK    DTM-9805: two services that share the SAME PNR (SAME00) stay TWO vouchers — the PNR does not define the service
+
+-- contract page: the two services are listed separately
+OK    contract page 9803 @1280px: no horizontal overflow (1280/1280)
+OK    contract page 9803 @820px: no horizontal overflow (820/820)
+OK    contract page 9803 @390px: no horizontal overflow (390/390)
+OK    the panel shows one card per service with its own route (["Bogotá (BOG) → Cartagena (CTG) · Cartagena (CTG) → Bogotá (BOG)","Bogotá (BOG) → Medellín (MDE) · Medellín (MDE) → Bogotá (BOG)"])
+
+-- ally, paid contract (9801)
+   requests [ally opens paid voucher 9801]: 6 {"GET /usuarios":2,"GET /aliados_b2b":1,"GET /vouchers":1,"GET /ventas":1,"POST /rpc/contratos_pagados_completos":1}
+OK    paid + saved PNR: the ally sees the PNR on the voucher (label is rendered upper-case by CSS)
+OK    the ally view adds no payment lookup beyond the existing access check (1)
+OK    voucher 9801 (ally, PNR) @1280px: no horizontal overflow (1280/1280)
+OK    voucher 9801 (ally, PNR) @820px: no horizontal overflow (820/820)
+OK    voucher 9801 (ally, PNR) @390px: no horizontal overflow (390/390)
+OK    voucher 9801 with PNR: 1 PDF page(s)
+   ally on the unpaid voucher, page text: ""
+OK    unpaid contract (9802): the ally gets NO voucher content (the 404 page: no legs, no passengers, no PNR)
+
+-- internal preview, unpaid contract (9802)
+   requests [admin opens unpaid voucher 9802 (has PNR)]: 15 {"GET /usuarios":7,"GET /vouchers":2,"GET /ventas":1,"HEAD /avisos":1,"GET /avisos":1,"POST /rpc/contratos_pagados_completos":1,"POST /rpc/contratos_identidades":2}
+OK    the PNR is not in the page text NOR in its HTML/RSC payload (it never leaves the server)
+OK    the internal note explains why the PNR is not shown
+OK    the note is not printed (display in print = none)
+OK    voucher 9802 (internal, unpaid) @1280px: no horizontal overflow
+OK    voucher 9802 (internal, unpaid) @820px: no horizontal overflow
+OK    voucher 9802 (internal, unpaid) @390px: no horizontal overflow
+
+-- generation without a saved PNR (9804)
+   requests [admin opens voucher 9804 (no PNR)]: 5 {"GET /usuarios":2,"GET /vouchers":2,"GET /ventas":1}
+   9804 text: "Imprimir / Guardar PDF\nFECHA DE EMISIÓN\n24 de noviembre de 2026\nCONTACTO\n(+57) 321-2094015\nELABORADO POR\nÁREA DE RESERVAS\nN° RESERVA\nDTM-9804\nVENDEDOR\nB1 Administracion\nSERVICIO AÉREO\nNOMBRE TITULAR\nCliente sin código guardado\nIDA\nAEROLÍNEA\nAvianca\nVUELO\nAV501\nFECHA\n7 de junio de 2027\nEQUIPAJE / SERVICIOS\nNo registrado\nORIGEN\nBogotá (BOG)\nDESTINO\nCartagena (CTG)\nHORA DE SALIDA\n08:15\nHORA DE LLEGADA\n09:45\nREGRESO\nAEROLÍNEA\nAvianca\nVUELO\nAV502\nFECHA\n10 de junio de 2027\nEQUIPAJE / SERVICIOS\nNo registrado\nORIGEN\nCartagena (CTG)\nDESTINO\nBogotá (BOG)\nHORA DE SALIDA\n18:00\nHORA DE LLEGADA\n19:30\nPASAJEROS DE LA RESERVA\nSara Peña\nRaúl Peña\n\nPasajeros y tramos se listan por separado: no hay registrada "
+OK    9804: the voucher renders with its legs, NO PNR cell, and the only «No registrado» are the two baggage values (2) — the absent PNR is not reported as a missing datum
+OK    no PNR → no payment lookup for the internal preview (zero added requests)
+OK    voucher 9804 @1280px: no horizontal overflow
+OK    voucher 9804 @820px: no horizontal overflow
+OK    voucher 9804 @390px: no horizontal overflow
+
+-- two services (9803, paid)
+   requests [admin opens paid voucher with PNR (9803 #1)]: 6 {"GET /usuarios":2,"GET /vouchers":2,"GET /ventas":1,"POST /rpc/contratos_pagados_completos":1}
+   internal preview of a paid PNR voucher adds: 1 payment lookup(s)
+OK    service 1 (key 00000000-0000-4000-9000-000000980301): shows only ITS PNR and legs (AAA111, ZZZ999, AV301, AV302), none of the other service
+OK    service 1: the 3 contract passengers are listed once; the note says no passenger-to-segment assignment is registered
+OK    voucher 9803 service 1 @1280px: no horizontal overflow
+OK    voucher 9803 service 1 @820px: no horizontal overflow
+OK    voucher 9803 service 1 @390px: no horizontal overflow
+OK    voucher 9803 service 1: 1 PDF page(s)
+OK    service 2 (key 00000000-0000-4000-9000-000000980302): shows only ITS PNR and legs (BBB222, LA401, LA402), none of the other service
+OK    service 2: the 3 contract passengers are listed once; the note says no passenger-to-segment assignment is registered
+OK    voucher 9803 service 2 @1280px: no horizontal overflow
+OK    voucher 9803 service 2 @820px: no horizontal overflow
+OK    voucher 9803 service 2 @390px: no horizontal overflow
+OK    voucher 9803 service 2: 2 PDF page(s)
+
+-- Gestión de contratos signal
+OK    before any change: the registered delivery shows as registered (manual acknowledgment), no «updated» signal
+OK    the leg change ALONE (before anyone regenerates) already shows «Voucher actualizado: comunicación pendiente» and «vuelo desactualizado» in Gestión
+OK    the contract page marks the affected service «Desactualizado: volver a generar» before regenerating
+OK    the real button regenerated 9803 after a real change: revisions 0,0 → 0,2
+OK    both public links are exactly the same as before the regeneration
+OK    pressing the real button again with no change adds nothing (revisions stay 0,2)
+OK    the contract page marks ONLY the changed service as «Actualizado (2)» (one change flagged it, one regenerated it)
+OK    …and exactly one card carries the mark
+OK    Gestión de contratos shows «Voucher actualizado: comunicación pendiente»
+OK    …and the row no longer presents the earlier delivery as current (the phrase remains only in the page legend: 2 → 1)
+OK    …and says plainly that it is an internal signal, not proof about the customer
+OK    Gestión @1280px: no horizontal overflow (1280/1280)
+OK    Gestión @820px: no horizontal overflow (820/820)
+OK    Gestión @390px: no horizontal overflow (390/390)
+OK    administración cannot see Gestión (no signal, no data)
+OK    customer contract /c/<token>: rendered, and NO PNR
+
+-- transitions of an issued link (9806)
+OK    9806: the real button generated the single air voucher
+OK    before any change the ally opens it: both legs and the PNR on each leg
+OK    after the anchor leg was removed the OLD link shows «Voucher en actualización» to the ally: no old itinerary, no passengers, no PNR
+OK    not-current notice (ally) @1280px: no horizontal overflow
+OK    not-current notice (ally) @820px: no horizontal overflow
+OK    not-current notice (ally) @390px: no horizontal overflow
+OK    internal staff see the stale document WITH the explicit «Desactualizado» banner (not hidden, not current)
+OK    the banner IS printed, so a stale paper copy cannot pass as current (display in print = block)
+OK    stale preview (internal) @1280px: no horizontal overflow
+OK    stale preview (internal) @820px: no horizontal overflow
+OK    stale preview (internal) @390px: no horizontal overflow
+OK    the contract page flags the voucher «Desactualizado: volver a generar»
+OK    the staff regenerate with the real button
+OK    …the SAME link (same service) is kept
+OK    …and now it serves the UPDATED itinerary (only the remaining leg)
+OK    when the whole service disappears the ally still gets NO itinerary (the link answers with the not-current notice)
+OK    internal staff see «Voucher retirado»: no itinerary of a service that no longer exists
+OK    retired notice (internal) @1280px: no horizontal overflow
+OK    retired notice (internal) @820px: no horizontal overflow
+OK    retired notice (internal) @390px: no horizontal overflow
+OK    the contract page keeps the retired voucher as history, labelled «Retirado (servicio ya no existe)»
+OK    Gestión keeps reporting the retired air voucher as «vuelo desactualizado»
+OK    Gestión (retired) @1280px: no horizontal overflow
+OK    Gestión (retired) @820px: no horizontal overflow
+OK    Gestión (retired) @390px: no horizontal overflow
+
+=== 0 fallo(s); 38 measurements in docs\tecnico\evidence-block1-r5\visual
+--- server log tail ---
+▲ Next.js 16.3.0
+- Local:         http://127.0.0.1:3099
+- Network:       http://127.0.0.1:3099
+✓ Ready in 379ms
+✓ Running next.config.ts took 207ms
+

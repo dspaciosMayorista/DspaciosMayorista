@@ -31,6 +31,8 @@ export function valoresNetosDocumento(
   ocultos?: ReadonlySet<number>,
   /** Líneas que reciben la parte de las ocultas (el paquete). Sin él, todas las visibles. Los servicios adicionales no absorben el vuelo. */
   receptores?: ReadonlySet<number>,
+  /** B95-02: líneas ocultas (servicios adicionales) cuyo importe se absorbe SOLO en la tarifa de los ADULTOS (la tarifa del niño es la real y no se toca; mismo criterio del recobro oculto). */
+  soloAdultos?: ReadonlySet<number>,
 ): Map<number, ValorNetoItemDocumento> | null {
   const netoCentavos = Math.round(totalExigible * 100);
   if (!Number.isSafeInteger(netoCentavos) || netoCentavos < 0) return null;
@@ -79,22 +81,27 @@ export function valoresNetosDocumento(
 
   if (ocultos && ocultos.size > 0) {
     let absorber = 0;
-    for (const parte of partes) if (ocultos.has(parte.id)) { absorber += parte.centavos; parte.centavos = 0; parte.peso = 0; }
-    const visibles = partes.filter((parte) => parte.peso > 0 && (!receptores || receptores.has(parte.id)));
-    const pesoVisible = visibles.reduce((suma, parte) => suma + parte.peso, 0);
-    if (absorber > 0) {
-      if (pesoVisible === 0) return null;
+    let absorberAdultos = 0;
+    for (const parte of partes) if (ocultos.has(parte.id)) { if (soloAdultos?.has(parte.id)) absorberAdultos += parte.centavos; else absorber += parte.centavos; parte.centavos = 0; parte.peso = 0; }
+    const absorbe = (monto: number, destino: Parte[]): boolean => {
+      if (monto <= 0) return true;
+      const pesoDestino = destino.reduce((suma, parte) => suma + parte.peso, 0);
+      if (pesoDestino === 0) return false;
       let repartidos = 0;
-      for (const parte of visibles) {
-        const exacto = (absorber * parte.peso) / pesoVisible;
+      for (const parte of destino) {
+        const exacto = (monto * parte.peso) / pesoDestino;
         const piso = Math.floor(exacto);
         parte.centavos += piso;
         parte.resto = exacto - piso;
         repartidos += piso;
       }
-      visibles.sort((a, b) => b.resto - a.resto);
-      for (let i = 0; i < absorber - repartidos; i++) visibles[i % visibles.length].centavos++;
-    }
+      destino.sort((a, b) => b.resto - a.resto);
+      for (let i = 0; i < monto - repartidos; i++) destino[i % destino.length].centavos++;
+      return true;
+    };
+    const visibles = partes.filter((parte) => parte.peso > 0 && (!receptores || receptores.has(parte.id)));
+    if (!absorbe(absorber, visibles)) return null;
+    if (!absorbe(absorberAdultos, visibles.filter((parte) => parte.tipo === "adulto"))) return null;
   }
 
   const resultado = new Map<number, ValorNetoItemDocumento>();

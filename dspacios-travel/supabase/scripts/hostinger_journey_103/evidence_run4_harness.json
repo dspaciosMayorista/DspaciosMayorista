@@ -1,0 +1,390 @@
+{
+  "ok": true,
+  "resultados": [
+    {
+      "nombre": "0.1 compiled app answers /login",
+      "ok": true,
+      "detalle": "200"
+    },
+    {
+      "nombre": "1 webhook no Authorization → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1 webhook wrong Bearer → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1 webhook Basic scheme with the right secret → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1 webhook with the CRON secret → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1 webhook right secret, 70 KB body → 413",
+      "ok": true,
+      "detalle": "got 413"
+    },
+    {
+      "nombre": "1 webhook GET (method not allowed) → 405",
+      "ok": true,
+      "detalle": "got 405"
+    },
+    {
+      "nombre": "1 cron no Authorization → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1 cron wrong Bearer → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1 cron with the WEBHOOK secret → 401",
+      "ok": true,
+      "detalle": "got 401"
+    },
+    {
+      "nombre": "1.x rejected requests made ZERO Mail API calls",
+      "ok": true,
+      "detalle": "0 calls"
+    },
+    {
+      "nombre": "1.y no event, state or backlog row created by rejected requests",
+      "ok": true,
+      "detalle": ""
+    },
+    {
+      "nombre": "2.1 the first run could not finish a 1,300-message mailbox (202, incomplete)",
+      "ok": true,
+      "detalle": "status 202"
+    },
+    {
+      "nombre": "2.2 each run stayed inside the budget (wall ≤ 11 s, ≤ 60 provider calls)",
+      "ok": true,
+      "detalle": "7015ms/5 7095ms/5 7012ms/5 7034ms/5 4972ms/4"
+    },
+    {
+      "nombre": "2.3 the position survived an app restart (run 2 resumed below run 1's position)",
+      "ok": true,
+      "detalle": "{\"uid_cubierto\":0,\"barrido_tope\":1300,\"barrido_siguiente\":1000,\"con_umbral\":true,\"version\":4}"
+    },
+    {
+      "nombre": "2.4 eventually complete (200) with the cursor at the newest uid",
+      "ok": true,
+      "detalle": "runs=5, cursor={\"uid_cubierto\":1300,\"barrido_tope\":null,\"barrido_siguiente\":null,\"con_umbral\":false,\"version\":15}"
+    },
+    {
+      "nombre": "2.5 the three replies hidden behind >1,000 newer unrelated messages were recorded exactly once",
+      "ok": true,
+      "detalle": "hostinger:ACwalk0000test1:<w1000@proveedor.test>,hostinger:ACwalk0000test1:<w130@proveedor.test>,hostinger:ACwalk0000test1:<w5@proveedor.test>"
+    },
+    {
+      "nombre": "3.1 a reply whose download keeps failing (503) is PARKED, others still recorded",
+      "ok": true,
+      "detalle": "parked=1 events=5"
+    },
+    {
+      "nombre": "3.2 an incomplete pass answers 202 (never a false 200)",
+      "ok": true,
+      "detalle": "202"
+    },
+    {
+      "nombre": "3.3 the next pass (scheduled drain) recovers the parked reply and clears the backlog without any new email",
+      "ok": true,
+      "detalle": "parked=0 events=6"
+    },
+    {
+      "nombre": "3.4 a provider that never answers cannot hold the request past the budget (wall ≤ 12 s)",
+      "ok": true,
+      "detalle": "7016 ms"
+    },
+    {
+      "nombre": "3.5 …and the reply is recovered by the next pass",
+      "ok": true,
+      "detalle": "events=7 parked=0"
+    },
+    {
+      "nombre": "4.1 every one of the 8 replies recorded exactly once under 8 simultaneous passes",
+      "ok": true,
+      "detalle": "8 rows"
+    },
+    {
+      "nombre": "4.2 no 5xx and no unauthenticated answer among the concurrent passes",
+      "ok": true,
+      "detalle": "200,200,200,200,200,200,200,200"
+    },
+    {
+      "nombre": "4.3 the passes really overlapped at the provider (max in-flight > 1)",
+      "ok": true,
+      "detalle": "maxInflight=9"
+    },
+    {
+      "nombre": "4.4 state coherent: cursor at the newest uid, no running sweep, backlog empty",
+      "ok": true,
+      "detalle": "{\"uid_cubierto\":1407,\"barrido_tope\":null,\"barrido_siguiente\":null,\"con_umbral\":false,\"version\":21}"
+    },
+    {
+      "nombre": "4.5 on-screen notices created once per new reply (not once per concurrent pass)",
+      "ok": true,
+      "detalle": "+8"
+    },
+    {
+      "nombre": "4.6 internal e-mail notices sent exactly once per new reply (Mailpit)",
+      "ok": true,
+      "detalle": "+8"
+    },
+    {
+      "nombre": "5.1 the same Message-ID under a new uid creates no new event and no notice",
+      "ok": true,
+      "detalle": "events 15/15, yaRegistrados=1"
+    },
+    {
+      "nombre": "5.2 an idle pass costs ONE list call and no downloads",
+      "ok": true,
+      "detalle": "{\"listas\":1,\"busquedas\":0,\"descargas\":0}"
+    },
+    {
+      "nombre": "6.1 replied requests are «respondida» and none is confirmed/rejected by a reply",
+      "ok": true,
+      "detalle": "[\"1:respondida\",\"2:respondida\",\"3:respondida\",\"4:respondida\",\"5:respondida\",\"6:respondida\",\"7:respondida\",\"8:enviada\"]"
+    },
+    {
+      "nombre": "6.2 the contracts' own state is untouched",
+      "ok": true,
+      "detalle": ""
+    }
+  ],
+  "medidas": {
+    "escenarios": {
+      "2-continuation": [
+        {
+          "llamadas": 5,
+          "listas": 1,
+          "busquedas": 4,
+          "descargas": 0,
+          "msTotal": 6040,
+          "maxMs": 1217,
+          "sinAuth": 0,
+          "transaccionesBd": 13,
+          "msPared": 7120,
+          "rssAppMB": 115
+        },
+        {
+          "llamadas": 5,
+          "listas": 0,
+          "busquedas": 3,
+          "descargas": 2,
+          "msTotal": 6068,
+          "maxMs": 1215,
+          "sinAuth": 0,
+          "transaccionesBd": 12,
+          "msPared": 7209,
+          "rssAppMB": 136
+        },
+        {
+          "llamadas": 5,
+          "listas": 0,
+          "busquedas": 5,
+          "descargas": 0,
+          "msTotal": 6027,
+          "maxMs": 1210,
+          "sinAuth": 0,
+          "transaccionesBd": 9,
+          "msPared": 7116,
+          "rssAppMB": 112
+        },
+        {
+          "llamadas": 5,
+          "listas": 0,
+          "busquedas": 2,
+          "descargas": 3,
+          "msTotal": 6046,
+          "maxMs": 1216,
+          "sinAuth": 0,
+          "transaccionesBd": 13,
+          "msPared": 7144,
+          "rssAppMB": 112
+        },
+        {
+          "llamadas": 4,
+          "listas": 1,
+          "busquedas": 1,
+          "descargas": 2,
+          "msTotal": 4835,
+          "maxMs": 1215,
+          "sinAuth": 0,
+          "transaccionesBd": 7,
+          "msPared": 5069,
+          "rssAppMB": 112
+        }
+      ],
+      "3-parked": [
+        {
+          "llamadas": 13,
+          "listas": 2,
+          "busquedas": 1,
+          "descargas": 10,
+          "msTotal": 2,
+          "maxMs": 1,
+          "sinAuth": 0,
+          "transaccionesBd": 23,
+          "msPared": 4456,
+          "rssAppMB": 113
+        },
+        {
+          "llamadas": 5,
+          "listas": 1,
+          "busquedas": 0,
+          "descargas": 4,
+          "msTotal": 1,
+          "maxMs": 1,
+          "sinAuth": 0,
+          "transaccionesBd": 5,
+          "msPared": 1740,
+          "rssAppMB": 115
+        }
+      ],
+      "3-hang": [
+        {
+          "llamadas": 2,
+          "listas": 1,
+          "busquedas": 1,
+          "descargas": 0,
+          "msTotal": 0,
+          "maxMs": 0,
+          "sinAuth": 0,
+          "transaccionesBd": 8,
+          "msPared": 7116,
+          "rssAppMB": 115
+        },
+        {
+          "llamadas": 4,
+          "listas": 1,
+          "busquedas": 1,
+          "descargas": 2,
+          "msTotal": 0,
+          "maxMs": 0,
+          "sinAuth": 0,
+          "transaccionesBd": 7,
+          "msPared": 256,
+          "rssAppMB": 116
+        }
+      ],
+      "4-concurrency": [
+        {
+          "llamadas": 152,
+          "listas": 16,
+          "busquedas": 8,
+          "descargas": 128,
+          "msTotal": 38922,
+          "maxMs": 265,
+          "sinAuth": 0,
+          "transaccionesBd": 325,
+          "msPared": 5933,
+          "rssAppMB": 136
+        }
+      ],
+      "5-dedupe": [
+        {
+          "llamadas": 3,
+          "listas": 2,
+          "busquedas": 1,
+          "descargas": 0,
+          "msTotal": 0,
+          "maxMs": 0,
+          "sinAuth": 0,
+          "transaccionesBd": 55,
+          "msPared": 220,
+          "rssAppMB": 137
+        }
+      ],
+      "5-idle": [
+        {
+          "llamadas": 1,
+          "listas": 1,
+          "busquedas": 0,
+          "descargas": 0,
+          "msTotal": 0,
+          "maxMs": 0,
+          "sinAuth": 0,
+          "transaccionesBd": 21,
+          "msPared": 140,
+          "rssAppMB": 137
+        }
+      ]
+    },
+    "libreMinMB": 4033,
+    "libreInicialMB": 4078,
+    "rssAppInicialMB": 134,
+    "continuacion": {
+      "corridas": [
+        {
+          "run": 1,
+          "status": 202,
+          "wallMs": 7015,
+          "simCalls": 5,
+          "searches": 4,
+          "downloads": 0,
+          "tx": 13
+        },
+        {
+          "run": 2,
+          "status": 202,
+          "wallMs": 7095,
+          "simCalls": 5,
+          "searches": 3,
+          "downloads": 2,
+          "tx": 12
+        },
+        {
+          "run": 3,
+          "status": 202,
+          "wallMs": 7012,
+          "simCalls": 5,
+          "searches": 5,
+          "downloads": 0,
+          "tx": 9
+        },
+        {
+          "run": 4,
+          "status": 202,
+          "wallMs": 7034,
+          "simCalls": 5,
+          "searches": 2,
+          "downloads": 3,
+          "tx": 13
+        },
+        {
+          "run": 5,
+          "status": 200,
+          "wallMs": 4972,
+          "simCalls": 4,
+          "searches": 1,
+          "downloads": 2,
+          "tx": 7
+        }
+      ]
+    },
+    "libreFinalMB": 4086,
+    "rssAppFinalMB": 137,
+    "contenedores": [
+      "hj103_rest 90.45MiB / 160MiB 0.28%",
+      "hj103_auth 13MiB / 192MiB 0.00%",
+      "hj103_mail 24.53MiB / 64MiB 0.00%",
+      "pg127 219.3MiB / 7.205GiB 0.01%"
+    ],
+    "totales": {
+      "eventos": 15,
+      "avisosEnPantalla": 15,
+      "correosInternos": 15
+    }
+  }
+}

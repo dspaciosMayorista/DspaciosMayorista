@@ -26,6 +26,7 @@ type TramoDB = {
   hora_salida: string | null;
   hora_llegada: string | null;
   servicios: string | null;
+  servicio_aereo?: string | null;
 };
 
 function deDB(t: TramoDB): TramoInput {
@@ -43,13 +44,17 @@ function deDB(t: TramoDB): TramoInput {
     horaSalida: t.hora_salida ?? "",
     horaLlegada: t.hora_llegada ?? "",
     servicios: t.servicios ?? "",
+    servicio: t.servicio_aereo ?? "",
   };
 }
 
 const TRAMO_VACIO: TramoInput = {
   id: null, aerolinea: "", record: "", direccion: "", origenCodigo: "", origenCiudad: "",
-  destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "",
+  destinoCodigo: "", destinoCiudad: "", numeroVuelo: "", fecha: "", horaSalida: "", horaLlegada: "", servicios: "", servicio: "",
 };
+
+const NUEVOS = ["nuevo:1", "nuevo:2", "nuevo:3", "nuevo:4"] as const;
+const LETRAS = ["A", "B", "C", "D"] as const;
 
 // Editor de TODOS los tramos de contrato_vuelos de un contrato (migración
 // 157) — reemplazo atómico vía `guardar_tramos_contrato()`, conserva `id`
@@ -82,12 +87,16 @@ export function TramosEditor({ numeroContrato, tramosIniciales, identidad }: { n
     setTramos((a) => [...a, { ...TRAMO_VACIO }]);
   }
 
+  // Servicios que hoy existen en pantalla (uuid guardados) y su etiqueta: «Servicio 1», «Servicio 2»… por orden de aparición (solo para mostrar; la identidad es el uuid).
+  const servicios = Array.from(new Set(tramos.map((t) => t.servicio).filter((s) => s && !s.startsWith("nuevo:"))));
+
   function agregarRegreso(i: number) {
     const v = tramos[i];
     setTramos((a) => [
       ...a,
       {
         ...TRAMO_VACIO,
+        servicio: v.servicio,
         aerolinea: v.aerolinea, record: v.record, direccion: "regreso",
         origenCodigo: v.destinoCodigo, origenCiudad: v.destinoCiudad,
         destinoCodigo: v.origenCodigo, destinoCiudad: v.origenCiudad,
@@ -124,7 +133,8 @@ export function TramosEditor({ numeroContrato, tramosIniciales, identidad }: { n
       <p className="mb-1 text-sm font-semibold text-gray-700">Vuelo del contrato</p>
       <p className="mb-3 text-xs text-gray-500">
         Cada tarjeta es UN tramo. Un viaje redondo son dos (ida y regreso); un contrato con más de dos ciudades
-        puede tener más — no se limita a ida/regreso.
+        puede tener más — no se limita a ida/regreso. El «servicio aéreo» agrupa los tramos que se contrataron juntos (ida y regreso con PNR distintos pueden ser el mismo servicio);
+        cada servicio tiene su propio voucher. Cambiar el servicio de un tramo une o separa servicios y deja desactualizado el voucher afectado hasta volver a generarlo.
       </p>
 
       <div className="space-y-3">
@@ -146,6 +156,14 @@ export function TramosEditor({ numeroContrato, tramosIniciales, identidad }: { n
             <div><label className={lbl}>Fecha</label><DateInput aria-label="Fecha" type="date" value={v.fecha} onValueChange={(dateValue) => set(i, { fecha: dateValue })} /></div>
             <div><label className={lbl}>Hora salida</label><Input value={v.horaSalida} onChange={(e) => set(i, { horaSalida: e.target.value })} maxLength={5} /></div>
             <div><label className={lbl}>Hora llegada</label><Input value={v.horaLlegada} onChange={(e) => set(i, { horaLlegada: e.target.value })} maxLength={5} /></div>
+            <div className="md:col-span-2">
+              <label className={lbl}>Servicio aéreo contratado</label>
+              <select className={selCls} value={v.servicio} onChange={(e) => set(i, { servicio: e.target.value })} data-testid="tramo-servicio-aereo">
+                <option value="">{v.id === null ? "Automático (el único servicio del contrato)" : "— elegir servicio —"}</option>
+                {servicios.map((s, n) => <option key={s} value={s}>Servicio {n + 1}</option>)}
+                {NUEVOS.map((s, n) => <option key={s} value={s}>Servicio nuevo {LETRAS[n]}</option>)}
+              </select>
+            </div>
             <div className="md:col-span-2"><label className={lbl}>Equipaje / servicios</label><Input value={v.servicios} onChange={(e) => set(i, { servicios: e.target.value })} maxLength={500} /></div>
             <div className="flex items-end gap-3">
               {v.direccion === "ida" && (

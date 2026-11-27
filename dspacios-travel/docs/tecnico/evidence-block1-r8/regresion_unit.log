@@ -1,0 +1,701 @@
+(node:17804) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ nadie en la app escribe movimientos_silla ni operaciones_vuelo (fase E) (184.1131ms)
+✔ nadie en la app inserta ni borra sillas o records directamente (fase C) (163.81ms)
+✔ con sesión, sillas solo se actualiza en la carga masiva: datos del pasajero en sillas sin contrato (126.6203ms)
+✔ los UPDATE de bloqueos_vuelo con sesión nunca tocan cupos_total ni id (0.3107ms)
+✔ las demás escrituras de sillas (copia de datos al reservar, W8) usan el cliente admin, exento hasta la fase D (4.1272ms)
+✔ la edición manual del pasajero manda el contrato que la pantalla mostraba (migración 201) (2.4844ms)
+✔ Borrar y asignar contrato manual usan SOLO las firmas con versión (las viejas quedan para compatibilidad de despliegue) (2.3589ms)
+(node:17804) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/cierreEscrituraVuelos.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:20268) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:20268) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/historialAliado25.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ #25 historial de una ficha de aliado
+  ✔ un cambio interno: quién, cuándo, campo y valores (porcentajes en %, sí/no) (1.7137ms)
+  ✔ la edición del portal deja dos filas gemelas (disparador + explícita con _via): se muestra UNA, la del portal (1.4289ms)
+  ✔ dos cambios distintos a la misma hora NO se fusionan; sin actor aparece «Sistema» (0.3314ms)
+  ✔ el número de cuenta se enmascara y las marcas de tiempo no cuentan como cambio (0.4082ms)
+  ✔ alta y baja se listan sin detalle de campos; orden: lo más reciente primero (0.1849ms)
+✔ #25 historial de una ficha de aliado (5.1679ms)
+(node:15800) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:15800) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/historialPropio25.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ H25-1 el aliado A ve SOLO el historial de su ficha y de su nombre; nada de B (4.8725ms)
+✔ H25-2 el aliado B ve lo suyo y no lo de A (simétrico) (1.2219ms)
+✔ H25-3 la cuenta bancaria solo con los últimos cuatro dígitos y no se filtra ningún valor completo (0.6925ms)
+✔ H25-4 sin identidad del personal interno y sin campos internos (comisión, retención, activo, rol, correo de la cuenta) (0.4507ms)
+✔ H25-5 el origen se distingue: portal (_via) frente a interno; las filas gemelas del portal cuentan una vez (1.1524ms)
+✔ H25-6 no aplica a agentes, cuentas inactivas, roles internos, sin ficha pero con cuenta ni usuario inexistente; nunca se consulta auditoría (1.1297ms)
+✔ H25-7 un fallo de lectura se avisa como error, nunca como «sin cambios» (0.6403ms)
+✔ H25-8 acotado: máximo 100 filas por lectura y exactamente 3 lecturas por apertura (usuario + ficha + cuenta), sin sondeo (1.3942ms)
+(node:10920) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ inventario de identidad: archivos
+  ✔ hay al menos un inventario y los archivos listados existen (8.9639ms)
+✔ inventario de identidad: archivos (10.0239ms)
+▶ acciones y ayudantes: ningún cliente de Supabase anónimo de identidad
+  ✔ creacion · app/(dashboard)/dashboard/contratos/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (5.2069ms)
+  ✔ creacion · app/(dashboard)/dashboard/reservar/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (8.2665ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/manual-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.4864ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/din-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.1123ms)
+  ✔ creacion · app/tarifario/checkout/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (4.0942ms)
+  ✔ creacion · app/tarifario/solicitudHotelActions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (2.7324ms)
+  ✔ creacion · app/(dashboard)/dashboard/reservar/reconciliacion-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7125ms)
+  ✔ creacion · app/(dashboard)/dashboard/contratos/importar/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.6778ms)
+  ✔ creacion · lib/reservar/financieroContrato.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.9962ms)
+  ✔ creacion · lib/reservar/reconciliacionFinanciera.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.9681ms)
+  ✔ creacion · lib/reservar/asegurarCuentasPorPagar.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.879ms)
+  ✔ creacion · lib/reservar/comisionReserva.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.573ms)
+  ✔ creacion · lib/reservar/aceptacionServidor63.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.8539ms)
+  ✔ creacion · lib/contrato/netoManual.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.8435ms)
+  ✔ creacion · lib/contrato/congelarCondicionesContrato.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.6729ms)
+  ✔ creacion · lib/cotizacion/composicionServidor.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.4523ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/adjuntos-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.4807ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/admin-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.3851ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/cobros-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.573ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/condiciones-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.4759ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/contenido-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.6647ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/editar-contrato-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.4031ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.8158ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/voucher-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7721ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/soportes-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.4321ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7636ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.5501ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.3796ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.4037ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7675ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/retenciones/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.8288ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.2867ms)
+  ✔ ficha · app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.761ms)
+  ✔ ficha · lib/reservar/asegurarCuentasPorPagar.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7109ms)
+  ✔ portal · app/portal/b2b/cartera/soportes-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.5193ms)
+  ✔ portal · lib/soportes/servidor.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.3971ms)
+  ✔ portal · lib/soportes/operaciones.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.1733ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (5.9527ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7037ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7174ms)
+✔ acciones y ayudantes: ningún cliente de Supabase anónimo de identidad (54.2971ms)
+▶ acciones de usuario: toda función exportada declara «identidad: IdentidadContrato» o una excepción con motivo
+  ✔ creacion · app/(dashboard)/dashboard/contratos/actions.ts (4.4919ms)
+  ✔ creacion · app/(dashboard)/dashboard/reservar/actions.ts (16.0499ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/manual-actions.ts (2.011ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/din-actions.ts (1.0577ms)
+  ✔ creacion · app/tarifario/checkout/actions.ts (10.9902ms)
+  ✔ creacion · app/tarifario/solicitudHotelActions.ts (1.0157ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/adjuntos-actions.ts (0.5633ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/admin-actions.ts (0.6705ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/cobros-actions.ts (1.024ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/condiciones-actions.ts (0.8465ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/contenido-actions.ts (0.6255ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/editar-contrato-actions.ts (0.3174ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts (0.7659ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/voucher-actions.ts (4.3299ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/soportes-actions.ts (0.5337ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/actions.ts (0.8198ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/actions.ts (0.5954ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/actions.ts (0.4505ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/actions.ts (0.5626ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/actions.ts (0.9118ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/retenciones/actions.ts (0.8856ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts (0.6474ms)
+  ✔ ficha · app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts (0.8478ms)
+  ✔ portal · app/portal/b2b/cartera/soportes-actions.ts (0.4788ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/actions.ts (3.4425ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts (1.9816ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts (1.7001ms)
+✔ acciones de usuario: toda función exportada declara «identidad: IdentidadContrato» o una excepción con motivo (60.4997ms)
+▶ páginas: el uid sale de la misma consulta que carga el contrato
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/page.tsx selecciona contrato_uid y construye la identidad (2.4039ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/page.tsx selecciona contrato_uid y construye la identidad (0.5153ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/page.tsx selecciona contrato_uid y construye la identidad (0.4881ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/page.tsx selecciona contrato_uid y construye la identidad (0.4812ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/page.tsx selecciona contrato_uid y construye la identidad (0.5485ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/page.tsx selecciona contrato_uid y construye la identidad (0.4496ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/page.tsx selecciona contrato_uid y construye la identidad (0.4705ms)
+  ✔ portal · app/portal/b2b/cartera/page.tsx selecciona contrato_uid y construye la identidad (0.3969ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/page.tsx selecciona contrato_uid y construye la identidad (0.852ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato/[numero]/page.tsx selecciona contrato_uid y construye la identidad (0.4155ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/pasajeros/page.tsx selecciona contrato_uid y construye la identidad (0.4916ms)
+✔ páginas: el uid sale de la misma consulta que carga el contrato (8.1493ms)
+▶ componentes: reciben la identidad como prop y no la recalculan
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/AbonoForm.tsx (1.2867ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/AdjuntosContrato.tsx (0.459ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/ContenidoContratoEditor.tsx (0.5193ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EditarAsesorPasajeros.tsx (0.4611ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EditarVentaForm.tsx (0.3664ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EliminarContrato.tsx (4.4991ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EstadoVenta.tsx (0.589ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/GestionTabs.tsx (1.2496ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/OverrideRestriccionForm.tsx (0.4498ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/PlanCobroPanel.tsx (0.4024ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/ServiciosContratoEditor.tsx (0.3397ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/VouchersPanel.tsx (0.4285ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/CarteraList.tsx (0.7576ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/PagosList.tsx (0.7131ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/ComisionesList.tsx (0.6836ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/LiquidacionTable.tsx (0.4342ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/FacturacionClient.tsx (0.5025ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/ConciliacionesClient.tsx (0.8114ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/retenciones/RetencionesClient.tsx (0.5913ms)
+  ✔ portal · components/portal/SoportesPago.tsx (0.3667ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/CambiarSillasForm.tsx (0.3422ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/CambioOperacionalForm.tsx (0.3054ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/LiberarRetencion.tsx (0.3079ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx (0.5444ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/SillaContrato.tsx (0.4154ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/SillaEstado.tsx (0.3232ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato/[numero]/ControlEmisionForm.tsx (0.3582ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato/[numero]/TramosEditor.tsx (0.4059ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/pasajeros/PasajerosBuscador.tsx (0.407ms)
+  ✔ vuelos · components/vuelos/InfanteVueloForm.tsx (0.3341ms)
+✔ componentes: reciben la identidad como prop y no la recalculan (21.1848ms)
+▶ ningún archivo de la aplicación resuelve la identidad por número para sustituir la de la pantalla
+  ✔ contratos_identidades solo se usa en el servidor, nunca desde componentes cliente (11.9333ms)
+✔ ningún archivo de la aplicación resuelve la identidad por número para sustituir la de la pantalla (12.0914ms)
+▶ control_vuelo: la identidad de las sillas sale de sillas_identidades, leída ANTES que las sillas y usada solo si el número coincide
+  ✔ app/(dashboard)/dashboard/vuelos/[id]/page.tsx (1.9249ms)
+  ✔ app/(dashboard)/dashboard/vuelos/pasajeros/page.tsx (0.8982ms)
+✔ control_vuelo: la identidad de las sillas sale de sillas_identidades, leída ANTES que las sillas y usada solo si el número coincide (3.0655ms)
+▶ aviso de contrato eliminado/reemplazado: es cortesía, nunca protección
+  ✔ la ficha monta el aviso con el uid que ya tenía y la acción no devuelve el uid vigente (1.522ms)
+✔ aviso de contrato eliminado/reemplazado: es cortesía, nunca protección (1.6569ms)
+(node:10920) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/identidadPropagacion.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:5756) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:5756) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/infanteVueloDirecto.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ actions.ts — guardarInfanteVuelo: el cliente nunca autoriza, solo manda bloqueoId + sillaResponsableId
+  ✔ exporta guardarInfanteVuelo con la firma (bloqueoId, sillaResponsableId, infanteId, input) — nunca numeroContrato/responsableId directos (1.5366ms)
+  ✔ valida la forma con validarInfanteVueloInput ANTES de llamar al RPC (adelanta mensajes, nunca sustituye la autoridad del server) (0.2334ms)
+  ✔ llama al RPC guardar_infante_vuelo con p_bloqueo_id/p_silla_responsable_id/p_infante_id — nunca p_numero_contrato ni p_responsable_id (0.2448ms)
+  ✔ revalida ambas superficies (vuelos/[id] y vuelos/pasajeros) tras guardar (0.1371ms)
+  ✔ propaga el error del RPC sin inventar uno propio (fail-closed: el mensaje real del server llega al asesor) (0.171ms)
+✔ actions.ts — guardarInfanteVuelo: el cliente nunca autoriza, solo manda bloqueoId + sillaResponsableId (4.7145ms)
+▶ InfanteVueloForm.tsx — el formulario nunca decide negocio, solo junta bloqueoId+sillaResponsableId+datos
+  ✔ reutiliza esInfantePorEdad/validarInfanteVueloInput de lib/vuelos/infanteVuelo (nunca reimplementa el umbral) (0.2781ms)
+  ✔ la clasificación en vivo usa fechaIdaBloqueo (la fecha REAL del vuelo) — nunca una fecha de contrato ni 'hoy' fijo (0.2136ms)
+  ✔ bloquea guardar si la validación de forma falla o si el aviso de edad está activo (nunca manda un guardado que el server rechazaría de todas formas) (0.1747ms)
+  ✔ llama a guardarInfanteVuelo con (bloqueoId, sillaResponsableId, infanteId-o-null, form) — modo editar manda el id existente, modo crear manda null (0.3394ms)
+✔ InfanteVueloForm.tsx — el formulario nunca decide negocio, solo junta bloqueoId+sillaResponsableId+datos (1.4671ms)
+▶ vuelos/[id]/page.tsx — alta de infante gateada a que la silla del adulto tenga documento propio
+  ✔ importa InfanteVueloForm (0.4821ms)
+  ✔ el trigger de alta exige tipo_doc+numero_doc de la silla (misma silla que ancla la autorización en el RPC) y bloquea sillas en 'cambio' (1.3074ms)
+  ✔ el trigger de alta manda bloqueoId + la silla CONCRETA del adulto (s.id) — nunca un numeroContrato (0.4558ms)
+  ✔ el trigger de edición del infante subordinado usa la MISMA silla del responsable (s.id) y el id numérico real del infante (inf.id) (0.304ms)
+✔ vuelos/[id]/page.tsx — alta de infante gateada a que la silla del adulto tenga documento propio (6.4414ms)
+▶ vuelos/pasajeros — misma gestión disponible en el buscador global (ambas superficies, mismo candado)
+  ✔ page.tsx expone el id NUMÉRICO real del infante (infanteId) — la clave de fila sintética 'infante-N' no sirve para el RPC (0.9742ms)
+  ✔ PasajerosBuscador.tsx importa InfanteVueloForm y lo gatea a silla+bloqueo+documento presentes (1.2811ms)
+  ✔ PasajerosBuscador.tsx en modo editar usa la silla del PADRE (p.sillaId/p.bloqueoId), no un id inventado (2.5416ms)
+✔ vuelos/pasajeros — misma gestión disponible en el buscador global (ambas superficies, mismo candado) (5.1386ms)
+(node:26152) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ validarMonedaBloqueo (crear): la moneda se elige y COP < 1.000 se rechaza
+  ✔ sin moneda, vacía o inválida: error; nunca se supone COP (0.959ms)
+  ✔ COP con un importe positivo menor a 1.000 en neta, reventa o fee: '¿Este valor está en USD?' nombrando el campo (0.4114ms)
+  ✔ el umbral es 1.000 exclusivo; cero, vacío, nulo y NaN no son sospechosos; USD nunca lo es (0.2069ms)
+  ✔ devuelve la moneda validada (0.9105ms)
+  ✔ camposTarifaBloqueo usa las etiquetas del formulario (0.2121ms)
+✔ validarMonedaBloqueo (crear): la moneda se elige y COP < 1.000 se rechaza (4.2088ms)
+▶ validarMonedaBloqueoEdicion: opcional al editar
+  ✔ sin moneda (undefined, null, vacía) no se toca la acreditada ni se valida el importe (0.33ms)
+  ✔ con moneda: inválida o COP < 1.000 se rechaza; válida pasa (0.1725ms)
+✔ validarMonedaBloqueoEdicion: opcional al editar (0.7158ms)
+▶ motivoMonedaBloqueoVsPaquete (regla D8, fuera del modo 63)
+  ✔ misma moneda: no hay motivo (0.2564ms)
+  ✔ moneda distinta: rechaza con mensaje claro que nombra el Bloqueo y las dos monedas (0.2245ms)
+  ✔ sin acreditar se lee como COP: pasa en un paquete COP y se rechaza en uno USD (0.2097ms)
+  ✔ una moneda inválida guardada se rechaza (defensa en profundidad) (0.1751ms)
+✔ motivoMonedaBloqueoVsPaquete (regla D8, fuera del modo 63) (1.2101ms)
+✔ mensajeErrorMonedaBloqueo quita el prefijo técnico de la base y respeta los demás mensajes (0.2733ms)
+▶ cableado
+  ✔ generarTarifario lee la moneda del Bloqueo y la evalúa con la regla común (fuera del modo 63 una moneda distinta se rechaza) (0.8051ms)
+  ✔ la evaluación común va después de filtrar los vuelos que aportan y antes de liquidar (0.2299ms)
+  ✔ la acción de crear exige y manda la moneda; editar la manda solo si viene; el CSV la exige por fila (0.4995ms)
+  ✔ el listado muestra la columna Moneda (también en el histórico) y la plantilla CSV la incluye (1.7806ms)
+  ✔ los dos formularios reutilizan MonedaTarifas (0.9617ms)
+✔ cableado (4.6747ms)
+▶ migración 231 y scripts
+  ✔ hay exactamente una migración 231 y es la siguiente a la 230 (0.5675ms)
+  ✔ agrega la moneda con CHECK COP/USD, la constancia y el invariante moneda <-> constancia (0.1931ms)
+  ✔ la constancia la escribe el trigger (servidor), no es reversible a NULL y rechaza COP < 1.000 (0.0852ms)
+  ✔ el interruptor estricto nace APAGADO y está en un esquema privado (0.0699ms)
+  ✔ la invalidación del tarifario vigila la moneda y exceptúa solo NULL -> COP (0.0647ms)
+  ✔ crear_bloqueo recibe la moneda y no la supone (0.1513ms)
+  ✔ la migración no actualiza ni borra datos de negocio (los inserts son solo de crear_bloqueo y de la fila del interruptor) (0.1572ms)
+  ✔ existen preflight/postcheck integral, acreditación en bloque y rollbacks de estructura y datos (1.3089ms)
+  ✔ la acreditación en bloque aborta si hay neta o reventa positiva < 1.000 y deja constancia de la decisión D2 (0.8006ms)
+  ✔ control 20: paquetes activos en USD con Bloqueo sin acreditar o no USD; lee la moneda por jsonb (sirve antes y después de la 231) (0.622ms)
+  ✔ el interruptor estricto es un paso OBLIGATORIO: el postcheck lo exige OK y solo es INFO mientras falte acreditar (1.9232ms)
+  ✔ las fases cubren el control 20 (USD válido, NULL, COP, antes de la 231) y el postcheck FINAL con el interruptor encendido (2.0499ms)
+  ✔ preflight y postcheck son UNA consulta con control, valor, esperado y estado (1.0914ms)
+✔ migración 231 y scripts (9.9517ms)
+(node:26152) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/monedaBloqueo231.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21104) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21104) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/pasajeroAccionesInfanteAuto.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ PasajeroAcciones.tsx — detección en vivo de infante en el alta manual
+  ✔ reutiliza esInfantePorEdad de lib/vuelos/infanteVuelo — nunca reimplementa el umbral (1.1934ms)
+  ✔ recibe fechaIdaBloqueo y candidatosResponsable como props (0.4352ms)
+  ✔ calcula esInfante contra fechaIdaBloqueo (la fecha REAL del vuelo, nunca una fecha fija ni la del contrato) (0.2657ms)
+  ✔ en modo infante NO llama a editarPasajeroSilla — nunca ocupa la silla que se está editando (0.2785ms)
+  ✔ en modo infante exige elegir un responsable antes de guardar (no manda responsableId vacío al server) (0.2343ms)
+  ✔ en modo infante llama a guardarInfanteVuelo con (bloqueoId, sillaResponsableId elegida, null, datos) — nunca un p_infante_id inventado para alta nueva (0.2291ms)
+  ✔ el selector de responsable se llena desde candidatosResponsable (nunca una lista hardcodeada ni resuelta por nombre) (0.2493ms)
+  ✔ los campos asesor/hotel/acomodación/plazo (irrelevantes para un infante) se ocultan cuando esInfante es true (0.1656ms)
+  ✔ sillaVacia se decide sobre `inicial` (estado ORIGINAL al abrir el modal) vía sillaTieneDatosDePasajero, nunca sobre `form` (que cambia mientras se escribe) (0.2385ms)
+  ✔ bloqueadaPorSillaOcupada = esInfante && !sillaVacia (edición de silla ocupada hacia INF queda bloqueada, alta en silla vacía no) (0.1763ms)
+  ✔ REQUERIDO: si la silla YA estaba ocupada y la fecha corregida clasifica INF, guardar() bloquea con mensaje ANTES de llegar a cualquier llamada de guardado — no inserta el infante ni toca la silla (0.1745ms)
+  ✔ el botón Guardar queda deshabilitado cuando bloqueadaPorSillaOcupada (no solo un mensaje visual — el clic no dispara nada) (0.0934ms)
+  ✔ el selector de adulto responsable SOLO se renderiza en el alta sobre silla vacía (esInfante && sillaVacia) — nunca al editar una silla ocupada (0.0913ms)
+  ✔ hay un banner de bloqueo DISTINTO (nunca el mismo selector de alta) cuando la silla está ocupada (0.1093ms)
+✔ PasajeroAcciones.tsx — detección en vivo de infante en el alta manual (5.8434ms)
+▶ vuelos/[id]/page.tsx — construye candidatosResponsable desde las sillas reales de ESTE vuelo
+  ✔ candidatosResponsable exige documento propio, fecha de nacimiento válida y excluye sillas en 'cambio' (mismo criterio que el trigger directo Infante) (0.2248ms)
+  ✔ REQUERIDO: candidatosResponsable excluye MENORES DE EDAD — calcula edad real (calcularEdad) contra fecha_ida y exige >= 18, nunca solo 'tiene documento' (0.0999ms)
+  ✔ importa calcularEdad de lib/utils (nunca reimplementa el cálculo de edad) (0.2292ms)
+  ✔ PasajeroAcciones recibe fechaIdaBloqueo y candidatosResponsable EXCLUYENDO la propia silla de la fila (0.1547ms)
+✔ vuelos/[id]/page.tsx — construye candidatosResponsable desde las sillas reales de ESTE vuelo (0.888ms)
+(node:23656) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ app/(dashboard)/dashboard/reservar/actions.ts importa la fuente de verdad compartida de pasajeros/sillas (2.8507ms)
+✔ app/(dashboard)/dashboard/reservar/actions.ts recalcula es_infante con esInfantePorEdad y lo pasa al RPC de creación (1.4061ms)
+✔ app/(dashboard)/dashboard/reservar/actions.ts decide sillas con pasajeroConsumeSilla, no con !esInfante/!p.esInfante inline (1.3688ms)
+✔ app/(dashboard)/dashboard/reservar/actions.ts construye el payload de creación con payloadGuardarPasajeros (incluye responsableIndex) (2.3413ms)
+✔ app/(dashboard)/dashboard/contratos/actions.ts importa la fuente de verdad compartida de pasajeros/sillas (0.816ms)
+✔ app/(dashboard)/dashboard/contratos/actions.ts recalcula es_infante con esInfantePorEdad y lo pasa al RPC de creación (0.7721ms)
+✔ app/(dashboard)/dashboard/contratos/actions.ts decide sillas con pasajeroConsumeSilla, no con !esInfante/!p.esInfante inline (0.9025ms)
+✔ app/(dashboard)/dashboard/contratos/actions.ts construye el payload de creación con payloadGuardarPasajeros (incluye responsableIndex) (0.781ms)
+✔ reservar/actions.ts: reservarDesdeTarifarioInterno y reservarProgramaInterno ya NO insertan contrato_pasajeros directo (solo crear_pasajeros_contrato) (2.8959ms)
+✔ reservar/actions.ts: convertirCotizacionCarrito crea pasajeros+responsables+sillas de TODOS los bloqueos del grupo en UNA sola llamada atómica (B6, ronda 3) (1.8508ms)
+✔ reservar/actions.ts: convertirCotizacionCarrito normaliza responsableIndex por GRUPO antes de armar el payload (B10, ronda 3) (1.4393ms)
+✔ reservar/actions.ts: convertirCotizacionCarrito valida `opts.asignaciones` explícita por ítem — nunca adivina por posición/conteo (B11, ronda 3) (2.2019ms)
+✔ reservar/actions.ts: convertirCotizacionCarrito clasifica la edad contra la fecha del CONTRATO (fechasIda incluye tours), no por ítem (B16, ronda 6) (2.5275ms)
+✔ reservar/actions.ts: convertirCotizacionCarrito exige asignación EXPLÍCITA de tours (B17, ronda 6) (1.5972ms)
+✔ migración 167: crear_pasajeros_contrato_multi rechaza una posición repetida DENTRO de la misma reserva de bloqueo (B11, ronda 3) (0.9467ms)
+✔ reservar/actions.ts no vuelve a confiar en el esInfante posicional del cliente para holders (2.4323ms)
+✔ editar-contrato-actions.ts delega TODO en una sola llamada a guardar_pasajeros_contrato (1.8267ms)
+✔ editar-contrato-actions.ts remapea responsableIndex al descartar filas vacías (no desincroniza posiciones) (0.5435ms)
+✔ migración 167: responsable_id es ON DELETE RESTRICT (nunca se puede des-vincular un infante en silencio borrando al adulto) (1.3383ms)
+✔ migración 167: el trigger exige mayoría de edad real del responsable, no solo 'no ser infante' (un CHD tampoco puede ser responsable) (0.7582ms)
+✔ migración 167: ajustar_sillas_por_pasajeros no repite la lista de roles ya codificada en puede_ver_contrato (0.6305ms)
+✔ migración 167 (segunda revisión de alto riesgo): la creación usa crear_pasajeros_contrato (service_role) que exige un actor real, no un rol interno (0.8991ms)
+✔ migración 167 (segunda revisión de alto riesgo — B1): fn_validar_responsable_infante rechaza SIEMPRE un infante nuevo sin responsable, salvo un id congelado en _pasajeros_exentos_167 (0.7752ms)
+✔ migración 167 (B22, ronda 10): el trigger DERIVA es_infante de la fecha de nacimiento y sobrescribe el valor recibido — no confía en el escritor (0.6636ms)
+✔ migración 167 (B22/B23): la fecha de referencia se resuelve con UNA sola función compartida y SIN ninguna entrada externa (0.9092ms)
+✔ migración 167 (B1): _pasajeros_exentos_167 es una foto INMUTABLE — sin GRANT de escritura para ningún rol de aplicación (1.7116ms)
+✔ migración 167 (B1): guardar_pasajeros_contrato/crear_pasajeros_contrato comparten un solo núcleo transaccional (_guardar_pasajeros_nucleo) — nunca reimplementan la validación dos veces (0.712ms)
+✔ migración 167 (B1/B3): el reemplazo de pasajeros hace DOS PASADAS (no-infantes primero, luego infantes con responsable_id ya resuelto) — nunca un null transitorio con blanket-clear (0.7231ms)
+✔ migración 167 (B5): p_holders_min es un PISO — nunca reserva menos que la composición declarada, ni menos que los pasajeros reales no-infante del payload (0.5844ms)
+✔ EditarAsesorPasajeros.tsx reindexa responsableIndex al quitar una fila (usa la operación pura compartida, no lógica inline duplicada) (0.5304ms)
+✔ lib/reservar/pasajeros.ts es la única fuente de la constante de edad de infante (EDAD_INFANTE_MAX_VUELO) (0.4306ms)
+✔ vuelos/pasajeros/page.tsx delega en resolverManifiestoAutorizado (contrato_pasajeros/es_infante viven en lib/vuelos/contratoManual.ts, no aquí) (0.6899ms)
+✔ PasajerosBuscador.tsx admite filas sin silla (infante) sin romper la clave de fila (0.3608ms)
+✔ vuelos/[id]/page.tsx (detalle de un record) también trae los infantes de los contratos del bloqueo, delegando en resolverManifiestoAutorizado (0.3873ms)
+✔ vuelos/[id]/page.tsx NO inyecta infantes dentro de la tabla de sillas (evita exponer acciones de silla sobre una fila que no tiene silla real) (0.4569ms)
+✔ reservar/actions.ts: pasajeros+sillas en creación es UNA sola llamada atómica a crear_pasajeros_contrato, con p_holders_min = paxConSilla (piso, nunca menos) (1.0456ms)
+✔ reservar/actions.ts: un fallo de crear_pasajeros_contrato detiene la reserva ENTERA (return temprano, nunca continúa a insertar hoteles/vuelos) (0.8945ms)
+✔ contratos/actions.ts: pasajeros+sillas en creación es UNA sola llamada atómica a crear_pasajeros_contrato — ya NO es best-effort dentro de negociado_admin (0.6275ms)
+✔ contratos/actions.ts: holdersMinPiso solo cae a `pax` (total) cuando NO hay pasajeros nombrados — nunca `holders.length || pax` (0.5522ms)
+✔ reservar/actions.ts: reservarProgramaInterno también pasa por crear_pasajeros_contrato (nunca confía en p.esInfante del cliente) (1.0916ms)
+✔ migración 167: crear_pasajeros_contrato valida un usuario real y activo (nunca confía ciegamente en service_role) (0.6763ms)
+✔ B19 (ronda 7): la silla se decide por la fecha REAL de cada bloqueo, no por ventas.fecha_salida (1.5523ms)
+✔ B18 (ronda 7): pre-validación de TODOS los grupos ANTES de crear el primer contrato (sin contratos parciales) (2.8895ms)
+✔ B18 (ronda 7): la UI ofrece SOLO responsables válidos en todos los contratos-infante y limpia vínculos al reagrupar (0.6938ms)
+✔ B20 (ronda 8) + B-fix (ronda 9): la pre-validación llama a la orquestación COMPARTIDA prevalidarResponsablesDeGrupo para TODOS los grupos ANTES de escribir (no depende de la UI, ni reconstruye el pipeline inline) (2.326ms)
+✔ B23 (ronda 11): la referencia de fecha NUNCA es null y sale del RELOJ DE LA BASE, no del proceso de Node ni de un fallback inyectado (10.6659ms)
+✔ B21 (ronda 8): capacidad CONSOLIDADA de toda la operación antes de escribir; se eliminó el chequeo por ítem (3.4833ms)
+(node:23656) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/pasajerosChdInf.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:22716) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:22716) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/publicacionLotesCableado.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ publicación por lotes — cableado en «Generar tarifario»
+  ✔ APAGADA por defecto: el código puede desplegarse antes que la migración (1.155ms)
+  ✔ el publicador monolítico sigue siendo el camino por defecto y se conserva intacto (0.9838ms)
+  ✔ un conjunto vacío no se carga por lotes (lo publica el publicador de siempre) (0.1925ms)
+  ✔ reanudar NO pide una generación nueva: usa la generación y la revisión que fijó el manifiesto (0.348ms)
+  ✔ una publicación pendiente se informa como ok con «pendiente» y si continúa sola (no como éxito ni error) y se mide aparte (0.2149ms)
+  ✔ un descarte (generación vieja, fuente cambiada, cálculo distinto) se mide como descartado; un rechazo de integridad o un error de la base es un fallo técnico, nunca «obsoleta» (0.3769ms)
+  ✔ las filas exactas llevan neto_hotel del MOTOR; «desde» (porción) y la fila de infante sintética no (no verificables) (0.3048ms)
+  ✔ la pantalla usa el bucle reanudable: si todo está en la base solo CONSULTA (no recalcula), se detiene si se desmonta y ofrece «Continuar publicación» al reabrir (3.8132ms)
+  ✔ el desempate entre vigencias de igual prioridad es DETERMINISTA y el mismo en generador, cotización, reserva y vigencia: se carga por (orden, id) (10.7277ms)
+  ✔ la composición de la 258 sale de lo que se hornea en cada salida de bloqueo/dinámico y viaja en el manifiesto (ya no es []) (0.7961ms)
+  ✔ las regeneraciones en segundo plano (hotel, servicio, vuelo, salida) TAMBIÉN publican por lotes: la base continúa sola, así que no necesitan quién las reanude (15.144ms)
+  ✔ sin tiempo para PREPARAR los lotes, una regeneración en segundo plano marca el fallo en vez de quedar «recalculando» en falso (0.4323ms)
+  ✔ toda página que aloja una de esas acciones declara maxDuration como literal igual a VENTANA_PETICION_MS (3.5853ms)
+  ✔ la ventana de la petición se cuenta desde el inicio de la acción que llama (0.3332ms)
+  ✔ los tipos conocen las columnas de generación, pero el costo neto del hotel NO es una columna de la tabla legible (6.0241ms)
+  ✔ la continuación SIN navegador: ruta de cron protegida con CRON_SECRET que llama al trabajador de la base (0.7134ms)
+✔ publicación por lotes — cableado en «Generar tarifario» (47.6858ms)
+▶ puerto de Supabase — los errores reales de la base no se confunden con «obsoleta»
+  ✔ una FK inválida (23503) llega como ErrorRpc con su código (0.9212ms)
+  ✔ la respuesta textual «obsoleta» de la base sí se entrega como texto (0.1828ms)
+  ✔ una respuesta con forma inesperada falla cerrado (0.2292ms)
+✔ puerto de Supabase — los errores reales de la base no se confunden con «obsoleta» (1.5665ms)
+(node:25268) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:25268) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/retencionVuelos.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ el cron y liberar_vencidas siguen atendiendo SOLO contratos pendientes (2.6444ms)
+✔ la acción Liberar manda la versión que mostró la pantalla (1.9864ms)
+✔ el record identifica las vencidas con la misma regla y ofrece Liberar solo en ellas (0.8676ms)
+✔ el aviso de Vuelos cuenta con la misma regla que la base (0.5353ms)
+✔ capturar sin contrato exige pasajero y plazo antes de llamar a la base (1.068ms)
+✔ una retención acepta contrato manual (lo confirma) en la base y en la pantalla (0.4845ms)
+✔ una retención VENCIDA no recibe contrato hasta actualizar el plazo (base y pantalla, misma regla) (0.7633ms)
+✔ las firmas sin versión quedan registradas para poder retirarlas con evidencia (0.2478ms)
+(node:30584) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ migración 226: aditiva y con su kit completo
+  ✔ existen la migración, preflight, postcheck, rollback, batería, fases y workflow (3.0029ms)
+  ✔ no toca policies, privilegios de tablas ni datos: sin create/drop/alter policy, sin insert/update/delete/truncate de datos (1.1814ms)
+  ✔ agrega exactamente las 4 columnas con sus CHECK y reemplaza lo esperado, nada más (2.029ms)
+  ✔ el publicador y crear_bloqueo conservan SECURITY DEFINER, search_path y los grants (nunca anon) (0.3196ms)
+  ✔ los triggers de invalidación escuchan fee_infante y precio_infante (0.2902ms)
+  ✔ tarifario_resumen.precio_infante pasa a ser el precio del menor de 2 años (coalesce con precio_pvp para filas viejas) (0.1499ms)
+  ✔ el rollback se niega con datos en las columnas nuevas, restaura el texto original y retira las columnas (0.9575ms)
+  ✔ preflight y postcheck son de solo lectura y terminan en ROLLBACK (3.6041ms)
+  ✔ el postcheck trata un objeto ausente (NULL) como FALLA, no como verde (0.6774ms)
+  ✔ ninguna variable PL/pgSQL de los scripts 226 se llama como una columna (evita la sombra de nombres) (3.4685ms)
+  ✔ las fixtures de contratos usan numeración DTM-NNNN (2.0239ms)
+  ✔ la batería no compara contra conteos literales de tablas compartidas (conteos reales de sus propias fixtures) (1.1184ms)
+✔ migración 226: aditiva y con su kit completo (21.3508ms)
+▶ workflow test-226-tarifa-infante.yml cumple las reglas del repo
+  ✔ permisos de solo lectura, sin pull_request_target, sin secretos ni Supabase remoto (0.3998ms)
+  ✔ toda acción va fijada por SHA de 40 caracteres (0.3213ms)
+  ✔ `set +e` antes de CADA pipeline con tee (0.8606ms)
+  ✔ el esquema parte de la cadena real hasta la 225 y corre las fases y las pruebas TS (0.1498ms)
+✔ workflow test-226-tarifa-infante.yml cumple las reglas del repo (2.0386ms)
+▶ los caminos de venta usan la fuente única de menores de 2 años
+  ✔ computarReserva: precio por tarifarMenores, lectura de precio_pvp_menor2, servicios con el pax de 2+ años (0.5322ms)
+  ✔ reservar: el fee de infante del vuelo se cobra por menor de 2 años calculado (no por input.infantes) y los ítems salen de lineasMenores (1.3359ms)
+  ✔ reservar: CxP de hotel incluye el neto del infante y CxP de servicios usa el precio de infante neto (0.9395ms)
+  ✔ reservar (conversión de carrito, bloqueo): el costo aéreo suma el fee de infante del bloqueo por menor de 2 años (0.5116ms)
+  ✔ checkout: filas de menores y residual salen de lineasMenores (0.7833ms)
+  ✔ buscador de hoteles: los menores se tarifan con tarifarMenores y el rango de grupo NO cuenta al menor de 2 años (0.9195ms)
+  ✔ generador: cada fuente de vuelo pasa su fee_infante (precio = costo, sin MK ni TA) y el infante sin tarifa de hotel se publica (1.1641ms)
+  ✔ origen del vuelo: el Bloqueo lee su fee_infante (ya no es 0 fijo) (1.9182ms)
+  ✔ fuera de alcance intactos: Bernalo, Programas, cotización manual y contrato manual no usan menoresDeDos (3.3382ms)
+✔ los caminos de venta usan la fuente única de menores de 2 años (12.1242ms)
+▶ catálogo y vuelos: los campos nuevos están en las pantallas y en la carga masiva
+  ✔ servicios: campo, temporadas, CSV y aviso de servicios sin precio de infante (2.4275ms)
+  ✔ bloqueos: fee_infante en crear, editar y CSV; sin cambiar el contrato de edición cuando la página no lo manda (4.0155ms)
+  ✔ tarifario público: columna 'Infante (menor de 2 años)' con su precio y la nota de que desde los 2 años se cobra como adulto (2.9031ms)
+  ✔ listado de paquetes: aviso de los que hay que regenerar (solo lectura, sin barrido automático) (3.4231ms)
+✔ catálogo y vuelos: los campos nuevos están en las pantallas y en la carga masiva (13.5276ms)
+(node:30584) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/tarifaInfante226Cableado.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:30816) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vencimiento de reservas (liberarVencidas)
+  ✔ 6:59 p. m. y 7:00 p. m. de Bogotá siguen siendo el mismo día de corte (2.2623ms)
+  ✔ un plazo de HOY no vence hoy a ninguna hora; el de ayer sí; vence al día siguiente (0.4263ms)
+  ✔ liberarVencidas usa la fecha de negocio y la RPC atómica (sin UPDATE directo ni toISOString) (0.8928ms)
+✔ vencimiento de reservas (liberarVencidas) (6.3221ms)
+▶ records destino compatibles (Mover / Trasladar)
+  ✔ a las 6:59 p. m. de Bogotá del 1-oct: ayer fuera; hoy y mañana dentro (1.2588ms)
+  ✔ a las 7:00 p. m. de Bogotá del 1-oct: ayer fuera; hoy y mañana dentro (0.2146ms)
+  ✔ a las 11:59 p. m. de Bogotá del 1-oct: ayer fuera; hoy y mañana dentro (0.179ms)
+  ✔ a medianoche (ya es 2-oct en Bogotá) el record de 'hoy' (1-oct) también sale (0.2568ms)
+  ✔ vueloNoSalido y la descripción (tarifa distinta, mismas fechas) (0.4513ms)
+  ✔ la página del record ofrece solo los compatibles del filtro puro (fecha de Bogotá) (0.671ms)
+✔ records destino compatibles (Mover / Trasladar) (3.5997ms)
+(node:30816) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vencimientoYCompatibles.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:29028) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ labelModalidad: null/valor desconocido cae en 'Sin definir', nunca inventa un estado (1.286ms)
+✔ labelEstadoEmision/labelEstadoPago: null cae en 'Por confirmar', no en 'Pendiente' (0.2943ms)
+✔ los type guards solo aceptan los valores exactos del enum (0.1154ms)
+✔ crearBloqueo exige modalidad de emisión y arranca los dos estados en 'pendiente' (0.4598ms)
+✔ BloqueoEditInput (editar bloqueo general) NO incluye modalidad: ese campo solo se toca desde Control (0.1561ms)
+✔ actualizarControlBloqueo valida los tres campos y delega TODO en el RPC atómico (0.2801ms)
+✔ actualizarControlBloqueo NO vuelve a hacer un UPDATE + INSERT sueltos de bloqueos_vuelo/bloqueo_cambios (0.263ms)
+✔ actualizarControlBloqueo revalida rutas SOLO después de comprobar que el RPC no devolvió error (0.2793ms)
+✔ actualizar_control_bloqueo() bloquea la fila, actualiza e inserta el historial en la MISMA función, sin security definer (0.3345ms)
+✔ actualizar_control_bloqueo() permite registrar una nota sin cambios de estado (0.3491ms)
+✔ cargarBloqueosMasivo exige modalidad_emision por fila y valida estado_emision/estado_pago (0.1492ms)
+✔ los parsers CSV de estado_emision/estado_pago solo defaultean a 'pendiente' cuando la celda viene VACÍA (0.112ms)
+✔ la alerta de fecha límite de emisión se apaga si el record ya quedó 'emitido', pero la de devolución no (0.1939ms)
+✔ migración 152: las columnas nuevas no nacen con default — un registro viejo no puede quedar falsamente 'pendiente' (0.1865ms)
+(node:29028) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosControl.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:30392) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ tonoModalidad('serie') = neutral (1.5487ms)
+✔ tonoModalidad('grupo') = warn (0.3825ms)
+✔ tonoModalidad(null) [Sin definir] = neutral (0.2342ms)
+✔ tonoModalidad(valor inválido, incluido el 'individual' pre-155) = neutral (0.1244ms)
+✔ tonoEstadoEmision('pendiente') = warn (0.2228ms)
+✔ tonoEstadoEmision('emitido') = ok (0.1825ms)
+✔ tonoEstadoEmision(null) [Por confirmar] = orange (0.1504ms)
+✔ tonoEstadoEmision(valor inválido) = orange (0.0873ms)
+✔ tonoEstadoPago('pendiente') = warn (0.1523ms)
+✔ tonoEstadoPago('pagado') = ok (0.1922ms)
+✔ tonoEstadoPago(null) [Por confirmar] = orange (0.2376ms)
+✔ tonoEstadoPago(valor inválido) = orange (0.1729ms)
+✔ 'Por confirmar' (null, inválido, string vacío) nunca es tono ok — ni en emisión ni en pago (0.2474ms)
+✔ EstadoBadge: se agregó un tono 'orange' explícito con las clases pedidas (0.1793ms)
+✔ EstadoBadge: inferir() NO cambió — nunca devuelve 'orange' por inferencia de texto (no se tocó la interpretación global) (0.1403ms)
+✔ ControlVuelosTabla pasa el tono EXPLÍCITO desde los helpers centralizados (no un tono fijo, no inferencia) (0.216ms)
+✔ ControlBadges pasa el tono EXPLÍCITO desde los MISMOS helpers centralizados que ControlVuelosTabla (0.2071ms)
+✔ ControlVuelosTabla y ControlBadges importan tonoModalidad/tonoEstadoEmision/tonoEstadoPago del MISMO módulo compartido (0.229ms)
+✔ labelModalidad/labelEstadoEmision/labelEstadoPago (los TEXTOS) no cambiaron (0.3495ms)
+✔ ControlVuelosTabla: los filtros de emisión/pago no se tocaron (siguen usando matchControl/SIN_DEFINIR_VAL); el de modalidad ahora contempla 'sistema' (0.1579ms)
+(node:30392) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosControlColores.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:30372) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vuelos/[id]/page.tsx — enlace 'Editar en contrato' autorizado en lote
+  ✔ importa la autorización del módulo compartido + el componente cliente + tenantContext (server surface correcta) (1.2576ms)
+  ✔ cada renglón de infante resuelve su enlace con el selector puro y su PROPIO numeroContrato contra el conjunto autorizado (0.3945ms)
+  ✔ el renglón renderiza EnlaceEditarContrato pasándole numeroContrato, tenant REAL y tenant activo (0.2468ms)
+  ✔ el enlace vive en el renglón informativo del infante, que sigue sin asignar silla ni acciones de silla (0.3031ms)
+✔ vuelos/[id]/page.tsx — enlace 'Editar en contrato' autorizado en lote (3.5101ms)
+▶ vuelos/pasajeros/page.tsx — el servidor autoriza y el objeto {numeroContrato, tenant} baja al cliente
+  ✔ importa la autorización del MISMO módulo compartido + tenantContext y la resuelve en lote (server surface correcta) (0.3644ms)
+  ✔ cada fila de infante lleva enlaceEditarContrato = enlaceContratoEnVuelo(...) — objeto resuelto por el servidor, nunca un booleano (0.2327ms)
+  ✔ pasa el tenant ACTIVO a PasajerosBuscador para que el cliente sepa si hay que cambiar de agencia (0.1594ms)
+✔ vuelos/pasajeros/page.tsx — el servidor autoriza y el objeto {numeroContrato, tenant} baja al cliente (1.0976ms)
+▶ PasajerosBuscador.tsx — el cliente renderiza SOLO lo que el servidor ya autorizó
+  ✔ usa el componente reutilizable EnlaceEditarContrato y le pasa numeroContrato, tenant REAL y tenant activo (0.3054ms)
+  ✔ el enlace está CONDICIONADO a que el servidor haya autorizado el objeto enlaceEditarContrato (0.1563ms)
+  ✔ el cliente NO autoriza ni decide cambiar de agencia: solo delega en EnlaceEditarContrato (0.3423ms)
+  ✔ el infante sigue sin ocupar silla ni tener acciones de silla en esta superficie (0.192ms)
+✔ PasajerosBuscador.tsx — el cliente renderiza SOLO lo que el servidor ya autorizó (1.2988ms)
+▶ EnlaceEditarContrato.tsx — el cliente reutilizable decide SOLO la mecánica de navegación
+  ✔ recibe numeroContrato + tenantContrato + tenantActivo y decide si hace falta cambiar de agencia (0.3549ms)
+  ✔ mismo tenant activo → navegación NORMAL (no intercepta el clic ni toca la cookie) (0.1553ms)
+  ✔ el prefetch del Link queda DESACTIVADO solo cuando el contrato es cross-tenant (no precarga la ficha con la cookie de la agencia ANTERIOR); en el mismo tenant se deja el default (0.1365ms)
+  ✔ tenant distinto → llama (y espera) a la Server Action existente cambiarTenant y navega con recarga COMPLETA solo si responde ok (0.2115ms)
+  ✔ si cambiarTenant responde ok:false o lanza, NO navega y muestra un error discreto (0.1591ms)
+  ✔ el componente NO autoriza por rol ni usa un cliente admin — solo ejecuta el cambio cuando el servidor ya lo permitió (0.2014ms)
+✔ EnlaceEditarContrato.tsx — el cliente reutilizable decide SOLO la mecánica de navegación (1.5583ms)
+(node:30372) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosEnlaceInfanteContrato.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:13820) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vuelos/[id]/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada
+  ✔ importa resolverManifiestoAutorizado (no la variante vulnerable ni una reimplementación inline) (0.7986ms)
+  ✔ pasa los contratos ORGÁNICOS de todas las sillas del bloqueo (no solo unas pocas) al resolver autorizado (0.3485ms)
+  ✔ NO consulta contrato_pasajeros ni ventas directamente en este archivo — esa lectura vive en el módulo autorizado (0.1996ms)
+  ✔ NO escribe/actualiza sillas.contrato_manual en ningún punto de este archivo (solo lectura) (0.149ms)
+  ✔ REQUERIDO: contratosOrganicosDelBloqueo está deduplicado (Set) y el manifiesto de infantes se resuelve con el módulo compartido de agrupación (0.1336ms)
+  ✔ REQUERIDO: el renglón subordinado del infante (interpolado junto a su silla) no ocupa silla ni tiene acciones de silla (0.1753ms)
+✔ vuelos/[id]/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada (2.7498ms)
+▶ vuelos/pasajeros/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada
+  ✔ importa resolverManifiestoAutorizado y normalizarReferenciaManual — MISMO módulo que vuelos/[id]/page.tsx, no una reimplementación paralela (0.2761ms)
+  ✔ consulta contrato_manual de las sillas (antes esta página no lo leía en absoluto) (0.1528ms)
+  ✔ pasa los contratos ORGÁNICOS de todas las sillas del listado (no solo las que tienen pasajero con nombre) al resolver autorizado (0.2297ms)
+  ✔ NO consulta contrato_pasajeros ni ventas directamente en este archivo — esa lectura vive en el módulo autorizado (0.2179ms)
+  ✔ el emparejamiento infante↔silla usa el contrato EFECTIVO de cada silla (si no, el infante nunca hereda vuelo/hotel/asesor cuando el adulto está en una silla manual) — delegado en emparejarInfantesConSilla (0.1909ms)
+  ✔ el infante muestra su propio numero_contrato interno (no el de la silla, que para un contrato manual resuelto queda vacío) (0.2648ms)
+  ✔ NO escribe/actualiza sillas.contrato_manual en ningún punto de este archivo (solo lectura) (0.1754ms)
+  ✔ REQUERIDO: el infante nunca ocupa silla (sillaId: null) y aparece a lo sumo una vez (particionado por emparejarInfantesConSilla, nunca duplicado entre sillas) (0.1699ms)
+✔ vuelos/pasajeros/page.tsx — infantes de contratos asociados por contrato_manual, resueltos de forma autorizada (2.1026ms)
+▶ Sin cambios de comportamiento fuera de alcance
+  ✔ ninguna de las dos páginas antepone 'MIN-' a ciegas por su cuenta (toda la resolución vive en lib/vuelos/contratoManual.ts) (0.6888ms)
+  ✔ ninguna de las dos páginas construye un cliente admin/service-role directamente — solo lib/vuelos/contratoManual.ts puede hacerlo (0.5205ms)
+✔ Sin cambios de comportamiento fuera de alcance (1.3764ms)
+▶ lib/vuelos/contratoManual.ts — el cliente admin es exclusivamente server-only
+  ✔ usa createAdminClient() (server-only, ver lib/supabase/admin.ts) y no expone la instancia fuera de resolverManifiestoAutorizado (0.191ms)
+  ✔ resolverManifiestoAutorizado autoriza con el cliente de SESIÓN antes de construir el cliente admin (0.1798ms)
+  ✔ usuarioAutorizadoParaVuelos reutiliza LECTURA_MODULO.vuelos (no duplica la lista de roles del módulo) (0.1088ms)
+✔ lib/vuelos/contratoManual.ts — el cliente admin es exclusivamente server-only (0.6628ms)
+(node:13820) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosInfanteContratoManual.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:25700) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ vuelos/[id]/page.tsx — infante subordinado a su silla responsable
+  ✔ REQUERIDO 1/2: el renglón del infante se interpola DENTRO del mismo .map de sillas, inmediatamente después de la fila de su silla (agrupa consecutivamente si hay varios) (1.1013ms)
+  ✔ REQUERIDO 3: el infante se agrupa por responsable_id (documento), nunca por nombre — el emparejamiento viene de emparejarInfantesConSilla, no de comparar pasajero_nombres (0.6108ms)
+  ✔ REQUERIDO 4: los infantes no alteran la numeración ni el conteo de sillas (conteo/totalReal siguen derivándose solo de `sillas`) (0.2315ms)
+  ✔ REQUERIDO 5: NO queda ninguna tabla ni sección independiente para infantes (una sola <table> en la pestaña Pasajeros, sin encabezado propio de infantes) (0.3252ms)
+  ✔ el renglón del infante no tiene estado ni acciones de silla (sin SillaEstado/PasajeroAcciones/SillaContrato) y no ocupa silla (sin sillaId) (0.4252ms)
+  ✔ REQUERIDO 6: responsable ausente en este bloqueo genera una advertencia compacta (no una tabla, no una fila normal) (0.313ms)
+  ✔ REQUERIDO: la línea del renglón muestra nombre, tipo+número de documento y edad/fecha (todo junto, antes de 'No ocupa silla') (0.1934ms)
+  ✔ mantiene intacta la solución cross-tenant del PR #289 (resolverManifiestoAutorizado sigue siendo el único punto de lectura de contrato_pasajeros/ventas) (0.3579ms)
+  ✔ diseño compacto: el renglón del infante usa texto pequeño (text-xs) y ocupa todo el ancho de la tabla vía colSpan (se mantiene legible dentro del mismo contenedor overflow-x-auto ya usado para escritorio/móvil) (0.3061ms)
+✔ vuelos/[id]/page.tsx — infante subordinado a su silla responsable (5.1812ms)
+▶ vuelos/pasajeros/page.tsx — resolución de infante↔silla vía responsable_id (la presentación vive en PasajerosBuscador.tsx)
+  ✔ REQUERIDO 3: usa emparejarInfantesConSilla (responsable_id → documento), nunca compara por nombre (0.4069ms)
+  ✔ cada infante lleva padreId apuntando a la fila (silla) de su responsable — es la clave que usa PasajerosBuscador para subordinarlo (0.2795ms)
+  ✔ REQUERIDO 6: los infantes sin responsable ubicable se pasan aparte (advertenciasInfantes), nunca como fila normal (0.1754ms)
+✔ vuelos/pasajeros/page.tsx — resolución de infante↔silla vía responsable_id (la presentación vive en PasajerosBuscador.tsx) (1.2116ms)
+▶ PasajerosBuscador.tsx — renderizado subordinado (Client Component, cubre escritorio y móvil vía el mismo contenedor con scroll)
+  ✔ REQUERIDO 1/2: agrupa infantes por padreId (Map) y los renderiza dentro del mismo Fragment/.map que su adulto, inmediatamente después de su <tr> (0.4856ms)
+  ✔ REQUERIDO 5: no hay una tabla ni sección propia para infantes — una sola <table>, sin columna 'Infante' aparte (0.1677ms)
+  ✔ el renglón del infante no ocupa silla ni expone acciones — solo texto informativo con el ícono conector y 'No ocupa silla' (0.157ms)
+  ✔ REQUERIDO: la línea del renglón muestra nombre, tipo+número de documento y edad/fecha (todo junto, un solo <span> inline-flex, antes de 'No ocupa silla') (0.134ms)
+  ✔ REQUERIDO 6: advertencia compacta (no tabla) para infantes sin responsable ubicable, con ícono de alerta (0.1666ms)
+  ✔ REQUERIDO 4: los infantes no alteran la numeración/orden — el ordenamiento (sort) sigue aplicándose solo sobre los adultos (0.1259ms)
+  ✔ diseño compacto: texto pequeño (text-xs) en el renglón subordinado, dentro del mismo contenedor con scroll horizontal ya usado por la tabla (0.1215ms)
+✔ PasajerosBuscador.tsx — renderizado subordinado (Client Component, cubre escritorio y móvil vía el mismo contenedor con scroll) (1.6563ms)
+(node:25700) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosInfantesSubordinados.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:28332) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ modo de mover y operación
+  ✔ solo los dos modos exactos; nada por defecto (0.5451ms)
+  ✔ identificador de operación: uuid (3.1945ms)
+  ✔ ids positivos enteros (0.117ms)
+✔ modo de mover y operación (4.5828ms)
+▶ errores de la base
+  ✔ lock timeout → reintentar, sin afirmar que se aplicó (0.282ms)
+  ✔ deadlock y función inexistente (0.1597ms)
+  ✔ tarifa distinta: se marca y se quita el prefijo técnico (0.5152ms)
+  ✔ mensaje de negocio tal cual; vacío → genérico (0.108ms)
+✔ errores de la base (1.3019ms)
+▶ matriz DIR-1 (interfaz; la base la vuelve a validar)
+  ✔ Disponible (y cambio_entrante) → No vendida o Devuelta (0.2675ms)
+  ✔ No vendida → Disponible, o Devuelta SOLO con devolución real (0.1995ms)
+  ✔ Devuelta es definitiva; en plazo, confirmada, cambio y retirada no tienen cambio manual (0.2354ms)
+  ✔ solo tres estados son manuales (0.1224ms)
+✔ matriz DIR-1 (interfaz; la base la vuelve a validar) (1.0873ms)
+▶ dos cifras: cupos activos y movimientos históricos
+  ✔ cambio y retirada son historial, no cupos (0.118ms)
+  ✔ el historial se agrupa por operación, va del más reciente al más antiguo y conserva cupos antes/después y el detalle por silla (0.3909ms)
+  ✔ el texto depende del record desde el que se mira (0.2239ms)
+  ✔ la operación se nombra por lo guardado (tipo), nunca por el motivo en texto libre (0.1977ms)
+  ✔ fechas ilegibles o iguales conservan el orden recibido y quedan al final (0.112ms)
+  ✔ movimientos por record: cuentan en origen y destino, nunca dos veces en el mismo (0.1314ms)
+✔ dos cifras: cupos activos y movimientos históricos (1.3366ms)
+(node:28332) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosOperaciones.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:23528) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ acumularSilla
+  ✔ las filas cambio y retirada no suman en ningún contador, total incluido (0.815ms)
+  ✔ los estados activos siguen contando igual que antes (0.1078ms)
+  ✔ estado nulo o desconocido sigue sumando al total (sin cambio de criterio) (0.1408ms)
+✔ acumularSilla (1.8013ms)
+▶ conteo por record con el legado del traslado antiguo
+  ✔ Y cuenta 8 sillas activas (no 10): las 2 que salieron no son suyas (0.1782ms)
+  ✔ X cuenta 8 (6 propias + 2 que entraron) (0.0704ms)
+  ✔ Y + X suman 16 sillas: ninguna se cuenta dos veces (0.0882ms)
+  ✔ la ocupación y el % de venta de Y se calculan sobre 8, no sobre 10 (0.1038ms)
+  ✔ un record solo con filas cambio queda en 0 y no divide entre cero (0.1017ms)
+✔ conteo por record con el legado del traslado antiguo (0.7574ms)
+(node:23528) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosStats.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:9084) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ BloqueosTabla (Inventario) no importa ni renderiza ControlBadges (1.1312ms)
+✔ BloqueosTabla (Inventario) no tiene un encabezado 'Control' (0.1599ms)
+✔ BloqueoFila (Inventario) ya no incluye modalidad_emision/estado_emision/estado_pago (0.1096ms)
+✔ Inventario ya no tiene filtros de modalidad/emisión/pago (solo ruta y mes) (0.1258ms)
+✔ BloqueosTabla (Inventario): el tfoot ajustó su colSpan final tras quitar Control (2, no 3) (0.1449ms)
+✔ BloqueosTabla (Inventario): thead y tbody conservan el mismo número de columnas (0.2105ms)
+✔ ControlVuelosTabla tiene tres <th> SEPARADOS para Modalidad/Emisión/Pago (no un badge combinado) (0.1158ms)
+✔ ControlVuelosTabla no incluye columnas de sillas ni fila de totales (0.1526ms)
+✔ ControlVuelosTabla no incluye acción de eliminar (esa acción es solo de Inventario) (0.1291ms)
+✔ ControlVuelosTabla: el record enlaza al detalle correcto según su origen (bloqueo vs sistema/empaquetado) (0.1903ms)
+✔ ControlVuelosTabla: mismo número de encabezados y celdas, EN EL MISMO ORDEN (0.7832ms)
+✔ ControlVuelosTabla: cada valor va en la celda de SU columna, por posición (0.3621ms)
+✔ ControlVuelosTabla pasa SIEMPRE por label*() antes de mostrar el badge — nunca el valor crudo de la BD (0.1012ms)
+✔ ControlVuelosTabla reutiliza EstadoBadge (mismos badges/colores de siempre), no un componente nuevo (0.1477ms)
+✔ ControlVuelosTabla tiene sus 5 filtros propios (ruta, mes, modalidad, emisión, pago), en useState separados (0.0823ms)
+✔ Inventario y Control Vuelos son componentes DISTINTOS (estado de filtros no puede cruzarse) (0.0866ms)
+✔ matchControl/mesKey/mesLabel viven en un helper puro compartido, sin lógica de React (0.1105ms)
+✔ /dashboard/vuelos: filasControl (lo que recibe ControlVuelosTabla) se arma SOLO desde activos/empActivos, nunca pasados/todos (0.1737ms)
+✔ /dashboard/vuelos: BloqueosTabla recibe SOLO activos, nunca pasados ni todos (0.1116ms)
+✔ /dashboard/vuelos/historico: filasControl se arma SOLO desde pasados/empPasados, nunca activos/todos (0.1213ms)
+✔ /dashboard/vuelos/historico: BloqueosTabla recibe SOLO pasados, nunca activos ni todos (0.0933ms)
+✔ VistaTabs usa <Link href='?vista=...'> — la pestaña vive en la URL, no en useState (0.1525ms)
+✔ vistaDeParam: 'control-vuelos'/'empaquetados' explícitos activan su vista; CUALQUIER OTRO valor (ausente, inválido) cae en 'inventario' (0.1136ms)
+✔ page.tsx y historico/page.tsx resuelven la pestaña desde searchParams (servidor), no desde el cliente (0.1093ms)
+✔ Inventario debe ser la vista por defecto: page.tsx y historico/page.tsx importan vistaDeParam de VistaTabs, no reimplementan el fallback (0.0605ms)
+✔ VistaTabs: el texto del tab de Control es EXACTAMENTE 'CONTROL VUELOS' (0.0574ms)
+✔ page.tsx: el título (tituloVista) es 'Inventario de vuelos' / 'Empaquetados' / 'Control vuelos' según la vista (0.0848ms)
+✔ page.tsx: el subtítulo (subtituloVista) también cambia según la vista, incluida Empaquetados (0.0748ms)
+✔ historico/page.tsx: tituloVista es 'Histórico de vuelos' / 'Empaquetados histórico' / 'Control vuelos histórico' según la vista (0.0609ms)
+✔ historico/page.tsx: el subtítulo también cambia según la vista, incluida Empaquetados (0.0686ms)
+✔ page.tsx: el botón 'Histórico' conserva el ?vista= actual (no un link estático) (0.0557ms)
+✔ page.tsx: el link del estado vacío de Inventario (bloqueos ya pasados) conserva ?vista= (0.0585ms)
+✔ historico/page.tsx: el link de regreso a Inventario conserva el ?vista= actual (no un link estático) (0.0967ms)
+✔ Round-trip: control-vuelos → historico?vista=control-vuelos → vuelos?vista=control-vuelos (mismo criterio para inventario) (0.0599ms)
+✔ page.tsx: la consulta de sillas está condicionada a vistaInventario (no corre en Control Vuelos) (0.0636ms)
+✔ page.tsx: conteo/tot/ocup NO se calculan en Control Vuelos (solo si vistaInventario) (0.0809ms)
+✔ historico/page.tsx: la consulta de sillas está condicionada a vistaInventario (no corre en Control Vuelos) (0.0745ms)
+✔ historico/page.tsx: gen/totPas NO se calculan en Control Vuelos (solo si vistaInventario) (0.0668ms)
+✔ page.tsx y historico/page.tsx: bloqueos_vuelo Y empaquetados se consultan UNA sola vez cada una (nunca duplicadas) (0.1296ms)
+✔ ControlVuelosTabla en ambas páginas no referencia conteo ni campos de sillas en su mapeo de filas (0.1207ms)
+(node:9084) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/vuelosVistaTabs.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ℹ tests 463
+ℹ suites 45
+ℹ pass 463
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 785.9515

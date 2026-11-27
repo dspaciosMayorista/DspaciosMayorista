@@ -26,6 +26,8 @@ import { marcar } from "@/lib/calc/paquetes";
 import { parseHora } from "@/lib/calc/trasladoFranjas";
 import { formatHora24 } from "@/lib/utils";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
+import { alojamientosDeServicios } from "@/lib/cotizacion/alojamientosDocumento";
+import { ETIQUETA_NINO_GRATIS_CLIENTE, plegarNinoGratisItems } from "@/lib/contrato/plegarNinoGratis";
 import { repartoPorPersona, type RepartoTarifa } from "@/lib/contrato/repartoTarifa";
 import { etiquetaIata } from "@/lib/iata";
 import { notaVueloManual, tramosVueloManual, validarServicioManual } from "@/lib/cart/servicioManual";
@@ -232,6 +234,11 @@ export type EntradaComparativaManual = Omit<CotizacionManualInput, "servicios"> 
   servicios: ServicioComparativa[];
   /** Id del catálogo `aliados`; solo para venta B2B (agencia/freelance). Nunca texto libre. */
   aliadoId?: number | null;
+  /**
+   * #33 (B95-6): tarifa de niño de CADA opción (cada hotel cobra la suya; 0 = gratis). Con niños en la cotización es OBLIGATORIA para todas las opciones: no se reutiliza una tarifa común
+   * ni se adivina. La cantidad de niños sí es única (es el mismo grupo de viaje).
+   */
+  tarifaNinoPorOpcion?: Partial<Record<OpcionRef, number>>;
   /** Solo lo respeta la base para superadmin; los demás usan el de su perfil. */
   tenant?: string;
   /** Incluye / No incluye y descripción visible del ítem POR OPCIÓN (clave `A/unica`), tal como los dejó el asesor antes de generar. Sin él: lo sugerido. */
@@ -360,7 +367,14 @@ export function construirComparativaManual(
     return { ok: false, error: "Cada hotel necesita un costo mayor a cero." };
   }
 
-  const rec = calcularRecobroNinos(input);
+  const nNinosGrupo = Math.max(Math.trunc(Number(input.ninos) || 0), 0);
+  const tarifasNino = input.tarifaNinoPorOpcion ?? {};
+  if (nNinosGrupo > 0) {
+    for (const r of refs) {
+      const v = tarifasNino[r];
+      if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return { ok: false, error: `Indica la tarifa de niño de la Opción ${r} (0 si es gratis): cada hotel cobra la suya.` };
+    }
+  }
   const adultos = Math.max(Number(input.pax) || 1, 1);
   const incluyeBase = (input.incluye || "").trim();
   const pres = leerPresentacionComparativa(input.presentacion);
@@ -371,6 +385,8 @@ export function construirComparativaManual(
   let errorPresentacion: string | null = null;
 
   const opciones: OpcionRpc[] = refs.map((ref, idx) => {
+    // Los niños de ESTA opción se cobran a la tarifa de SU hotel.
+    const rec = calcularRecobroNinos({ ...input, ninos: nNinosGrupo, tarifaNino: nNinosGrupo > 0 ? tarifasNino[ref] : 0 });
     // Filas de ESTA opción en su orden original: comunes + hoteles de la opción.
     const propias = filas.filter((f) => f.opcion_ref === null || f.opcion_ref === ref);
     const totalServicios = propias.reduce((acc, f) => acc + f.valor, 0);
@@ -394,15 +410,15 @@ export function construirComparativaManual(
 
     // Payload de la HIJA = la entrada de una cotización dinámica común, con SOLO sus servicios.
     // (Sin las claves propias de la comparativa: aliadoId, tenant, opcionRef, presentacion.)
-    const { aliadoId: _a, tenant: _t, presentacion: _p, ...base } = input;
-    void _a; void _t; void _p;
+    const { aliadoId: _a, tenant: _t, presentacion: _p, tarifaNinoPorOpcion: _n, ...base } = input;
+    void _a; void _t; void _p; void _n;
     const serviciosHija: ServicioManual[] = servicios
       .filter((s) => !s.opcionRef || s.opcionRef === ref)
       .map(({ opcionRef: _o, ...resto }) => { void _o; return resto; });
     const incluyeOpcion = p?.incluye !== undefined ? p.incluye : (incluyeBase || sugerirIncluye(serviciosHija.map((s) => ({ tipo: s.tipo, nombre: s.nombre }))));
     const noIncluyeOpcion = p?.noIncluye !== undefined ? p.noIncluye : (input.noIncluye || "").trim();
     // Con presentación editada, la hija lleva en su payload el MISMO Incluye / No incluye que su documento; sin ella, la entrada tal cual (igual que una dinámica común).
-    const payloadHija = JSON.parse(JSON.stringify({ ...base, servicios: serviciosHija, ...(p ? { incluye: incluyeOpcion, noIncluye: noIncluyeOpcion } : {}) }));
+    const payloadHija = JSON.parse(JSON.stringify({ ...base, ninos: rec.nNinos, tarifaNino: rec.valorNino, servicios: serviciosHija, ...(p ? { incluye: incluyeOpcion, noIncluye: noIncluyeOpcion } : {}) }));
 
     const detalleHija = {
       venta: {
@@ -413,6 +429,7 @@ export function construirComparativaManual(
         fecha_regreso: input.fechaRegreso || null,
         pax: adultos,
         ninos: rec.nNinos,
+        ...(Number(input.infantes) > 0 ? { infantes: Math.trunc(Number(input.infantes)) } : {}),
         precio_venta: precioVenta,
         moneda,
         asesor: asesor || null,
@@ -424,7 +441,8 @@ export function construirComparativaManual(
         estado: "cotizacion",
       },
       pasajeros: [],
-      hoteles: [],
+      // B95-15/18: el alojamiento de ESTA opción (solo el hotel elegido viaja en la hija), con su categoría, plan de alimentación y acomodación.
+      hoteles: alojamientosDeServicios(serviciosHija, { destino: input.destino, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso }),
       vuelos: [],
       incluye: incluyeOpcion,
       noIncluye: noIncluyeOpcion,
@@ -645,6 +663,21 @@ export type MenorOpcion = { descripcion: string; cantidad: number; tarifa: numbe
  * Sin menores cotizados → []. Una opción NETO (`total_exigible`) también → []: sus líneas están a PVP y no cuadran con el total exigible.
  * `etiqueta` (hotel) se recorta del inicio de la descripción para que no se repita bajo el nombre del hotel.
  */
+/**
+ * #33: el beneficio de niño gratis llega a la plantilla como una línea FIRMADA («… · Niño gratis por habitación · promo …», 1 adulto × tarifa negativa) que mantiene la suma de las líneas igual al total.
+ * Ante el cliente NO se muestra ese renglón ni su aritmética: se pliega en la tarifa PAGADERA del niño al que pertenece (el mismo criterio ya aceptado en contratos y cotizaciones, `plegarNinoGratisItems`).
+ * Lo que no se puede atribuir con certeza se deja como está (esa línea queda fuera del texto, pero no se inventa un reparto). Solo presentación: no escribe ni cambia nada guardado.
+ */
+function menoresDeDetalle(items: unknown[]): { descripcion: string; ninos: number; tarifa_nino: number; adultos: number; ninoGratisFusionado?: boolean }[] {
+  const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const filas = items.filter(obj).map((i, k) => ({
+    id: k + 1, descripcion: typeof i.descripcion === "string" ? i.descripcion : "", modo_precio: typeof i.modo_precio === "string" ? i.modo_precio : "",
+    valor_total: typeof i.valor_total === "number" ? i.valor_total : null, adultos: Number(i.adultos) || 0, ninos: Number(i.ninos) || 0,
+    tarifa_adulto: Number(i.tarifa_adulto) || 0, tarifa_nino: Number(i.tarifa_nino) || 0,
+  }));
+  return plegarNinoGratisItems(filas).items.filter((f) => !esLineaNinoGratis(f.descripcion));
+}
+
 function leerMenores(resumen: unknown, plantilla: unknown, etiqueta: string): MenorOpcion[] {
   const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
@@ -660,8 +693,14 @@ function leerMenores(resumen: unknown, plantilla: unknown, etiqueta: string): Me
   }
   const detalle = obj(plantilla) && obj(plantilla.detalle) ? plantilla.detalle : null;
   if (detalle && Array.isArray(detalle.items)) {
-    for (const i of detalle.items) {
-      if (!obj(i) || i.adultos !== 0) continue;
+    for (const i of menoresDeDetalle(detalle.items)) {
+      // Niño(s) en cero que el pliegue unió a la fila de adultos del paquete: se listan como «Niño gratis» (sin costo), no se pierden ni se muestran a precio completo.
+      if (i.ninoGratisFusionado) {
+        const n = cant(i.ninos);
+        if (n) out.push({ descripcion: `${ETIQUETA_NINO_GRATIS_CLIENTE} · ${i.descripcion.slice(i.descripcion.lastIndexOf(" · ") + 3)}`.trim(), cantidad: n, tarifa: 0 });
+        continue;
+      }
+      if (i.adultos !== 0) continue;
       const cantidad = cant(i.ninos), tarifa = num(i.tarifa_nino);
       if (!cantidad || tarifa == null || typeof i.descripcion !== "string") continue;
       const d = i.descripcion.startsWith(etiqueta) ? i.descripcion.slice(etiqueta.length) : i.descripcion;
@@ -834,7 +873,8 @@ export function leerPresentacionComparativa(raw: unknown): { ok: true; datos: Pr
  * manuales (se verifican contra lo cotizado) y la línea «Tarifa por niño» de la comparativa manual (de ella sale la tarifa de menores que se muestra).
  */
 export function lineaEditable(descripcion: unknown): descripcion is string {
-  return typeof descripcion === "string" && descripcion.trim().length > 0 && !descripcion.startsWith("Servicio · ") && !descripcion.startsWith("Vuelo · ")
+  // #33: la línea firmada del niño gratis no es texto comercial: ni se edita ni llega al cliente como renglón (su efecto va plegado en la tarifa del niño).
+  return typeof descripcion === "string" && descripcion.trim().length > 0 && !esLineaNinoGratis(descripcion) && !descripcion.startsWith("Servicio · ") && !descripcion.startsWith("Vuelo · ")
     && !descripcion.endsWith(" — sujeto a confirmación de disponibilidad y tarifa") && descripcion !== "Tarifa por niño";
 }
 

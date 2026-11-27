@@ -60,6 +60,9 @@ function cliente() {
 
 mock.module("@/lib/supabase/server", { namedExports: { createClient: async () => cliente() } });
 mock.module("@/lib/supabase/admin", { namedExports: { createAdminClient: () => cliente() } });
+// F6 (B95-13/14/15/20): la validación del catálogo manual (destino, hoteles, compra y acomodación) tiene su propia prueba (validacionManual95f6.test.ts y el recorrido real contra Postgres,
+// supabase/scripts/test_f6_95_formularios.sh). Aquí NO se prueba esa regla: se la deja pasar para probar lo que este archivo prueba (aliado, RPC, vigencia, paridad…).
+mock.module("@/lib/catalogo/prepararManual", { namedExports: { prepararServiciosManual: async (_c: unknown, i: { servicios: unknown[]; destinoId?: unknown }) => ({ ok: true, destino: "Cartagena", destinoId: undefined, servicios: i.servicios }) } });
 mock.module("@/lib/cotizacion/acceso", {
   namedExports: {
     contextoCotizacion: async () => ({ ok: true, superadmin: false, tenant: "mayorista" }),
@@ -102,9 +105,11 @@ function base(sobre: Partial<EntradaComparativaManual> = {}): EntradaComparativa
 async function dinamicaComun(entrada: EntradaComparativaManual, ref: "A" | "B") {
   inserts.length = 0;
   rpcs.length = 0;
-  const { aliadoId: _a, tenant: _t, ...resto } = entrada;
-  void _a; void _t;
+  const { aliadoId: _a, tenant: _t, tarifaNinoPorOpcion: _n, ...resto } = entrada;
+  void _a; void _t; void _n;
   const servicios = entrada.servicios.filter((s) => !s.opcionRef || s.opcionRef === ref).map(({ opcionRef: _o, ...s }) => { void _o; return s; });
+  // #33: la tarifa de niño es la de ESTA opción.
+  if (entrada.tarifaNinoPorOpcion) (resto as { tarifaNino?: number }).tarifaNino = entrada.tarifaNinoPorOpcion[ref] ?? 0;
   // #97: una dinámica B2B exige aliado del catálogo por id y BNC escrita (la comparativa lleva su propio aliado).
   const b2b = entrada.tipoAsesor !== "interno";
   const r = await crearCotizacionManual({ ...resto, servicios, ...(b2b ? { aliadoId: 7, bnc: 0 } : {}) });
@@ -154,7 +159,7 @@ describe("paridad: la plantilla de cada opción = la cotización dinámica comú
   for (const [nombre, sobre] of [
     ["interno sin recobro", {}],
     ["interno con recobro oculto", { recobro: 100000 }],
-    ["con niños y recobro", { recobro: 100000, ninos: 2, tarifaNino: 250000 }],
+    ["con niños y recobro (tarifa de niño distinta por opción)", { recobro: 100000, ninos: 2, tarifaNinoPorOpcion: { A: 250000, B: 180000 } }],
     ["B2B agencia con recobro al aliado", { tipoAsesor: "agencia" as const, agenciaNombre: "Agencia Uno", aliadoId: 7, recobro: 100000, recobroAliado: 60000 }],
     ["B2B freelance", { tipoAsesor: "freelance" as const, freelanceNombre: "Free Uno", aliadoId: 8, recobro: 50000, recobroAliado: 20000 }],
     ["USD", { moneda: "USD" }],

@@ -1,0 +1,91 @@
+
+### F2 · air vouchers PER SERVICE (ADL-041): PNR on the paid voucher, distinct services, stable links, internal update signal, atomicity, roles
+
+-- A1 generation WITHOUT a saved PNR is allowed
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+OK    no PNR saved: the voucher is created ({"ok":true,"creados":1,"actualizados":0}) and carries no PNR field
+OK    the service key is the lowest SAVED leg id of the group (1 = 1), not a name or a position
+OK    both legs of the round trip are in ONE voucher; the 3 passengers are listed once (not one voucher per passenger)
+
+-- A2 unpaid contract: the ally cannot open it; internal staff can, WITHOUT the PNR
+OK    ally, contract not paid: denied (pago_incompleto)
+
+-- A3 the PNR is saved LATER (real flight editor) and the voucher is regenerated: same link, new content, one revision
+OK    the flight editor saves the PNR on both legs (ok)
+OK    regeneration after the PNR was saved: SAME row and link, one real change ({"ok":true,"creados":0,"actualizados":1}, revision 1)
+OK    the issued link now carries the saved PNR (service key unchanged)
+
+-- A4 internal preview of the UNPAID contract hides the PNR (and says so); the ally is still denied
+OK    internal staff open the preview before payment
+OK    unpaid: the PNR is removed from what the page renders and a note is shown (payment lookups for this view: 1)
+OK    ally, still unpaid: denied
+
+-- A5 paid contract: the ally opens it and sees the PNR with NO extra payment lookup; internal staff see it too
+OK    paid: the ally opens the voucher (payment lookups in the existing access check: 1)
+OK    the ally view shows PNR XYZ123 and adds 0 requests
+OK    internal preview of the paid contract shows the PNR (one payment lookup, only because a PNR exists)
+OK    if the balance rises again the ally is blocked again (nothing is deleted)
+OK    a colleague venta user and the other agency cannot open it
+
+-- A6 the contract (customer document) never receives the PNR
+OK    ContratoDocumento and the contract page do not read or render record/PNR in code (the customer contract keeps hiding it)
+
+-- A7 the PNR removed again: regeneration is still allowed (absence never blocks)
+OK    regenerated without PNR: same link, no PNR field
+OK    hotel and service vouchers are byte-identical after all the air regenerations
+
+-- B1 two genuinely different services (two saved PNRs) keep SEPARATE vouchers; a round trip on one PNR is ONE service
+OK    4 saved legs / 2 PNRs / 3 passengers → exactly 2 vouchers with distinct links ({"ok":true,"creados":2,"actualizados":0})
+OK    each voucher holds only the legs and the PNR of ITS service; no leg is attributed to a passenger
+OK    passengers stay a contract-level list and the document still says no passenger-to-segment assignment is registered
+
+-- B2 identical replay: nothing changes, no revision, no new link
+OK    identical retry by another operator: {"ok":true,"creados":0,"actualizados":0} and every row (id, token, revision, content) is identical
+
+-- B3 regenerate ONE service: its link is kept, the other service and the hotel/service vouchers are untouched
+OK    service BBB changed: same id/token, revision 1; service AAA byte-identical ({"ok":true,"creados":0,"actualizados":1})
+OK    the hotel voucher is byte-identical
+
+-- B4 saved legs without a PNR next to PNR services are NOT assigned by guesswork
+OK    the unlabelled leg gets its own voucher and the staff are warned (["Hay tramos sin PNR guardado junto a servicios con PNR: salen en un voucher aparte (no se asignan a un servicio por suposición). Guarda el PNR de esos tramos y vuelve a generar."])
+OK    the two PNR vouchers were not touched by that
+
+-- C1 Gestión de contratos: acknowledge, replay, real change, replay of the same change
+OK    before any acknowledgment: 4 vouchers, delivery pending, not «updated» (pendiente)
+OK    the superadmin registers the manual delivery: «entregado» (an acknowledgment of the staff, nothing sent)
+OK    an IDENTICAL regeneration after the delivery raises NO signal
+OK    a real change (same link) after the delivery: «pendiente» + updated signal, earlier acknowledgment still visible ({"entrega":"pendiente","actualizado":true})
+OK    retrying the same change adds nothing: the notice is not duplicated
+OK    the other contract (also acknowledged, not touched) is not flagged
+OK    retiring the superseded acknowledgment is refused (there is nothing current to retire)
+OK    registering the communication again clears the signal; it never claimed delivery, reading or acceptance by the customer
+
+-- C2 roles: only the superadmin sees Gestión or registers acknowledgments
+   {"ADMIN":"sin_permiso/no","A":"sin_permiso/no","VENTA_DUENO":"sin_permiso/no","ALIADO":"sin_permiso/no"}
+OK    administracion, operaciones, venta and the ally: no Gestión, no acknowledgment
+
+-- D1 the contract-content editor re-creates the legs (new ids): the single service keeps its voucher and link
+OK    legs re-created (anchor 8 → 10); regeneration keeps voucher 25 and its link, re-keyed to the new anchor
+
+-- E1 atomic: a failure on the SECOND service rolls back the whole regeneration
+OK    service 2 fails (INYECTADO: fallo al guardar el voucher): service 1 was NOT updated either — every row, token and revision is as before
+OK    the retry applies both changes at once, links unchanged, revision 1 each
+
+-- E2 two simultaneous first generations of a two-service contract (held at the HTTP layer, released together)
+OK    both succeed, TWO rows, each created exactly once, revision 0 ([{"ok":true,"creados":0,"actualizados":0},{"ok":true,"creados":2,"actualizados":0}])
+
+-- F1 a failed REQUIRED read is rejected and the vouchers are kept
+OK    passenger read error is NOT an empty list (No se pudieron leer los pasajeros del contrato. Intenta de nuevo.)
+OK    flight read error rejected, vouchers unchanged (No se pudieron leer los vuelos del contrato. Intenta de nuevo.)
+
+-- F2 roles/tenants: who can write the air vouchers
+   {"VENTA_DUENO":"Contrato no encontrado.","VENTA_OTRO":"Contrato no encontrado.","CONTROL_VUELO":"Contrato no encontrado.","MINORISTA":"Contrato no encontrado.","ALIADO":"Contrato no encontrado."}
+OK    venta, control_vuelo, the other agency and the ally are all refused and nothing changes
+OK    operaciones (same agency) can regenerate
+
+-- F3 regenerating the SERVICE vouchers (real action) leaves the air vouchers and the hotel voucher untouched
+OK    air vouchers (id, token, content, revision) and hotel voucher byte-identical after the service vouchers were regenerated ({"ok":true,"creados":1})
+OK    a contract with no saved legs produces no voucher
+
+=== 0 fallo(s) de 45

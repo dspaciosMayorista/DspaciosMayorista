@@ -8,6 +8,7 @@ import { desdeComparativa } from "@/lib/cotizacion/comparativa";
 import { ValorCotizacion } from "@/components/cotizacion/ValorCotizacion";
 import { VigenciaTexto } from "@/components/cotizacion/VigenciaTexto";
 import { abiertaConSalidaPasada, hoyBogota } from "@/lib/cotizacion/vigencia";
+import { enmascararDocumento } from "@/lib/cotizacion/fichaTitular";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function CotizacionesPage() {
   // global — puede alternar de agencia, pero no ve las dos mezcladas de una).
   let q = sb
     .from("cotizaciones")
-    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible")
+    .select("id, codigo, tipo, modo, moneda, cliente, destino, hotel, fecha_salida, precio_venta, estado, numero_contrato, vigencia_hasta, created_at, b2b_modo:payload->b2bAsistido->>modo_compra, b2b_total:payload->b2bAsistido->>total_exigible, titular_doc:payload->cliente->>numeroDoc, titular_tel:payload->cliente->>telefono, titular_email:payload->cliente->>email")
     .order("created_at", { ascending: false });
   if (ctx.ok && !ctx.superadmin) q = q.eq("tenant", ctx.tenant);
   const { data: cots } = ctx.ok ? await q : { data: [] };
@@ -100,7 +101,15 @@ export default async function CotizacionesPage() {
                       <span className="ml-1 text-[10px] font-normal text-gray-400">→ {c.numero_contrato}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-700" data-label="Cliente">{c.cliente ?? "—"}</td>
+                  <td className="px-4 py-3 text-gray-700" data-label="Cliente" data-testid="lista-titular">
+                    {c.cliente ?? "—"}
+                    {(() => {
+                      // B2-11: documento (enmascarado: el completo está en la ficha) y contacto guardados del titular, para decidir sin abrir la cotización.
+                      const x = c as { titular_doc?: string | null; titular_tel?: string | null; titular_email?: string | null };
+                      const linea = [enmascararDocumento(x.titular_doc), x.titular_tel?.trim() || null, x.titular_email?.trim() || null].filter(Boolean).join(" · ");
+                      return linea ? <span className="block text-xs text-gray-400" data-testid="lista-titular-contacto">{linea}</span> : null;
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-gray-500" data-label="Destino">{c.destino ?? "—"}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Salida">{formatFechaLarga(c.fecha_salida)}</td>
                   <td className="px-4 py-3 text-gray-500" data-label="Válida hasta"><VigenciaTexto vigencia={c.vigencia_hasta} estado={c.estado} hoy={hoyNegocio} fechaSalida={c.fecha_salida} /></td>

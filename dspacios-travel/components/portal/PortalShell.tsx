@@ -4,6 +4,7 @@ import { CreditCard, FileText, House, ClipboardList, ReceiptText, Wallet, Users,
 import { Logo } from "@/components/Logo";
 import { LogoutButton } from "@/app/(dashboard)/LogoutButton";
 import { CampanaAvisos } from "@/components/avisos/CampanaAvisos";
+import { PresenciaActiva } from "@/components/presencia/PresenciaActiva";
 import s from "./vidrio.module.css";
 
 export type PestanaPortal = "inicio" | "cotizaciones" | "ventas" | "clientes" | "cartera" | "documentos" | "agentes" | "perfil";
@@ -103,6 +104,7 @@ export function PortalShell({ children, nombre, rol, detalle, activa, mostrarAge
                     <CreditCard aria-hidden size={18} /> Pagar en línea
                   </a>
                 )}
+                {activa && <PresenciaActiva />}
                 {activa && <CampanaAvisos />}
                 {activa && (
                   <Link href="/cuenta/contrasena" className={s.btnVidrio}>

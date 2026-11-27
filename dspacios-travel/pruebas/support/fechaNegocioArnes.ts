@@ -29,6 +29,12 @@ const datos = (src: string) => `data:text/javascript,${encodeURIComponent(src)}`
 
 const MINIMOS: Record<string, string> = {
   "server-only": "export {}",
+  // F6 (B95-13/14/15/20): la validación del catálogo manual (destino, hoteles, compra directa/plataforma y acomodación) se prueba aparte (validacionManual95f6.test.ts y el recorrido real contra
+  // Postgres, supabase/scripts/test_f6_95_formularios.sh). Los recorridos de este arnés prueban dinero, fechas de negocio, documentos, etc.: ahí esa regla pasa sin leer el catálogo.
+  "@/lib/catalogo/prepararManual": [
+    "export async function prepararServiciosManual(_c, i) { return { ok: true, destino: 'Cartagena', destinoId: undefined, servicios: i.servicios }; }",
+    "export async function prepararHotelesContrato(_c, i) { return { ok: true, destino: null, hoteles: i.hoteles.map((h) => ({ ...h, acomodacion: h.acomodacion ?? '', compraOrigen: null, plataformaCompra: null, aviso: null })) }; }",
+  ].join("\n"),
   "next/cache": "export function revalidatePath() {} export function revalidateTag() {}",
   "next/navigation": [
     "export function notFound() { throw new Error('notFound'); }",
@@ -56,6 +62,8 @@ const MINIMOS: Record<string, string> = {
     "export async function agenciaDe() { return null; }",
   ].join("\n"),
 };
+// F6_VALIDACION_REAL=1 (recorridos contra Postgres real): no se sustituye la validación del catálogo manual; se ejercita la de verdad.
+if (process.env.F6_VALIDACION_REAL === "1") delete MINIMOS["@/lib/catalogo/prepararManual"];
 const REALES: Record<string, string> = {
   "@/lib/contabilidad/asientos": real("lib/contabilidad/asientos.ts"),
   "@/lib/reservar/asegurarCuentasPorPagar": real("lib/reservar/asegurarCuentasPorPagar.ts"),
@@ -272,6 +280,22 @@ export function crearBD(semilla: Record<string, Fila[]> = {}, rpcs: Record<strin
     },
     // Dependencias de la comisión B2B (286 de #97): null = todas cumplidas. Una prueba que necesite simular que faltan pasa su propio manejador.
     p97_dependencias_comision_faltantes: () => null,
+    // 336 (#40, Codex F1): reclamo de la conversión de una cotización. El arnés lo emula en memoria (uno vigente por cotización, vence a los 300 s);
+    // la semántica real (atomicidad, vencimiento, permisos) se prueba en Postgres: test_336_337_conversion_voucher.sql y recorrido_block1.mjs.
+    reclamar_conversion_cotizacion: (args) => {
+      const id = Number(args.p_cotizacion);
+      const reclamos = filas("cotizacion_conversion_reclamo");
+      if (reclamos.some((r) => r.cotizacion_id === id && (r.expira_en as number) > Date.now())) return null;
+      tablas.set("cotizacion_conversion_reclamo", reclamos.filter((r) => r.cotizacion_id !== id));
+      const token = `reclamo-${id}-${filas("cotizacion_conversion_reclamo").length + 1}-${Date.now()}`;
+      filas("cotizacion_conversion_reclamo").push({ cotizacion_id: id, token, expira_en: Date.now() + 300_000 });
+      return token;
+    },
+    liberar_conversion_cotizacion: (args) => {
+      const antes = filas("cotizacion_conversion_reclamo").length;
+      tablas.set("cotizacion_conversion_reclamo", filas("cotizacion_conversion_reclamo").filter((r) => !(r.cotizacion_id === Number(args.p_cotizacion) && r.token === args.p_token)));
+      return filas("cotizacion_conversion_reclamo").length < antes;
+    },
     registrar_financiero_contrato: (args) => {
       const numero = String(args.p_numero_contrato);
       const v = filas("ventas").find((f) => f.numero_contrato === numero && f.tenant === args.p_tenant);

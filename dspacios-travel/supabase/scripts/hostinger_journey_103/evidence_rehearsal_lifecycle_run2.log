@@ -1,0 +1,16 @@
+PASS · L1 fingerprint taken before stop covers the database, uploaded files (rows and bytes), captured mail, simulated mailbox, files and saved accounts
+PASS · L2 `review.mjs stop` exits 0 after OBSERVING the stopped state
+PASS · L3 `review.mjs status` reports STOPPED (clean) with exit 0
+PASS · L4 files kept while stopped: config, credentials folder content, ownership record, review state, simulated mailbox, browser profile
+PASS · L5 `review.mjs start` RESUMES (no re-creation), every readiness check is observed OK and the browser autofill is re-verified
+PASS · L6 fingerprint after start is IDENTICAL to the one before stop (database rows, uploaded bytes, captured mail, simulated mailbox, files, saved accounts)
+PASS · L7 after the resume the earlier request still shows «Respondió» and its history
+PASS · L8 a second reply after the restart is recorded exactly once (the simulated mailbox kept its position)
+PASS · L9 harness «up» over seeded review progress is refused
+PASS · L9 harness «down» over seeded review progress is refused
+PASS · L9 harness «pg-destroy» over seeded review progress is refused
+PASS · L10 `review.mjs reset` without the explicit flag refuses (exit 2)
+PASS · L11 after those refusals nothing changed (fingerprints equal; environment still running)
+
+LIFECYCLE REHEARSAL PASSED: 13/13
+LIFE_EXIT=0

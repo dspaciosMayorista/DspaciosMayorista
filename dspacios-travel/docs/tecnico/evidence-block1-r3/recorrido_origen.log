@@ -1,0 +1,60 @@
+
+### F1/#40 · conversion of FLIGHT packages: seats, Promoción without record, Promoción with record, record entered later
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+generarTarifario: medicion paquete_id=9402 generacion=1 resultado=ok etapa=publicar ms_etapa=46 ms_total=258 filas_calculadas=9 filas_por_modulo=[bloqueo:9] etapas_previas=[inicio=0ms,iniciar_generacion=48ms,lectura_paquete=15ms,lectura_fuentes=35ms,lectura_grupos_servicio=0ms,lectura_bernalo=0ms,lectura_hoteles=34ms,lectura_destinos_aereos=25ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=55ms]
+   generarTarifario(9402): {"ok":true,"id":9}
+   tarifario_resultado: 9402/null:3 ; null/9403:3 ; null/9404:3
+OK    the REAL generator published the flight package (block + two Promociones)
+
+-- negotiated block (seats): winner paused after the header, loser in another session, release
+OK    header committed and still INCOMPLETE (DTM-0001: pendiente)
+OK    loser: IN PROGRESS, no number spent (0 -> 1)
+OK    loser changed no seat (available 8 -> 8)
+OK    winner already holds its 2 seats while pending (available 10 -> 8)
+OK    winner completes: {"numero":"DTM-0001","financiero":"completo","ventas":1,"cotizacion":"convertida|DTM-0001","pasajeros":2,"hoteles":1,"items":1,"cxp":2,"reclamo":0}
+OK    2 seats en_plazo, availability 10 -> 8
+   flight legs of DTM-0001: Avianca/BLQ100/ida ; Avianca/BLQ100/regreso · empaquetado_ref_id=- · tipo_paquete=bloqueo
+-- negotiated block (seats): injected downstream failure (new quotation)
+OK    failure: no header/passengers/payables, quotation unchanged, seats released (available 8 -> 8), lease released
+OK    retry builds ONE complete contract (DTM-0003)
+
+-- Promoción WITHOUT record: winner paused after the header, loser in another session, release
+OK    header committed and still INCOMPLETE (DTM-0004: pendiente)
+OK    loser: IN PROGRESS, no number spent (3 -> 4)
+OK    loser changed no seat (available 6 -> 6)
+OK    winner completes: {"numero":"DTM-0004","financiero":"completo","ventas":1,"cotizacion":"convertida|DTM-0004","pasajeros":2,"hoteles":1,"items":1,"cxp":2,"reclamo":0}
+   flight legs of DTM-0004: LATAM/-/ida ; LATAM/-/regreso · empaquetado_ref_id=9403 · tipo_paquete=bloqueo
+OK    the shared Promoción row is byte-identical after the conversion
+-- Promoción WITHOUT record: injected downstream failure (new quotation)
+OK    failure: no header/passengers/payables, quotation unchanged, seats released (available 6 -> 6), lease released
+OK    the shared Promoción row is still byte-identical
+OK    retry builds ONE complete contract (DTM-0006)
+
+-- Promoción WITH record: winner paused after the header, loser in another session, release
+OK    header committed and still INCOMPLETE (DTM-0007: pendiente)
+OK    loser: IN PROGRESS, no number spent (6 -> 7)
+OK    loser changed no seat (available 6 -> 6)
+OK    winner completes: {"numero":"DTM-0007","financiero":"completo","ventas":1,"cotizacion":"convertida|DTM-0007","pasajeros":2,"hoteles":1,"items":1,"cxp":2,"reclamo":0}
+   flight legs of DTM-0007: LATAM/REC200/ida ; LATAM/REC200/regreso · empaquetado_ref_id=9404 · tipo_paquete=bloqueo
+OK    the shared Promoción row is byte-identical after the conversion
+-- Promoción WITH record: injected downstream failure (new quotation)
+OK    failure: no header/passengers/payables, quotation unchanged, seats released (available 6 -> 6), lease released
+OK    the shared Promoción row is still byte-identical
+OK    retry builds ONE complete contract (DTM-0009)
+
+-- record entered LATER from the contract (Promoción without record); sibling contract and the Promoción untouched
+   target DTM-0004 legs: ["5,ida,BOG,BXA,2027-06-07","6,regreso,BXA,BOG,2027-06-10"] · sibling DTM-0006
+OK    the operational flight role saves the record from the contract editor (ok)
+OK    record stored on EVERY leg of THAT contract
+OK    the Promoción row and the sibling contract's legs are unchanged
+OK    the identical save again is idempotent (no duplicated legs)
+
+-- editor-link eligibility = the authoritative view (Codex F3)
+   {"dynamic, saved leg, NO airline":{"ADMIN":"si","A":"si","CONTROL_VUELO":"si","VENTA_DUENO":"no","MINORISTA":"no"},"dynamic, land only":{"ADMIN":"no","A":"no","CONTROL_VUELO":"no","VENTA_DUENO":"no","MINORISTA":"no"},"Promoción contract":{"ADMIN":"si","A":"si","CONTROL_VUELO":"si","VENTA_DUENO":"no","MINORISTA":"no"}}
+OK    saved-leg-only contract WITHOUT airline qualifies (the page now shows the link, like the list/editor)
+OK    genuine land-only contract: no row, no link
+OK    Promoción contract qualifies
+OK    venta and the other agency never get a row (the page does not even ask venta)
+
+=== 0 fallo(s) de 33

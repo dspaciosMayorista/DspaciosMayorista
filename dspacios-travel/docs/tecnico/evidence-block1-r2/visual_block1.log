@@ -1,0 +1,73 @@
+compiled app answering on http://127.0.0.1:3099 · BUILD_ID wVj0gCNVGUu7TMSMiifjm
+OK    DTM-9701: real "Voucher de vuelo" button of the compiled page created the voucher (ok; token present)
+OK    contract page DTM-9701 @1280px: no horizontal overflow (1280/1280)
+OK    contract page DTM-9701 @820px: no horizontal overflow (820/820)
+OK    contract page DTM-9701 @390px: no horizontal overflow (390/390)
+OK    DTM-9702: real "Voucher de vuelo" button of the compiled page created the voucher (ok; token present)
+OK    DTM-9703: real "Voucher de vuelo" button of the compiled page created the voucher (ok; token present)
+OK    administración sees the editor link on the dynamic contract with saved legs (/dashboard/vuelos/contrato/DTM-9701)
+OK    saved legs but no airline/times (9702): link present (same predicate as the list/editor)
+OK    land-only contract (9704): NO link
+OK    clicking the link navigates to the operational editor (/dashboard/vuelos/contrato/DTM-9701, h1 "DTM-9701")
+OK    editor @1280px: no horizontal overflow (1280/1280)
+OK    editor @820px: no horizontal overflow (820/820)
+OK    editor @390px: no horizontal overflow (390/390)
+OK    control_vuelo opens the editor directly
+OK    venta (owner of 9705): the editor link is NOT offered
+OK    voucher DTM-9701 @1280px: no horizontal overflow (1280/1280)
+OK    voucher DTM-9701 @820px: no horizontal overflow (820/820)
+OK    voucher DTM-9701 @390px: no horizontal overflow (390/390)
+   DTM-9701: page text length 1065: "Imprimir / Guardar PDF\nFECHA DE EMISIÓN\n23 de noviembre de 2026\nCONTACTO\n(+57) 321-2094015\nELABORADO POR\nÁREA DE RESERVA"
+OK    voucher DTM-9701: the PNR is not on the page
+OK    voucher DTM-9701: no claim that every passenger flies every segment; separate-lists note present
+   DTM-9701: 'No registrado' ×0
+OK    9701: saved legs, times and passengers are printed
+   DTM-9701: PDF pages = 1
+OK    voucher DTM-9701: 1 PDF page(s)
+OK    voucher DTM-9702 @1280px: no horizontal overflow (1280/1280)
+OK    voucher DTM-9702 @820px: no horizontal overflow (820/820)
+OK    voucher DTM-9702 @390px: no horizontal overflow (390/390)
+   DTM-9702: page text length 1041: "Imprimir / Guardar PDF\nFECHA DE EMISIÓN\n23 de noviembre de 2026\nCONTACTO\n(+57) 321-2094015\nELABORADO POR\nÁREA DE RESERVA"
+OK    voucher DTM-9702: the PNR is not on the page
+OK    voucher DTM-9702: no claim that every passenger flies every segment; separate-lists note present
+   DTM-9702: 'No registrado' ×15
+OK    9702 (missing data): every absent value is shown explicitly as 'No registrado'
+   DTM-9702: PDF pages = 1
+OK    voucher DTM-9702: 1 PDF page(s)
+OK    voucher DTM-9703 @1280px: no horizontal overflow (1280/1280)
+OK    voucher DTM-9703 @820px: no horizontal overflow (820/820)
+OK    voucher DTM-9703 @390px: no horizontal overflow (390/390)
+   DTM-9703: page text length 4579: "Imprimir / Guardar PDF\nFECHA DE EMISIÓN\n23 de noviembre de 2026\nCONTACTO\n(+57) 321-2094015\nELABORADO POR\nÁREA DE RESERVA"
+OK    voucher DTM-9703: the PNR is not on the page
+OK    voucher DTM-9703: no claim that every passenger flies every segment; separate-lists note present
+   DTM-9703: 'No registrado' ×0
+   DTM-9703: PDF pages = 3
+OK    voucher DTM-9703: 3 PDF page(s)
+OK    contract document /c/<token> actually rendered (client and destination present)
+OK    contract document /c/<token>: NO flight number, times or PNR
+   contract document PDF pages: 4
+OK    quotation /cot/<token> actually rendered
+OK    quotation /cot/<token>: flight number and HH:mm times ARE shown
+OK    quotation: the flight-change notice is not repeated per leg
+OK    quotation @1280px: no horizontal overflow
+OK    quotation @820px: no horizontal overflow
+OK    quotation @390px: no horizontal overflow
+   quotation PDF pages: 4
+   click 9405: ok
+   modal (alternative-only destination): "[modo=fusion] Eliminar destino\n\nVas a eliminar B1 ALTERNATIVO.\n\nContenido que apunta a este destino:\n\n1 destino aéreo alternativo de un paquete\n\nTiene contenido asociado: no se puede eliminar sin moverlo. Todo lo que apunta a este destino pasará al destino que elijas; las tarifas y temporadas de cada hotel siguen con su hotel:\n\nLos contratos, ventas y cotizaciones ya creados no se modif
+OK    the delete modal of a destination used only as an alternative air destination REPORTS that use
+OK    …and asks for a destination to merge into instead of offering a plain delete
+OK    delete modal @1280px: no horizontal overflow
+OK    delete modal @820px: no horizontal overflow
+OK    delete modal @390px: no horizontal overflow
+   click 9406: ok
+OK    a destination with no use: plain-delete modal (no alternatives text)
+
+=== 0 fallo(s); 32 measurements in docs\tecnico\evidence-block1-r2\visual
+--- server log tail ---
+▲ Next.js 16.3.0
+- Local:         http://127.0.0.1:3099
+- Network:       http://127.0.0.1:3099
+✓ Ready in 417ms
+✓ Running next.config.ts took 170ms
+

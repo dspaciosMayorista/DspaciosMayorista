@@ -1,0 +1,70 @@
+  migración previa 308 aplicada
+  migración previa 309 aplicada
+  migración previa 310 aplicada
+  migración previa 311 aplicada
+  migración previa 312 aplicada
+  migración previa 313 aplicada
+  migración previa 314 aplicada
+  migración previa 315 aplicada
+  migración previa 316 aplicada
+  migración previa 317 aplicada
+  migración previa 318 aplicada
+  migración previa 319 aplicada
+  migración previa 322 aplicada
+  migración previa 323 aplicada
+  migración previa 324 aplicada
+  migración previa 325 aplicada
+  migración previa 326 aplicada
+  migración 331 aplicada
+  migración 332 aplicada
+== PostgREST pgrstr2_7c96698b3c85 en http://127.0.0.1:58438 contra r2a_run17 ==
+(node:22988) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoaderRelativo.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoaderRelativo.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:22988) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:22988) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+(node:22988) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/95-bloque-copia-pagos/dspacios-travel/pruebas/r2Acciones95.pg.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\95-bloque-copia-pagos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+generarTarifario: medicion paquete_id=9501 generacion=1 resultado=ok etapa=publicar ms_etapa=24 ms_total=203 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=88ms,lectura_paquete=11ms,lectura_fuentes=29ms,lectura_grupos_servicio=24ms,lectura_bernalo=0ms,lectura_hoteles=16ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=1ms,calculo=10ms]
+[personas42] origen=reservar etapa=sello cotizacion=1 codigo=sello_no_admitido
+▶ R2-2 · un servicio incluido en la reserva no se vuelve editable por una selección nueva
+  ✔ la reserva deja la asistencia INCLUIDA (30.000 × 2 pax = 60.000) en costo_asistencia, con su obligación y la bandera de asistencia (1280.3739ms)
+  ℹ reserva DTM-0001: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+generarTarifario: medicion paquete_id=9501 generacion=2 resultado=ok etapa=publicar ms_etapa=17 ms_total=91 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=14ms,lectura_paquete=9ms,lectura_fuentes=9ms,lectura_grupos_servicio=20ms,lectura_bernalo=0ms,lectura_hoteles=15ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=7ms]
+[personas42] origen=reservar etapa=sello cotizacion=2 codigo=sello_no_admitido
+generarTarifario: medicion paquete_id=9501 generacion=3 resultado=ok etapa=publicar ms_etapa=13 ms_total=83 filas_calculadas=7 filas_por_modulo=[porcion_terrestre:5,servicios:2] etapas_previas=[inicio=0ms,iniciar_generacion=12ms,lectura_paquete=7ms,lectura_fuentes=8ms,lectura_grupos_servicio=16ms,lectura_bernalo=0ms,lectura_hoteles=15ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=12ms]
+  ✔ AUDITORÍA: el paquete reclasifica la asistencia como opcional DESPUÉS de reservar → elegirla como opcional se RECHAZA y no cambia nada; quitar la selección la conserva (2964.8519ms)
+  ℹ antes: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+  ℹ elegir la asistencia como opcional → {"ok":false,"error":"No se puede agregar como opcional «Asistencia médica 95»: este contrato ya tiene una obligación con ese servicio (quedó incluido al reservar). Se conserva tal cual para no duplicar ni perder ese costo. No se cambió nada."}
+  ℹ quitar la selección → resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+generarTarifario: medicion paquete_id=9501 generacion=4 resultado=ok etapa=publicar ms_etapa=16 ms_total=118 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=21ms,lectura_paquete=10ms,lectura_fuentes=10ms,lectura_grupos_servicio=27ms,lectura_bernalo=0ms,lectura_hoteles=24ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=10ms]
+[personas42] origen=reservar etapa=sello cotizacion=3 codigo=sello_no_admitido
+generarTarifario: medicion paquete_id=9501 generacion=5 resultado=ok etapa=publicar ms_etapa=24 ms_total=95 filas_calculadas=6 filas_por_modulo=[porcion_terrestre:5,servicios:1] etapas_previas=[inicio=0ms,iniciar_generacion=12ms,lectura_paquete=7ms,lectura_fuentes=9ms,lectura_grupos_servicio=20ms,lectura_bernalo=0ms,lectura_hoteles=14ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=9ms]
+  ✔ el servicio incluido se QUITA del paquete después de reservar: el tour opcional se agrega y se quita y la asistencia histórica (60.000, bandera) sobrevive en cada paso (2739.6809ms)
+  ℹ con el tour: resumen=926000|80000|60000|true|Tour clasificado 95 · obligaciones=9502:asistencia:60000,9503:receptivo:80000 · líneas servicio=Servicio · Tour clasificado 95
+  ℹ sin el tour: resumen=826000|0|60000|true|- · obligaciones=9502:asistencia:60000 · líneas servicio=-
+✔ R2-2 · un servicio incluido en la reserva no se vuelve editable por una selección nueva (6985.8908ms)
+▶ R2-3 · comparativa → hija elegida → contrato → documento del cliente
+  ✔ opción A (niño GRATIS): la hija vale 1.330.455 con niño a 0, y el contrato conserva total, línea de niño y titular/pasajero (2039.7505ms)
+  ℹ contrato DTM-0004: venta={"numero_contrato":"DTM-0004","cliente":"Titular Sintético","cliente_documento":"900123456","estado":"confirmado","moneda":"COP","precio_venta":1330455.00,"pax":2,"fecha_salida":"2030-03-01","fecha_regreso":"2030-03-04","asesor":"Asesor 95","tipo_asesor":null,"tenant":"mayorista","destino":"Cartagena"}
+  ℹ items=[{"id":5,"numero_contrato":"DTM-0004","descripcion":"PAQUETE TURÍSTICO A CARTAGENA DEL 01/03/2030 AL 04/03/2030","adultos":2,"ninos":1,"tarifa_adulto":665228.00,"tarifa_nino":0.00,"orden":0,"modo_precio":"por_persona","valor_total":null}]
+  ℹ pasajeros=[{"id":7,"numero_contrato":"DTM-0004","nombre":"Titular Sintético","tipo_id":"CC","identificacion":"900123456","fecha_nacimiento":"1985-05-20","es_infante":false,"orden":0,"nacionalidad":null,"responsable_id":null,"nombres":null,"apellidos":null}]
+  ℹ hoteles=[]
+  ℹ resumen=null
+  ℹ metadatos de catálogo en la hija A: Hotel A:Superior/PC/Doble
+  ✔ opción B (niño 150.000): la hija vale 1.580.455 y el contrato conserva el total, la línea del niño a 150.000 y el pasajero (2070.0653ms)
+  ℹ contrato DTM-0005: venta={"numero_contrato":"DTM-0005","cliente":"Titular Sintético","cliente_documento":"900123456","estado":"confirmado","moneda":"COP","precio_venta":1580455.00,"pax":2,"fecha_salida":"2030-03-01","fecha_regreso":"2030-03-04","asesor":"Asesor 95","tipo_asesor":null,"tenant":"mayorista","destino":"Cartagena"}
+  ℹ items=[{"id":6,"numero_contrato":"DTM-0005","descripcion":"PAQUETE TURÍSTICO A CARTAGENA DEL 01/03/2030 AL 04/03/2030","adultos":2,"ninos":1,"tarifa_adulto":715228.00,"tarifa_nino":150000.00,"orden":0,"modo_precio":"por_persona","valor_total":null}]
+  ℹ resumen=null
+  ℹ metadatos de catálogo en la hija B: Hotel B:Estándar/PAM/Doble
+✔ R2-3 · comparativa → hija elegida → contrato → documento del cliente (4110.2602ms)
+ℹ tests 5
+ℹ suites 2
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11902.7602

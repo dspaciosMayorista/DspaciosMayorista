@@ -1,0 +1,756 @@
+(node:18956) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ cotizacionBernaloActions.ts — es la Server Action pública de cotización
+  ✔ lleva "use server" al inicio del archivo (7.2699ms)
+  ✔ YA NO usa createAdminClient/Supabase directamente — todo el acceso a datos se movió al servicio interno (Fase 3F-3) (0.6034ms)
+  ✔ importa y usa computarReservaBernalo como ÚNICA fuente del cálculo (regla 1: no dos implementaciones monetarias) (0.3579ms)
+  ✔ no reimplementa orquestación/composición de PVP — no importa orquestarCotizacionAlojamientoBernalo/calcularPvpAlojamientoBernalo directo (0.1802ms)
+✔ cotizacionBernaloActions.ts — es la Server Action pública de cotización (10.7992ms)
+▶ cotizacionBernaloActions.ts — valida FORMA antes de llamar al servicio interno
+  ✔ valida el arreglo de habitaciones con validarHabitacionesOcupacion (Fase 3D) antes de invocar computarReservaBernalo (0.3152ms)
+  ✔ valida la salida con validarSalidaSeleccionadaBernalo (Fase 3F-1) — reutilizada, no reimplementada (0.2882ms)
+  ✔ construye la entrada del servicio con la salida/habitaciones YA VALIDADAS (vSalida.salida / validacionOcupacion.habitaciones), nunca el input crudo (0.189ms)
+✔ cotizacionBernaloActions.ts — valida FORMA antes de llamar al servicio interno (1.1828ms)
+▶ cotizacionBernaloActions.ts — mensajes públicos con motivo comercial saneado
+  ✔ MENSAJES_PUBLICOS tiene entradas para servicio_sin_tarifa/servicio_sin_rango_grupal (0.2829ms)
+  ✔ el fallo del servicio interno se traduce con mensajePublico(resultado.codigo, resultado.mensaje) — nunca reenvía el objeto interno completo (0.1956ms)
+  ✔ ningún mensaje público fijo en MENSAJES_PUBLICOS interpola una variable (todos son texto fijo, nunca nombres internos) (0.257ms)
+  ✔ solo los rechazos comerciales pueden adjuntar Motivo y el detalle se limpia de campos/tablas sensibles (0.5615ms)
+✔ cotizacionBernaloActions.ts — mensajes públicos con motivo comercial saneado (1.7168ms)
+▶ cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAMENTE sus 7 claves autorizadas
+  ✔ el tipo de salida OK declara exactamente ok/pvp/moneda/paxTotal/promedioPorViajero/composicionHabitaciones (0.7181ms)
+  ✔ el objeto final se construye a mano campo por campo — nunca `return resultado`/spread del objeto interno completo (0.1611ms)
+  ✔ composicionHabitaciones se construye EXCLUSIVAMENTE vía construirComposicionHabitacionesPublica(resultado.habitaciones) — nunca el arreglo interno reenviado tal cual (0.2498ms)
+  ✔ no reenvía ningún campo interno en los objetos de respuesta pública (costos/aportes/proveedor/snapshot) (0.3145ms)
+✔ cotizacionBernaloActions.ts — la respuesta pública conserva ÚNICAMENTE sus 7 claves autorizadas (1.7049ms)
+▶ composicionHabitacionBernalo.ts — sanitización propia (adultos/niños/infantes), nunca netos/comisión/proveedor
+  ✔ solo expone habitacionId/adultos/ninos/infantes en ComposicionHabitacionPublica (0.5632ms)
+✔ composicionHabitacionBernalo.ts — sanitización propia (adultos/niños/infantes), nunca netos/comisión/proveedor (0.8195ms)
+▶ cotizacionBernaloActions.ts — nunca confía en el navegador
+  ✔ el error_interno de forma inválida se devuelve ANTES de tocar el servicio interno (0.4551ms)
+✔ cotizacionBernaloActions.ts — nunca confía en el navegador (0.5972ms)
+▶ cotizacionBernaloActions.ts — reutiliza Fase 3D/3F-1, no reimplementa nada
+  ✔ importa validarHabitacionesOcupacion (3D) y validarSalidaSeleccionadaBernalo (3F-1) (11.8176ms)
+  ✔ no llama ninguna función de carrito/checkout (sin salida hacia carrito/contrato) (1.7628ms)
+✔ cotizacionBernaloActions.ts — reutiliza Fase 3D/3F-1, no reimplementa nada (14.0089ms)
+▶ lib/tarifario/datosBernalo.ts — descubrimiento paralelo, sin tarifario_resultado, sin precio
+  ✔ nunca consulta tarifario_resultado/tarifario_resumen (1.3667ms)
+  ✔ filtra por armado_paquetes.activo=true — mismo criterio que el tarifario público (0.1969ms)
+  ✔ filtra por modelo_tarifario === 'unidad' — nunca lista hoteles persona (0.2622ms)
+  ✔ el tipo de salida (hotel descubierto) NO tiene ningún campo de precio (pvp/precio/tarifa/neto/bruto) — tampoco en SalidaAereaBernalo (0.53ms)
+  ✔ usa createAdminClient (mismo cliente que ya usan los loaders públicos existentes, cargarDatosTarifario/cargarResumenTarifario) (1.6274ms)
+  ✔ expone la moneda del hotel como nullable (nunca colapsada a COP por defecto) (0.2858ms)
+  ✔ las salidas se calculan con los MISMOS filtros exactos que el generador legado (fecha completa; empaquetado activo+vigente) (0.1536ms)
+  ▶ P1 (ronda 2) — hotelIdsUnidadAutoritativos: identidad SEPARADA, sin ningún filtro de publicación/compatibilidad/visibilidad
+    ✔ se calcula justo después de `filas` (armado_hoteles), ANTES del filtro de tipo compatible (P2) y ANTES del cruce con hotel_tarifas_unidad (P1-3) (0.3387ms)
+    ✔ incluye TODOS los hotel_id con modelo_tarifario='unidad' — sin `.filter(tipoCompatible)` ni chequeo de pares publicados en su propia declaración (0.2255ms)
+    ✔ se devuelve en el resultado ok:true junto con `hoteles` — ambos campos expuestos, nunca solo uno (0.2715ms)
+    ✔ el early-return de catálogo vacío (0 paquetes activos) también expone hotelIdsUnidadAutoritativos: [] — nunca un campo faltante que rompa el tipo en el llamador (0.1104ms)
+    ✔ el tipo de salida documenta explícitamente por qué es un canal separado de `hoteles` (nunca debe usarse para decidir qué tarjeta unidad mostrar) (0.1196ms)
+  ✔ P1 (ronda 2) — hotelIdsUnidadAutoritativos: identidad SEPARADA, sin ningún filtro de publicación/compatibilidad/visibilidad (1.3658ms)
+  ▶ P1-3 — disponibilidad real publicada (cruce con hotel_tarifas_unidad)
+    ✔ cruza armado_hoteles con hotel_tarifas_unidad por hotel_id, filtrando estado='publicada' (0.2165ms)
+    ✔ categoria/alimentacion SIEMPRE salen de las columnas espejo de hotel_tarifas_unidad — nunca se leen/derivan del payload (0.1748ms)
+    ✔ usa el MISMO helper puro compartido (construirSetParesPublicados/todosLosParesConfiguradosPublicados) que setHotelFiltros/generarTarifario — ninguna regla de pares publicados duplicada (0.1349ms)
+    ✔ una oferta sin categorías/regímenes configurados, o cuyo cartesiano configurado no está 100% publicado, se DESCARTA (continue) antes de agregarse a `hoteles` (0.1795ms)
+    ✔ un error TÉCNICO consultando hotel_tarifas_unidad se propaga (ok:false) — nunca se disfraza de catálogo vacío (0.0886ms)
+    ✔ con 0 hoteles unidad en `filas`, ni siquiera se consulta hotel_tarifas_unidad (gate por hotelIdsUnidad.length) — no es una llamada desperdiciada ni una fuente extra de error espurio (0.0906ms)
+  ✔ P1-3 — disponibilidad real publicada (cruce con hotel_tarifas_unidad) (1.2153ms)
+  ▶ P2 — paquetes dinamico/servicios se EXCLUYEN del catálogo cotizable (nunca se anuncian como disponibles)
+    ✔ define TIPOS_UNIDAD_COMPATIBLES = {bloqueo, porcion_terrestre} y lo usa para filtrar tanto hotelIdsUnidad como el push final (0.2029ms)
+    ✔ hotelIdsUnidad (usado para consultar hotel_tarifas_unidad) excluye hoteles de paquetes dinamico/servicios — no se gasta la consulta en algo que nunca se va a exponer (0.1539ms)
+    ✔ el loop final de construcción de `hoteles` también descarta (continue) cualquier fila de paquete dinamico/servicios — defensa en profundidad, no solo en hotelIdsUnidad (0.13ms)
+    ✔ no se implementa salidas_dinamicas en el motor Bernalo — computarReservaBernaloWiring no debe ganar soporte nuevo para 'dinamico' en esta tarea (1.5706ms)
+  ✔ P2 — paquetes dinamico/servicios se EXCLUYEN del catálogo cotizable (nunca se anuncian como disponibles) (2.3868ms)
+  ▶ P2 — cargarInfoHotelesBernalo: foto/metadata REALES para hoteles por unidad
+    ✔ consulta hotel_fotos y hoteles (estrellas/clasificacion/descripcion/ubicacion/adults_only/pet_friendly/etc.) por los hotelId de unidad (0.3149ms)
+    ✔ la foto de PORTADA (es_portada) gana sobre cualquier otra foto del hotel — nunca la primera por orden a secas (0.1095ms)
+    ✔ con 0 hotelIds, responde con mapas vacíos y sin error SIN llamar a Supabase (nunca una consulta con .in("id", []) que fallaría o traería todo) (0.1194ms)
+    ✔ adultsOnly/petFriendly se leen de las columnas REALES del hotel (hoteles.adults_only/pet_friendly) — nunca hardcodeados a false salvo cuando la columna es null (0.0929ms)
+    ✔ un error técnico en `hotel_fotos` NO borra infoPorHotel (metadata) — cada consulta es independiente, nunca ok:false global (0.2333ms)
+    ✔ el resultado final SIEMPRE reporta errorFotos/errorInfo por separado (ninguno colapsa al otro) (0.1046ms)
+  ✔ P2 — cargarInfoHotelesBernalo: foto/metadata REALES para hoteles por unidad (1.2495ms)
+✔ lib/tarifario/datosBernalo.ts — descubrimiento paralelo, sin tarifario_resultado, sin precio (17.7862ms)
+(node:18956) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/cotizacionBernaloWiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:26120) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ normalizarPais() — país comparable: sin espacios de más, mayúsculas ni tildes; sin alias
+  ✔ "Colombia" → "colombia" (2.4038ms)
+  ✔ "  colombia  " → "colombia" (0.9578ms)
+  ✔ "COLOMBIA" → "colombia" (0.3067ms)
+  ✔ "República Dominicana" → "republica dominicana" (0.2449ms)
+  ✔ "REPÚBLICA DOMINICANA" → "republica dominicana" (0.1837ms)
+  ✔ "  republica   dominicana " → "republica dominicana" (0.2115ms)
+  ✔ "República\tDominicana" → "republica dominicana" (0.1681ms)
+  ✔ "Perú" → "peru" (0.2149ms)
+  ✔ "MÉXICO" → "mexico" (0.2726ms)
+  ✔ "España" → "espana" (0.2703ms)
+  ✔ "Curaçao" → "curacao" (0.2091ms)
+  ✔ "" → null (0.2534ms)
+  ✔ "   " → null (0.1188ms)
+  ✔ null → null (0.1289ms)
+  ✔ "RD" → "rd" (0.2529ms)
+  ✔ 'RD' y 'República Dominicana' NO se equiparan (sin heurística de alias) (0.3092ms)
+✔ normalizarPais() — país comparable: sin espacios de más, mayúsculas ni tildes; sin alias (9.082ms)
+▶ calcularDestinosEfectivos() — modo de ejecución
+  ✔ OFF: exactamente el destino comercial, aunque no tenga país (1.0238ms)
+  ✔ ON: comercial + alternativas válidas del mismo país (SDQ y PUJ), comercial primero (1.2026ms)
+  ✔ ON: otro país, sin país, inactivo, alias RD, inexistente y el propio comercial se excluyen, con su motivo (0.5762ms)
+  ✔ ON con el comercial sin país: ninguna alternativa se autoriza (0.143ms)
+  ✔ sin destino comercial: no hay destinos efectivos (nunca 'todos') (1.5149ms)
+  ✔ deduplica las alternativas repetidas (0.3317ms)
+✔ calcularDestinosEfectivos() — modo de ejecución (5.2637ms)
+▶ validarConfigDestinosAereos() — validación estricta al guardar
+  ✔ acepta SDQ y PUJ; ordena y deduplica; quita el comercial de la lista (0.5469ms)
+  ✔ encendido exige al menos una alternativa distinta del comercial (0.293ms)
+  ✔ rechaza (y nombra) otro país, sin país, inactivo, alias RD e inexistente — todo el guardado, no solo ese ID (0.5033ms)
+  ✔ el destino comercial sin país no permite habilitar alternativas (0.1238ms)
+  ✔ apagado sin alternativas se acepta aunque el comercial no tenga país (filtro exacto de siempre) (0.0923ms)
+  ✔ sin destino comercial no se puede elegir alternativas, pero guardar vacío es válido (0.0954ms)
+  ✔ la selección se puede conservar con el check apagado, pero debe ser válida (0.1271ms)
+✔ validarConfigDestinosAereos() — validación estricta al guardar (2.1046ms)
+▶ motivoRechazoFuente() — decisión pura sobre una fuente aérea
+  ✔ permitida, no permitida, sin destino e inexistente (0.184ms)
+✔ motivoRechazoFuente() — decisión pura sobre una fuente aérea (0.3066ms)
+▶ filtrarCandidatos() — selector del editor
+  ✔ lista solo destinos ACTIVOS del MISMO país, sin el comercial, ordenados por nombre (3.1715ms)
+  ✔ comercial sin país: ninguno, con motivo (1.1674ms)
+  ✔ único destino de su país: ninguno, con motivo (0.6138ms)
+✔ filtrarCandidatos() — selector del editor (5.3506ms)
+▶ mensajes
+  ✔ etiquetaDestino: nombre + IATA, o solo el nombre — nunca inventa un aeropuerto (0.216ms)
+  ✔ mensajeErrorBase traduce los códigos de la base y nunca devuelve texto crudo desconocido (0.9738ms)
+  ✔ mensajeVinculos lista hasta 8 y avisa que no se borra nada (0.8382ms)
+✔ mensajes (2.3563ms)
+(node:26120) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/destinosAereos67.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:31308) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ migración 220 — existencia y exclusividad
+  ✔ el archivo existe y es el único 220 (1.2773ms)
+  ✔ no modifica migraciones anteriores: solo crea/reemplaza objetos propios de #67 (1.6814ms)
+  ✔ las funciones usan sufijo _67 y no pisan funciones de otras migraciones (2.7318ms)
+✔ migración 220 — existencia y exclusividad (7.2998ms)
+▶ país comparable: paridad TS ↔ SQL
+  ✔ el mapa de tildes del translate de la 220 es el de la aplicación (6.7697ms)
+  ✔ cada vector de VECTORES_PAIS está contrastado en la batería SQL (5.3789ms)
+✔ país comparable: paridad TS ↔ SQL (13.1201ms)
+▶ nombres de objetos: lo que usa la aplicación existe en la migración
+  ✔ RPC guardar_destinos_aereos_67 con los parámetros que envía el servidor (3.64ms)
+  ✔ columna y tabla que lee el cargador (7.2171ms)
+  ✔ mensajes de error de la base que la aplicación reconoce (3.7941ms)
+  ✔ las guardas son triggers de restricción DIFERIDOS (validan el estado final del lote) (0.7132ms)
+  ✔ las validaciones toman el candado del paquete (0.3558ms)
+  ✔ la tabla nueva no es legible por anon ni public (0.2402ms)
+✔ nombres de objetos: lo que usa la aplicación existe en la migración (17.0271ms)
+▶ scripts y workflow de #67 presentes y coherentes
+  ✔ existe supabase/scripts/preflight_220_destinos_aereos.sql (0.6091ms)
+  ✔ existe supabase/scripts/postcheck_220_destinos_aereos.sql (0.9393ms)
+  ✔ existe supabase/scripts/rollback_220_destinos_aereos.sql (1.7985ms)
+  ✔ existe supabase/scripts/test_220_destinos_aereos.sql (12.2035ms)
+  ✔ existe supabase/scripts/test_220_fases.sh (0.3826ms)
+  ✔ existe supabase/scripts/test_220_carrera.sh (0.2304ms)
+  ✔ existe supabase/scripts/test_220_api.sh (0.1937ms)
+  ✔ el workflow corre los tres runners y no usa secretos del repositorio (5.7649ms)
+✔ scripts y workflow de #67 presentes y coherentes (23.3641ms)
+(node:31308) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/destinosAereos67Sql.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:11612) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+generarTarifario: medicion paquete_id=1 generacion=3 resultado=ok etapa=publicar ms_etapa=1 ms_total=8 filas_calculadas=6 filas_por_modulo=[bloqueo:6] etapas_previas=[inicio=0ms,iniciar_generacion=1ms,lectura_paquete=0ms,lectura_fuentes=1ms,lectura_grupos_servicio=0ms,lectura_bernalo=0ms,lectura_hoteles=1ms,lectura_destinos_aereos=1ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=3ms]
+generarTarifario: medicion paquete_id=1 generacion=3 resultado=ok etapa=publicar ms_etapa=1 ms_total=3 filas_calculadas=24 filas_por_modulo=[bloqueo:24] etapas_previas=[inicio=0ms,iniciar_generacion=0ms,lectura_paquete=0ms,lectura_fuentes=1ms,lectura_grupos_servicio=0ms,lectura_bernalo=0ms,lectura_hoteles=0ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=0ms,calculo=1ms]
+generarTarifario: medicion paquete_id=1 generacion=3 resultado=fallo_negocio etapa=evaluacion_publicacion ms_etapa=0 ms_total=1 filas_calculadas=0 filas_por_modulo=[] etapas_previas=[inicio=0ms,iniciar_generacion=0ms,lectura_paquete=0ms,lectura_fuentes=0ms,lectura_grupos_servicio=0ms,lectura_bernalo=0ms,lectura_hoteles=1ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms]
+generarTarifario: medicion paquete_id=1 generacion=3 resultado=ok etapa=publicar ms_etapa=1 ms_total=2 filas_calculadas=3 filas_por_modulo=[dinamico:3] etapas_previas=[inicio=0ms,iniciar_generacion=0ms,lectura_paquete=0ms,lectura_fuentes=0ms,lectura_grupos_servicio=0ms,lectura_bernalo=0ms,lectura_hoteles=0ms,lectura_destinos_aereos=0ms,lectura_salidas=0ms,evaluacion_publicacion=1ms,calculo=0ms]
+generarTarifario: medicion paquete_id=1 generacion=? resultado=fallo_tecnico etapa=iniciar_generacion ms_etapa=0 ms_total=0 filas_calculadas=? filas_por_modulo=[?] etapas_previas=[inicio=0ms]
+generarTarifario: iniciar_generacion_tarifario falló (paquete_id=1): sin generar
+[medicion] flujo=t flujo_id=f etapa=resumen_inicial duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=resumen_inicial filas_resumen_db=2 paginas=2 consultas_iniciales=2
+[medicion] flujo=t flujo_id=f etapa=filtro_vigencia duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=filtro_vigencia filas=1 consultas=2
+[medicion] flujo=t flujo_id=f etapa=datos_auxiliares duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=datos_auxiliares filas_visibles=1 filas_addon=0
+[medicion-pagina] flujo=t flujo_id=f etapa=payload_inicial filas_entregadas_cliente=1 payload_bytes_estimado=omitido(DIAGNOSTICO_MEDIR_PAYLOAD no activo)
+[medicion] flujo=t flujo_id=f etapa=resumen_inicial duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=resumen_inicial filas_resumen_db=2 paginas=2 consultas_iniciales=2
+[medicion] flujo=t flujo_id=f etapa=filtro_vigencia duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=filtro_vigencia filas=2 consultas=2
+[medicion] flujo=t flujo_id=f etapa=datos_auxiliares duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=datos_auxiliares filas_visibles=2 filas_addon=0
+[medicion-pagina] flujo=t flujo_id=f etapa=payload_inicial filas_entregadas_cliente=2 payload_bytes_estimado=omitido(DIAGNOSTICO_MEDIR_PAYLOAD no activo)
+[medicion] flujo=t flujo_id=f etapa=resumen_inicial duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=t flujo_id=f etapa=resumen_inicial filas_resumen_db=2 paginas=2 consultas_iniciales=2
+[medicion-error] flujo=t flujo_id=f etapa=datos_auxiliares detalle=error_consulta_destinos_aereos tipo=exception
+[medicion] flujo=t flujo_id=f etapa=filtro_vigencia duracion_ms=0 resultado=error
+[medicion-pagina] flujo=t flujo_id=f etapa=filtro_vigencia filas=0 consultas=2
+[medicion] flujo=tarifario_detalle_bajo_demanda flujo_id=5339e440-3d22-44c6-97ce-7a3a285fdeba etapa=detalle_tarifas duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=tarifario_detalle_bajo_demanda flujo_id=5339e440-3d22-44c6-97ce-7a3a285fdeba etapa=detalle_tarifas alcance=salida_bloqueo filas_detalle=0 filas_antes_de_combos=0 combos_permitidos=1
+[medicion] flujo=tarifario_detalle_bajo_demanda flujo_id=5de897c1-137a-4a24-b1eb-930961564530 etapa=detalle_tarifas duracion_ms=0 resultado=ok
+[medicion-pagina] flujo=tarifario_detalle_bajo_demanda flujo_id=5de897c1-137a-4a24-b1eb-930961564530 etapa=detalle_tarifas alcance=salida_bloqueo filas_detalle=1 filas_antes_de_combos=1 combos_permitidos=1
+[medicion-error] flujo=tarifario_detalle_bajo_demanda flujo_id=4b77e260-d93b-4f32-9fd3-7cdb4365b9d0 etapa=detalle_tarifas detalle=error_destinos_aereos_salida_bloqueo tipo=exception
+[medicion] flujo=tarifario_detalle_bajo_demanda flujo_id=4b77e260-d93b-4f32-9fd3-7cdb4365b9d0 etapa=detalle_tarifas duracion_ms=1 resultado=error
+(node:11612) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:11612) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+▶ setVuelo() — validación en servidor del destino aéreo
+  ✔ check OFF: el vuelo del destino comercial se vincula; el de otro destino (aun del mismo país) se rechaza sin escribir (5.7897ms)
+  ✔ check ON con SDQ y PUJ elegidos: aceptan comercial + alternativas; rechazan otro país, sin destino, país ausente, inactivo, alias RD, no elegido e ID inexistente (4.7912ms)
+  ✔ check ON pero con una alternativa ya inválida (país cambiado después): esa alternativa deja de contar — el vuelo de SDQ se rechaza (0.778ms)
+  ✔ check ON con país del destino comercial ausente: las alternativas no autorizan nada (1.185ms)
+  ✔ paquete sin destino comercial: nunca se listan ni vinculan todos los vuelos como respaldo (0.4356ms)
+  ✔ desvincular (checked=false) siempre se permite aunque la fuente ya sea incompatible: es la desvinculación explícita (0.4472ms)
+  ✔ error técnico de lectura: se rechaza con mensaje de error técnico (distinto de 'no corresponde') y sin escribir (2.0701ms)
+✔ setVuelo() — validación en servidor del destino aéreo (17.2314ms)
+▶ setTodosVuelos() — lote: todo o nada, deduplicado
+  ✔ lote mixto (uno de otro país): se rechaza completo, sin ningún vínculo escrito (0.6789ms)
+  ✔ lote válido con duplicados: una sola escritura, cada vuelo una vez (0.3923ms)
+  ✔ OFF: lote con vuelos de SDQ se rechaza; ID forjado también (0.3294ms)
+  ✔ quitar todos (checked=false) borra los vínculos del paquete (0.2321ms)
+✔ setTodosVuelos() — lote: todo o nada, deduplicado (1.9833ms)
+▶ setEmpaquetado() / setTodosEmpaquetados() — mismas reglas para vuelos por Sistema
+  ✔ OFF: solo el destino comercial; ON: comercial + alternativas elegidas (4.5932ms)
+  ✔ lote mixto: se rechaza completo; lote válido con duplicados se escribe una vez (1.2776ms)
+  ✔ desvincular y quitar todos siempre se permiten (0.3117ms)
+  ✔ error técnico: mensaje técnico diferenciado y sin escribir (0.4305ms)
+✔ setEmpaquetado() / setTodosEmpaquetados() — mismas reglas para vuelos por Sistema (7.104ms)
+▶ actualizarPaquete() — check y alternativas con rechazo seguro al retirar
+  ✔ activar con SDQ y PUJ: llama al guardado atómico con IDs deduplicados (sin el comercial) y luego actualiza el resto (2.0576ms)
+  ✔ apagar el check con un vuelo de SDQ vinculado: se rechaza listando el vuelo, sin ningún cambio parcial (0.5245ms)
+  ✔ retirar una alternativa (PUJ) con un vuelo de PUJ vinculado: rechazo; tras desvincularlo explícitamente, sí se guarda (1.0778ms)
+  ✔ los vínculos de Empaquetados también bloquean el retiro (0.3106ms)
+  ✔ cambiar el destino comercial deja vuelos incompatibles: rechazo (0.318ms)
+  ✔ activar exige al menos una alternativa válida del mismo país: vacío, otro país, sin país, inactivo, alias RD e ID inexistente se rechazan (1.0381ms)
+  ✔ activar con el destino comercial sin país: se rechaza (0.2779ms)
+  ✔ error técnico leyendo los vínculos NO equivale a cero vínculos: se rechaza como error técnico (0.3442ms)
+  ✔ la base rechaza al confirmar (carrera con una vinculación): error y NO se ejecuta la actualización posterior (0.489ms)
+  ✔ sin los campos nuevos (formularios anteriores): actualización de siempre, sin tocar el guardado aéreo (0.2124ms)
+✔ actualizarPaquete() — check y alternativas con rechazo seguro al retirar (7.098ms)
+▶ crearPaquete() — alternativas al crear
+  ✔ crea y guarda las alternativas; si el guardado atómico falla, el paquete recién creado se elimina (sin paquete a medias) (1.0655ms)
+  ✔ sin los campos nuevos: creación de siempre (0.1637ms)
+✔ crearPaquete() — alternativas al crear (1.345ms)
+▶ generarTarifario() — Bloqueo/Sistema con destinos aéreos
+  ✔ OFF: solo se publican los vuelos del destino comercial (un vínculo antiguo a SDQ se excluye) (11.3249ms)
+  ✔ ON con SDQ y PUJ: se publican comercial + alternativas elegidas, varios vuelos por destino; el de otro país no (3.2079ms)
+  ✔ todos los vuelos vinculados dejaron de cumplir (país cambiado): no publica y lo dice, distinto de 'selecciona al menos un vuelo' (0.8927ms)
+  ✔ error técnico leyendo la configuración aérea: no publica y no filtra el texto crudo (0.7419ms)
+  ✔ regresión #62: un paquete Dinámico con salida manual vigente se genera igual (no pasa por la regla de destinos aéreos) (4.2772ms)
+  ✔ regresión: el alta manual de una salida dinámica sigue funcionando y no consulta destinos aéreos (1.0373ms)
+✔ generarTarifario() — Bloqueo/Sistema con destinos aéreos (22.1955ms)
+▶ computarReserva() — Bloqueo valida el destino aéreo de la fuente elegida
+  ✔ OFF: el vuelo del destino comercial se vende con su precio; el de SDQ se rechaza sin leer precio (5.9768ms)
+  ✔ ON con SDQ/PUJ elegidos: se vende (precio intacto); fuera de la lista, otro país y fuente sin destino se rechazan (2.1208ms)
+  ✔ vuelo por Sistema (empaquetado): mismas reglas (0.8198ms)
+  ✔ cambio posterior de país del destino alternativo: la venta se rechaza aunque el tarifario siga publicado (0.2708ms)
+  ✔ cambio posterior del destino de la fuente (origen): la venta se rechaza (0.2354ms)
+  ✔ la validación usa el cliente de servicio: la sesión (sin tablas de destinos) no se consulta para eso (0.6303ms)
+  ✔ error técnico de lectura: rechaza con mensaje técnico (no 'no corresponde') y sin precio (0.4031ms)
+  ✔ fuente borrada o paquete sin destino comercial: la venta rechaza (regla estricta), aunque la fila siga publicada (0.8222ms)
+✔ computarReserva() — Bloqueo valida el destino aéreo de la fuente elegida (11.7656ms)
+▶ aplicarFiltrosPostCarga() — oculta ofertas cuya fuente ya no cumple el destino aéreo
+  ✔ OFF oculta SDQ aunque siga publicado; ON conserva comercial + alternativas y oculta otro país/sin destino (7.003ms)
+  ✔ cambio posterior de país: la oferta se oculta sin error técnico (es un resultado de negocio) (0.336ms)
+  ✔ error de lectura o ausencia de cliente: fallo cerrado (se ocultan las filas de Bloqueo con fuente) y se expone errorOrigenAereo aparte (0.2603ms)
+  ✔ filas que no son de Bloqueo con fuente (porción, servicios, dinámico) no se tocan ni consultan destinos aéreos (0.1081ms)
+  ✔ sin evidencia en contra (fuente borrada o paquete sin destino comercial): la vitrina NO oculta la fila — como hoy — y la venta la rechaza (ver computarReserva) (0.2277ms)
+✔ aplicarFiltrosPostCarga() — oculta ofertas cuya fuente ya no cumple el destino aéreo (8.1762ms)
+▶ cargarResumenTarifario() — la vitrina real
+  ✔ oculta la oferta de SDQ con check OFF y la conserva con check ON; sin error (3.5752ms)
+  ✔ error técnico de lectura: ok:false con el mensaje público de carga (nunca 'sin disponibilidad' ni catálogo parcial) (0.5397ms)
+✔ cargarResumenTarifario() — la vitrina real (4.2326ms)
+▶ obtenerDetalleSalida() — detalle bajo demanda de un vuelo de Bloqueo
+  ✔ OFF oculta el detalle de SDQ (0 filas, ok); ON lo devuelve (3.4327ms)
+  ✔ error técnico: ok:false con el mensaje público existente, no 'sin disponibilidad' (1.8213ms)
+✔ obtenerDetalleSalida() — detalle bajo demanda de un vuelo de Bloqueo (5.7317ms)
+(node:11612) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/destinosAereosFlujos67.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:12700) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ lib/roles.ts — ROLES_EDITOR_VUELOS_CONTRATO
+  ✔ incluye exactamente superadmin/gerencia/administracion/operaciones/control_vuelo — nunca venta (1.082ms)
+  ✔ refleja exactamente el rol/tenant de acceso_editar_vuelos_contrato()/acceso_ventas_vuelo_sistema() en la migración 157/156 (misma lista de roles, sin duplicarla) (1.5855ms)
+✔ lib/roles.ts — ROLES_EDITOR_VUELOS_CONTRATO (4.4029ms)
+▶ EmpaquetadosTabla.tsx — Record/Contrato separados + columna Acciones
+  ✔ hay columnas de encabezado Record y Contrato separadas (ya no 'Record / Contrato' combinado) (0.5648ms)
+  ✔ hay una columna de encabezado Acciones (0.175ms)
+  ✔ acepta un prop puedeEditarVuelo (decidido en servidor, distinto de puedeVerContrato) (0.2161ms)
+  ✔ origen contrato sin datos estructurados -> 'Completar vuelo'; con datos -> pencil 'Editar vuelo' (0.2962ms)
+  ✔ el link de Acciones apunta a /dashboard/vuelos/contrato/[numeroContrato] (0.1391ms)
+  ✔ Acciones nunca se ofrece para origen 'promocion' ni cuando !puedeEditarVuelo (guion, nunca un link muerto) (0.3879ms)
+  ✔ la columna Record de origen contrato es texto plano ('Sin PNR' si no hay) — nunca cae al número de contrato (0.4385ms)
+  ✔ la columna Contrato respeta puedeVerContrato (link solo si tiene acceso, texto plano si no) (0.4007ms)
+✔ EmpaquetadosTabla.tsx — Record/Contrato separados + columna Acciones (3.3484ms)
+▶ vuelos/page.tsx y historico/page.tsx — estado_emision/estado_pago REALES, ya no hardcodeados a null
+  ✔ page.tsx: el mapeo de dinamicos ya NO fija estado_emision/estado_pago a null a mano (0.8936ms)
+  ✔ page.tsx: pasa d.estado_emision/d.estado_pago reales desde la vista (16.7953ms)
+  ✔ page.tsx: importa y calcula puedeEditarVuelo con ROLES_EDITOR_VUELOS_CONTRATO (8.2034ms)
+  ✔ page.tsx: propaga puedeEditarVuelo a <EmpaquetadosTabla> (0.4ms)
+  ✔ historico/page.tsx: el mapeo de dinamicos ya NO fija estado_emision/estado_pago a null a mano (0.3115ms)
+  ✔ historico/page.tsx: pasa d.estado_emision/d.estado_pago reales desde la vista (0.1084ms)
+  ✔ historico/page.tsx: importa y calcula puedeEditarVuelo con ROLES_EDITOR_VUELOS_CONTRATO (0.0553ms)
+  ✔ historico/page.tsx: propaga puedeEditarVuelo a <EmpaquetadosTabla> (0.0753ms)
+✔ vuelos/page.tsx y historico/page.tsx — estado_emision/estado_pago REALES, ya no hardcodeados a null (28.672ms)
+▶ contrato-vuelos-actions.ts — server actions del editor
+  ✔ es un archivo 'use server' — nunca usa el cliente service-role (0.4707ms)
+  ✔ guardarTramosContrato llama al RPC guardar_tramos_contrato con p_numero_contrato/p_tramos (0.1713ms)
+  ✔ actualizarEstadoEmisionContrato llama al RPC actualizar_estado_emision_contrato (0.1113ms)
+  ▶ frontera unknown — ambas Server Actions tratan sus argumentos públicos como unknown (revisión 4)
+    ✔ guardarTramosContrato/actualizarEstadoEmisionContrato declaran sus parámetros públicos como unknown (0.2801ms)
+    ✔ ambas funciones parsean con las funciones puras de frontera-tramos.ts antes de tocar el RPC (0.1774ms)
+    ✔ guardarTramosContrato exige al menos un tramo ANTES de llamar al servidor (defensa temprana; el RPC es la autoridad real) (0.1397ms)
+  ✔ frontera unknown — ambas Server Actions tratan sus argumentos públicos como unknown (revisión 4) (0.805ms)
+  ✔ errores del RPC se propagan como { ok: false, error }, nunca se tragan en silencio, y nunca crudos (revisión 3, punto 6) (0.2746ms)
+  ▶ mensajeSeguro() — nunca expone errores internos crudos al navegador
+    ✔ P0001 (RAISE EXCEPTION de negocio) se muestra tal cual (0.151ms)
+    ✔ cualquier otro código se convierte en un mensaje genérico y se registra server-side (0.0934ms)
+  ✔ mensajeSeguro() — nunca expone errores internos crudos al navegador (0.3758ms)
+  ▶ límites de longitud — numeroContrato y nota (revisión 3 punto 6, revisión 4)
+    ✔ MAX_NUMERO_CONTRATO/MAX_NOTA viven en frontera-tramos.ts y ambas funciones los usan (0.2855ms)
+    ✔ parsearNumeroContrato rechaza ausente/demasiado largo; parsearNota rechaza no-string/demasiado larga (0.0998ms)
+  ✔ límites de longitud — numeroContrato y nota (revisión 3 punto 6, revisión 4) (0.4919ms)
+  ✔ guardarTramosContrato devuelve { ok: true, tramos } con los datos del RPC, nunca solo { ok: true } (0.1575ms)
+  ✔ TramoGuardado/ResultTramos existen y guardarTramosContrato declara devolver Promise<ResultTramos> (0.1705ms)
+  ▶ validarTramos() — espejo de la validación real en Postgres (solo UX)
+    ✔ límite de tramos por contrato (20), igual que el RPC (0.8368ms)
+    ✔ valida id duplicado dentro del mismo payload (0.2716ms)
+    ✔ valida IATA de exactamente 3 letras y origen/destino juntos o ninguno (0.2489ms)
+    ✔ valida formato de hora (HH:MM) y de fecha (YYYY-MM-DD) (0.3128ms)
+    ✔ rechaza un tramo completamente vacío (0.3838ms)
+  ✔ validarTramos() — espejo de la validación real en Postgres (solo UX) (4.1914ms)
+✔ contrato-vuelos-actions.ts — server actions del editor (9.5643ms)
+▶ TramosEditor.tsx — editor de tramos, reemplazo atómico con ids preservados
+  ✔ cada tramo lleva su propio id (null si es nuevo) para que el RPC pueda conservarlo — el tipo TramoInput viene ahora de frontera-tramos.ts (revisión 4), re-exportado por contrato-vuelos-actions.ts (3.9436ms)
+  ✔ '+ Agregar regreso' invierte origen/destino y hereda aerolinea/record — mismo patrón que NuevoContratoForm (0.9332ms)
+  ✔ exige al menos un tramo antes de guardar (no se puede vaciar el itinerario desde la UI) (0.1133ms)
+  ✔ usa ciudadIata para autocompletar la ciudad desde el código IATA (reutiliza lib/iata.ts, no reinventa el catálogo) (0.0776ms)
+  ▶ guardar() sincroniza el estado local con los ids reales devueltos (fix del punto 4)
+    ✔ en éxito, llama setTramos(...) con r.tramos (nunca confía solo en router.refresh()) (0.1703ms)
+    ✔ en éxito usa deDB() para mapear los tramos devueltos — mismo mapper que la carga inicial, ninguno duplicado (0.1576ms)
+    ✔ en error, NUNCA toca setTramos ni router.refresh() — el estado local no cambia si el guardado falló (0.1407ms)
+  ✔ guardar() sincroniza el estado local con los ids reales devueltos (fix del punto 4) (0.6362ms)
+✔ TramosEditor.tsx — editor de tramos, reemplazo atómico con ids preservados (6.3471ms)
+▶ ControlEmisionForm.tsx — estado de emisión del contrato completo (1:1, no por tramo)
+  ✔ reutiliza ESTADOS_EMISION/POR_CONFIRMAR de lib/vuelos/control — no reinventa el dominio (0.1404ms)
+  ✔ 'Por confirmar' (NULL) es una opción real del select, nunca forzada a 'pendiente' (0.0755ms)
+  ✔ llama a actualizarEstadoEmisionContrato con el numeroContrato del contrato completo (no un id de tramo) (0.107ms)
+  ▶ feedback visual de éxito/error (fix del punto 5)
+    ✔ mensaje de éxito y de error usan colores DISTINTOS (verde vs rojo) — nunca el mismo gris (0.1963ms)
+    ✔ guardar(): éxito marca ok=true, error marca ok=false — nunca al revés (0.1042ms)
+    ✔ la nota SOLO se limpia en la rama de éxito — en error, setNota nunca se llama (0.1536ms)
+    ✔ el botón se deshabilita mientras la operación está en curso (pending) (0.0787ms)
+  ✔ feedback visual de éxito/error (fix del punto 5) (0.7125ms)
+✔ ControlEmisionForm.tsx — estado de emisión del contrato completo (1:1, no por tramo) (1.1921ms)
+▶ editor page — nunca expone cliente/pasajeros/precios/costos
+  ✔ no consulta contrato_pasajeros, contrato_items ni ninguna columna financiera de ventas (0.2173ms)
+  ✔ consulta ventas_vuelo_sistema (resumen) y contrato_vuelos_editor (todos los tramos) — nunca la tabla base ventas/contrato_vuelos directo (0.1035ms)
+  ✔ gate de rol con ROLES_EDITOR_VUELOS_CONTRATO antes de renderizar cualquier dato (0.0782ms)
+  ✔ un error de consulta (RLS/red) se distingue explícitamente de 'contrato no encontrado' — nunca el mismo mensaje (0.0912ms)
+✔ editor page — nunca expone cliente/pasajeros/precios/costos (0.6472ms)
+(node:12700) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/editorVuelosContrato.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:19576) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+eliminarHotel: hotel 99: 23503: update or delete on table "hoteles" violates foreign key constraint "tarifario_resultado_hotel_id_fkey" on table "tarifario_resultado"
+eliminarHotel: hotel 99: 23503: update or delete on table "hoteles" violates foreign key constraint "armado_hoteles_hotel_id_fkey" on table "armado_hoteles"
+✔ caso real hotel 99: está en el tarifario generado de un paquete → no ejecuta DELETE y nombra el paquete (15.8999ms)
+✔ solo en el armado (sin tarifario aún): NO borra — antes el CASCADE lo quitaba del paquete en silencio (0.8295ms)
+✔ varios paquetes (armado y/o tarifario): lista única, ordenada, con dónde aparece en cada uno (0.936ms)
+✔ tarifario con más filas que el límite del proyecto: pagina y encuentra el paquete de la última página (6.1267ms)
+✔ si la revisión de vínculos falla, no borra (un 0 supuesto dejaría pasar un hotel que está en un paquete) (1.1157ms)
+✔ 23503 de tarifario_resultado en el DELETE (vínculo aparecido tras la revisión): mensaje comprensible, no el técnico (0.7804ms)
+✔ CARRERA: lo vinculan a un paquete tras la revisión → la base (RESTRICT) lo rechaza y el mensaje es comprensible (0.4549ms)
+✔ ningún texto técnico de la base llega al usuario (tablas, restricciones, detalle, códigos) (0.9975ms)
+✔ el detalle técnico del DELETE va al registro del servidor, no a la pantalla (0.4047ms)
+✔ 23503 de otra tabla (p. ej. las antiguas `tarifas` de la 004): mensaje genérico, sin nombrar tabla ni inventar paquetes (0.2698ms)
+✔ DELETE de cero filas (RLS o ya no estaba) → error, nunca { ok: true } (0.28ms)
+✔ otro error del DELETE: mensaje comprensible, sin el detalle técnico (0.2031ms)
+✔ hotel inexistente o error al leerlo: error sin DELETE; id inválido: sin tocar Supabase (0.268ms)
+✔ sin referencias (ya desvinculado y regenerado): borra exactamente ese hotel (0.2242ms)
+(node:19576) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/eliminarHotel.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:29152) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ inventario de identidad: archivos
+  ✔ hay al menos un inventario y los archivos listados existen (16.0334ms)
+✔ inventario de identidad: archivos (18.7066ms)
+▶ acciones y ayudantes: ningún cliente de Supabase anónimo de identidad
+  ✔ creacion · app/(dashboard)/dashboard/contratos/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (9.8347ms)
+  ✔ creacion · app/(dashboard)/dashboard/reservar/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (23.5958ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/manual-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (4.1121ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/din-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.4445ms)
+  ✔ creacion · app/tarifario/checkout/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (11.0297ms)
+  ✔ creacion · app/tarifario/solicitudHotelActions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (5.1519ms)
+  ✔ creacion · app/(dashboard)/dashboard/reservar/reconciliacion-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (3.3648ms)
+  ✔ creacion · app/(dashboard)/dashboard/contratos/importar/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (4.0269ms)
+  ✔ creacion · lib/reservar/financieroContrato.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (7.5945ms)
+  ✔ creacion · lib/reservar/reconciliacionFinanciera.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.4099ms)
+  ✔ creacion · lib/reservar/asegurarCuentasPorPagar.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.0844ms)
+  ✔ creacion · lib/reservar/comisionReserva.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.0276ms)
+  ✔ creacion · lib/reservar/aceptacionServidor63.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.5987ms)
+  ✔ creacion · lib/contrato/netoManual.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (6.6604ms)
+  ✔ creacion · lib/contrato/congelarCondicionesContrato.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (2.9047ms)
+  ✔ creacion · lib/cotizacion/composicionServidor.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7917ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/adjuntos-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.033ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/admin-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.0605ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/cobros-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.9772ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/condiciones-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.9136ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/contenido-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.5474ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/editar-contrato-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (2.0084ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.4213ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/voucher-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (3.7987ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/soportes-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (3.3064ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (2.7943ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (7.1986ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (3.6123ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.8504ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.835ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/retenciones/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.7695ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (3.2607ms)
+  ✔ ficha · app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (4.4708ms)
+  ✔ ficha · lib/reservar/asegurarCuentasPorPagar.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.6753ms)
+  ✔ portal · app/portal/b2b/cartera/soportes-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (1.6236ms)
+  ✔ portal · lib/soportes/servidor.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.7755ms)
+  ✔ portal · lib/soportes/operaciones.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.5512ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (3.0556ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (0.5844ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts: createClient()/createAdminClient() sin argumento llevan «identidad:n/a — motivo» (2.0587ms)
+✔ acciones y ayudantes: ningún cliente de Supabase anónimo de identidad (146.4612ms)
+▶ acciones de usuario: toda función exportada declara «identidad: IdentidadContrato» o una excepción con motivo
+  ✔ creacion · app/(dashboard)/dashboard/contratos/actions.ts (6.7796ms)
+  ✔ creacion · app/(dashboard)/dashboard/reservar/actions.ts (21.7622ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/manual-actions.ts (1.5092ms)
+  ✔ creacion · app/(dashboard)/dashboard/cotizaciones/din-actions.ts (1.7903ms)
+  ✔ creacion · app/tarifario/checkout/actions.ts (10.7033ms)
+  ✔ creacion · app/tarifario/solicitudHotelActions.ts (2.0993ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/adjuntos-actions.ts (0.8308ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/admin-actions.ts (0.7485ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/cobros-actions.ts (0.7408ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/condiciones-actions.ts (0.6942ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/contenido-actions.ts (1.3686ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/editar-contrato-actions.ts (0.6039ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/gestion-actions.ts (0.7286ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/voucher-actions.ts (1.0497ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/soportes-actions.ts (0.2968ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/actions.ts (0.3521ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/actions.ts (0.3217ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/actions.ts (0.3076ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/actions.ts (0.6638ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/actions.ts (1.1204ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/retenciones/actions.ts (1.4376ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/actions.ts (1.5477ms)
+  ✔ ficha · app/(dashboard)/dashboard/cotizaciones/pagos-actions.ts (7.1248ms)
+  ✔ portal · app/portal/b2b/cartera/soportes-actions.ts (0.8642ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/actions.ts (3.4867ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato-vuelos-actions.ts (0.7072ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/empaquetados-actions.ts (0.973ms)
+✔ acciones de usuario: toda función exportada declara «identidad: IdentidadContrato» o una excepción con motivo (73.3383ms)
+▶ páginas: el uid sale de la misma consulta que carga el contrato
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/page.tsx selecciona contrato_uid y construye la identidad (2.1856ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/page.tsx selecciona contrato_uid y construye la identidad (1.2071ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/page.tsx selecciona contrato_uid y construye la identidad (1.2744ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/page.tsx selecciona contrato_uid y construye la identidad (1.1002ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/page.tsx selecciona contrato_uid y construye la identidad (1.7808ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/page.tsx selecciona contrato_uid y construye la identidad (1.3628ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/page.tsx selecciona contrato_uid y construye la identidad (1.9325ms)
+  ✔ portal · app/portal/b2b/cartera/page.tsx selecciona contrato_uid y construye la identidad (1.028ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/page.tsx selecciona contrato_uid y construye la identidad (1.3809ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato/[numero]/page.tsx selecciona contrato_uid y construye la identidad (0.5155ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/pasajeros/page.tsx selecciona contrato_uid y construye la identidad (1.2503ms)
+✔ páginas: el uid sale de la misma consulta que carga el contrato (16.0787ms)
+▶ componentes: reciben la identidad como prop y no la recalculan
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/AbonoForm.tsx (1.3605ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/AdjuntosContrato.tsx (2.1715ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/ContenidoContratoEditor.tsx (4.7521ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EditarAsesorPasajeros.tsx (2.8369ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EditarVentaForm.tsx (1.0319ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EliminarContrato.tsx (0.8522ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/EstadoVenta.tsx (1.0779ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/GestionTabs.tsx (1.9582ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/OverrideRestriccionForm.tsx (1.1053ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/PlanCobroPanel.tsx (2.1504ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/ServiciosContratoEditor.tsx (1.3845ms)
+  ✔ ficha · app/(dashboard)/dashboard/contratos/[numero]/VouchersPanel.tsx (1.1672ms)
+  ✔ ficha · app/(dashboard)/dashboard/cartera/CarteraList.tsx (1.6703ms)
+  ✔ ficha · app/(dashboard)/dashboard/pagos/PagosList.tsx (1.6024ms)
+  ✔ ficha · app/(dashboard)/dashboard/comisiones/ComisionesList.tsx (1.4585ms)
+  ✔ ficha · app/(dashboard)/dashboard/liquidacion/LiquidacionTable.tsx (0.8256ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/facturacion/FacturacionClient.tsx (1.0012ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/conciliaciones/ConciliacionesClient.tsx (1.3884ms)
+  ✔ ficha · app/(dashboard)/dashboard/contabilidad/retenciones/RetencionesClient.tsx (1.6276ms)
+  ✔ portal · components/portal/SoportesPago.tsx (1.4705ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/CambiarSillasForm.tsx (1.2868ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/CambioOperacionalForm.tsx (0.9949ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/LiberarRetencion.tsx (0.7646ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/PasajeroAcciones.tsx (1.4904ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/SillaContrato.tsx (1.2424ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/[id]/SillaEstado.tsx (0.8614ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato/[numero]/ControlEmisionForm.tsx (0.4325ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/contrato/[numero]/TramosEditor.tsx (0.7695ms)
+  ✔ vuelos · app/(dashboard)/dashboard/vuelos/pasajeros/PasajerosBuscador.tsx (1.1783ms)
+  ✔ vuelos · components/vuelos/InfanteVueloForm.tsx (0.7339ms)
+✔ componentes: reciben la identidad como prop y no la recalculan (46.9036ms)
+▶ ningún archivo de la aplicación resuelve la identidad por número para sustituir la de la pantalla
+  ✔ contratos_identidades solo se usa en el servidor, nunca desde componentes cliente (11.0505ms)
+✔ ningún archivo de la aplicación resuelve la identidad por número para sustituir la de la pantalla (11.1415ms)
+▶ control_vuelo: la identidad de las sillas sale de sillas_identidades, leída ANTES que las sillas y usada solo si el número coincide
+  ✔ app/(dashboard)/dashboard/vuelos/[id]/page.tsx (0.619ms)
+  ✔ app/(dashboard)/dashboard/vuelos/pasajeros/page.tsx (0.3268ms)
+✔ control_vuelo: la identidad de las sillas sale de sillas_identidades, leída ANTES que las sillas y usada solo si el número coincide (1.0503ms)
+▶ aviso de contrato eliminado/reemplazado: es cortesía, nunca protección
+  ✔ la ficha monta el aviso con el uid que ya tenía y la acción no devuelve el uid vigente (2.0722ms)
+✔ aviso de contrato eliminado/reemplazado: es cortesía, nunca protección (2.1965ms)
+(node:29152) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/identidadPropagacion.wiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:3728) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ 1-3. page.tsx — Server Component que resuelve quickLoginEnabled/inactivo en el servidor
+  ✖ es Server Component (sin 'use client'), lee QUICK_LOGIN_ENABLED e inactivo de searchParams, y los pasa a LoginClient (10.6784ms)
+✖ 1-3. page.tsx — Server Component que resuelve quickLoginEnabled/inactivo en el servidor (12.5646ms)
+▶ 4-8. Selector de tipo de cuenta — estado inicial, dos tabs, aria-selected, type=button
+  ✔ el estado inicial es 'b2b' (0.2893ms)
+  ✔ existen EXACTAMENTE dos elementos role="tab" dentro de un role="tablist" (0.2952ms)
+  ✔ B2B y Admin reflejan aria-selected atado al estado real (nunca un valor fijo) (0.2132ms)
+  ✔ ambos botones del selector son type="button" (nunca envían el formulario) (0.1702ms)
+  ✔ cada botón usa un ícono Lucide (Users/Settings), nunca un <svg> dibujado a mano (0.1516ms)
+✔ 4-8. Selector de tipo de cuenta — estado inicial, dos tabs, aria-selected, type=button (1.5893ms)
+▶ 9-10. Contenido por portal — títulos, descripciones, placeholders y CTA exactos
+  ✔ B2B: título, descripción, placeholder y CTA (0.272ms)
+  ✔ Admin: título, descripción, placeholder y CTA (0.1563ms)
+  ✔ el título/descripción/placeholder/CTA renderizados leen del mapa por `portalSeleccionado` (una sola fuente, nunca duplicados a mano) (0.2116ms)
+✔ 9-10. Contenido por portal — títulos, descripciones, placeholders y CTA exactos (0.9069ms)
+▶ 11-13. El selector es SOLO presentación — nunca autorización
+  ✔ handleSubmit nunca lee `portalSeleccionado` (el destino depende exclusivamente de perfil.rol) (0.7986ms)
+  ✔ el destino real sigue calculándose solo por perfil.rol: agencia/freelance/cliente_final -> /portal/b2b, el resto -> /dashboard (0.2971ms)
+  ✔ cambiar de opción solo llama setPortalSeleccionado (nunca toca email/password/error, así que no los reinicia) (0.3964ms)
+✔ 11-13. El selector es SOLO presentación — nunca autorización (1.7709ms)
+▶ 14-16. Google, cuenta inactiva y acceso de pruebas se conservan intactos
+  ✔ Google: mismo provider, mismo callback, mismo mensaje de error (0.4385ms)
+  ✔ cuenta inactiva: signOut() + mensaje exacto, más el aviso de ?inactivo=1 resuelto en servidor (0.2207ms)
+  ✔ acceso de pruebas sigue oculto/visible según quickLoginEnabled (servidor), dentro de <details>, sin tocar loginConCodigo (0.7317ms)
+✔ 14-16. Google, cuenta inactiva y acceso de pruebas se conservan intactos (1.7278ms)
+▶ 17-18. Panel azul — capacidades reales, SIN los botones/tarjetas del selector
+  ✔ las tres capacidades reales (Tarifario, Reservas, Contratos) están definidas con su ícono Lucide, y el panel las renderiza desde esa única fuente (0.3127ms)
+  ✔ NO contiene tarjetas 'Portal B2B'/'Portal interno' ni ningún <button> (es informativo, no un selector duplicado) (0.2638ms)
+  ✔ las tres capacidades viven en UN solo contenedor con divide-y (nunca cards individuales anidadas) (0.2439ms)
+  ✔ cierra con el mensaje de seguridad/permisos, con ícono ShieldCheck (0.2245ms)
+✔ 17-18. Panel azul — capacidades reales, SIN los botones/tarjetas del selector (1.4466ms)
+▶ 19. Sin afirmaciones inventadas (Stitch y ronda 1/2)
+  ✔ no aparece: Sabre/Amadeus (1.2336ms)
+  ✔ no aparece: GDS/NDC integrado (0.204ms)
+  ✔ no aparece: versión v4.8 (0.1932ms)
+  ✔ no aparece: SLA 99.98% (0.2186ms)
+  ✔ no aparece: SSL 256-bit Encrypted (0.2052ms)
+  ✔ no aparece: Operador Mayorista Certificado (0.1465ms)
+  ✔ no aparece: B2B Network como certificación (0.1816ms)
+  ✔ no aparece: número de soporte inventado (0.0923ms)
+  ✔ no aparece: solicitud de afiliación sin ruta funcional (0.6449ms)
+  ✔ no aparece: recordar sesión sin implementación real (0.1049ms)
+  ✔ no aparece: Google Workspace (la integración real solo se llama Google) (0.3118ms)
+  ✔ no aparece: cupos/tarifario en vivo ficticios (0.5626ms)
+  ✔ no aparece: sincronización 24/7 inventada (0.1138ms)
+  ✔ no aparece: wallet inventado (0.0841ms)
+  ✔ no aparece: crédito mayorista inventado (0.1183ms)
+  ✔ no aparece: autofacturación DIAN inventada (0.1518ms)
+  ✔ no aparece: servidores Bogotá/Miami inventados (0.1514ms)
+  ✔ no aparece: nombre de producto inventado (0.1182ms)
+  ✔ «¿Olvidaste tu contraseña?» apunta a /recuperar y esa ruta existe con su acción real (2.799ms)
+✔ 19. Sin afirmaciones inventadas (Stitch y ronda 1/2) (8.7123ms)
+▶ 20. Logo oficial — único logo de D'Spacios, nunca reconstruido
+  ✔ usa components/Logo.tsx (variant="full", proporción real, sin viewBox/gradientes de isotipo inventados) (0.5536ms)
+  ✔ el único <svg> dibujado a mano en todo el archivo es el logo de Google (24x24, 4 colores) — nunca la marca propia (0.2128ms)
+✔ 20. Logo oficial — único logo de D'Spacios, nunca reconstruido (1.0079ms)
+▶ Estilo y proporciones — tokens aislados, sin globals, marco/columnas/radios
+  ✔ las variables --login-* (incluida --login-selector-bg) viven en el CSS module bajo .root, nunca en :root global ni en styles/globals.css (4.038ms)
+  ✔ respeta prefers-reduced-motion dentro del módulo aislado (sin tocar globals) (0.2076ms)
+  ✔ marco ~1080-1180px (max-w-6xl) y columnas ~58/42 (lg:grid-cols-[1.4fr_1fr]) (0.8683ms)
+  ✔ radios acotados: sin rounded-2xl/3xl en paneles/controles (rounded-full solo para círculos de estado/íconos) (0.5945ms)
+  ✔ panel de contexto oculto en móvil/tablet estrecha (hidden ... lg:flex) para no apilarse bajo el formulario (0.1688ms)
+✔ Estilo y proporciones — tokens aislados, sin globals, marco/columnas/radios (13.0694ms)
+▶ Layout raíz — sin selector de temas (UI única)
+  ✔ app/layout.tsx no monta ningún selector de temas ni script de inicialización de data-theme (0.4937ms)
+  ✔ app/(auth)/layout.tsx sigue siendo un pass-through simple (0.112ms)
+✔ Layout raíz — sin selector de temas (UI única) (0.9228ms)
+(node:3728) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/loginWiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:18640) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+REPORTE439 porción (6 combos): consultas sin memo=132, con memo=32
+(node:18640) ExperimentalWarning: Module mocking is an experimental feature and might change at any time
+(node:18640) DeprecationWarning: mock.module(): options.namedExports is deprecated. Use options.exports instead.
+▶ porción terrestre: varias categorías y regímenes, igualdad completa con y sin memo
+  ✔ los seis combos dan resultados DISTINTOS y EXACTAMENTE iguales con y sin memo; el más barato es el último (39.2541ms)
+  ✔ la acción de la tarjeta encuentra el más barato (el último) y entrega los 6 combos (23.1548ms)
+✔ porción terrestre: varias categorías y regímenes, igualdad completa con y sin memo (63.3438ms)
+▶ porción terrestre: cambio de fechas y noches NO reutiliza una liquidación ajena
+  ✔ UN memo compartido por error entre estadías distintas (otra noche, otra temporada, una que cruza dos) da lo mismo que memos separados (42.9125ms)
+  ✔ las claves llevan paquete, hotel, ida y noches; ninguna lleva categoría ni régimen (2.5467ms)
+✔ porción terrestre: cambio de fechas y noches NO reutiliza una liquidación ajena (46.178ms)
+▶ porción terrestre: un fallo de liquidación conserva el comportamiento esperado
+  ✔ error de lectura en «hotel_temporadas»: mismo resultado con y sin memo, y con memo se lee una sola vez (4.0014ms)
+  ✔ error de lectura en «tarifa_hotel»: mismo resultado con y sin memo, y con memo se lee una sola vez (1.9918ms)
+  ✔ error de lectura en «hotel_blackouts»: mismo resultado con y sin memo, y con memo se lee una sola vez (0.8625ms)
+  ✔ error de lectura en «armado_hoteles»: mismo resultado con y sin memo, y con memo se lee una sola vez (0.7962ms)
+  ✔ una estadía sin cobertura de temporada: el mismo «No hay tarifa…» con y sin memo (4.6599ms)
+  ✔ una lectura que LANZA una vez no deja la liquidación guardada: la combinación siguiente la reintenta y calcula igual que la referencia (9.99ms)
+✔ porción terrestre: un fallo de liquidación conserva el comportamiento esperado (22.8409ms)
+(node:18640) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/porcionTerrestreMemo439.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24060) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ reusoSujetoAElegibilidad — migración 282
+  ✔ un contrato DTM- pasa por la elegibilidad (1.0621ms)
+  ✔ Minorista (MIN-…) y los históricos 00-NNNN NO pasan por la elegibilidad: igual que siempre (0.2836ms)
+  ✔ es sensible a mayúsculas en el prefijo (el formato real siempre es DTM- en mayúscula) (0.166ms)
+✔ reusoSujetoAElegibilidad — migración 282 (2.8933ms)
+▶ describirBloqueoReuso — traduce los códigos de la base sin inventar permisos
+  ✔ relaciones comerciales, financieras y operativas (0.5377ms)
+  ✔ una tabla futura sin traducción igual produce un motivo legible (la base bloquea sin tocar el código) (0.265ms)
+  ✔ estado, campos comerciales y lecturas fallidas (0.2233ms)
+  ✔ describirBloqueosReuso conserva el orden y la cantidad (0.1448ms)
+✔ describirBloqueoReuso — traduce los códigos de la base sin inventar permisos (1.5818ms)
+▶ codigosDeErrorReuso
+  ✔ extrae los códigos del error de eliminar_contrato (1.4445ms)
+  ✔ ignora el pie (HINT/CONTEXT) y otros errores devuelven null (0.602ms)
+✔ codigosDeErrorReuso (2.508ms)
+▶ 289: los motivos nuevos de la elegibilidad ampliada tienen frase propia (no el genérico «Motivo de bloqueo»)
+  ✔ cada código de compromiso real se traduce (1.4872ms)
+  ✖ el código de la migración 289 solo emite motivos que la interfaz conoce (7.0528ms)
+✖ 289: los motivos nuevos de la elegibilidad ampliada tienen frase propia (no el genérico «Motivo de bloqueo») (9.0449ms)
+(node:24060) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/reciclajeContrato.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:28440) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+✔ tipo por contenido: PDF, JPEG y PNG se reconocen; lo demás no, aunque lo llamen .pdf (4.2951ms)
+✔ validarArchivo: tamaño real, tipo real y hash de los MISMOS bytes (66.1129ms)
+✔ límite configurable: por defecto 4 MB, nunca por encima del tope de la función, valores raros caen al defecto (0.5138ms)
+✔ excedido y cupo se calculan, no se guardan: máximo = pagos registrados + 1 (migración 339) (0.2188ms)
+✔ nombre y ruta: el nombre no puede inyectar rutas y la ruta la arma el servidor (0.3809ms)
+✔ camino feliz: sube y vincula, sin borrar nada (0.8645ms)
+✔ si Storage falla al subir: no se intenta registrar ni borrar (0.2523ms)
+✔ si Storage lanza una excepción al subir: error limpio, sin registrar (0.4413ms)
+✔ si la base rechaza: se borra SOLO el objeto nuevo y el mensaje es comprensible (1.4779ms)
+✔ si la base rechaza Y la limpieza falla: el huérfano se reporta con su ruta (nunca en silencio) (0.8371ms)
+✔ rechazo definitivo = excepción propia de la función (SOPORTE_*); transporte o error desconocido = incierto (0.27ms)
+✔ INCIERTO: registrar lanza una excepción pero la base SÍ lo tenía → éxito; NO se borra nada (0.5355ms)
+✔ INCIERTO y la base NO lo tiene: el archivo se CONSERVA (la petición pudo seguir en vuelo) y se registra para conciliación (0.4434ms)
+✔ INCIERTO y no se puede ni preguntar (la consulta falla o lanza): se conserva y se concilia (0.5678ms)
+✔ mensajes de base: los técnicos no se muestran tal cual (0.2569ms)
+✔ avisos: textos sin datos del contrato más que su número, título con contador y reclamo solo con permiso activado (0.6575ms)
+✔ precomprobación: identidad o fallo desconocido → no se sube nada; OK → adelante (1.2136ms)
+✔ precomprobación OK + registro rechazado SOPORTE_IDENTIDAD: se borra solo el archivo nuevo y sale el mensaje de identidad (0.2096ms)
+✔ registro con error de transporte: archivo conservado + alerta (sin cambios) (0.1789ms)
+✔ clasificación: SOPORTE_IDENTIDAD es rechazo definitivo; CONTRATO_CAMBIO / IDENTIDAD_REQUERIDA no (incierto: se conserva y se alerta) (0.1357ms)
+(node:28440) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportes86.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ℹ tests 421
+ℹ suites 70
+ℹ pass 419
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1402.7542
+
+✖ failing tests:
+
+test at pruebas\loginWiring.test.ts:44:3
+✖ es Server Component (sin 'use client'), lee QUICK_LOGIN_ENABLED e inactivo de searchParams, y los pasa a LoginClient (10.6784ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /searchParams:\s*Promise<\{\s*inactivo\?:\s*string\s*\}>/. Input:
+  
+  'import { LoginClient } from "./LoginClient";\r\n' +
+    '\r\n' +
+    '// Server Component: decide en el servidor qué controles existen antes de\r\n' +
+    '// mandar nada al cliente. `QUICK_LOGIN_ENABLED` es la única fuente de verdad\r\n' +
+    '// de si el "Acceso de pruebas" debe siquiera poder aparecer — antes esto se\r\n' +
+    '// dibujaba siempre en un componente cliente y solo el ENVÍO fallaba si el\r\n' +
+    '// servidor lo tenía apagado, dejando visible un control que nunca iba a\r\n' +
+    '// funcionar. `loginConCodigo` (./actions.ts) sigue siendo la única autoridad\r\n' +
+    '// real (revalida `QUICK_LOGIN_ENABLED` otra vez del lado del servidor antes\r\n' +
+    '// de aceptar un código) — esta bandera es solo para decidir si el formulario\r\n' +
+    '// aparece, nunca reemplaza esa validación.\r\n' +
+    'export default async function LoginPage({\r\n' +
+    '  searchParams,\r\n' +
+    '}: {\r\n' +
+    '  searchParams: Promise<{ inactivo?: string; sinperfil?: string; clave?: string }>;\r\n' +
+    '}) {\r\n' +
+    '  const sp = await searchParams;\r\n' +
+    '  return (\r\n' +
+    '    <LoginClient\r\n' +
+    '      quickLoginEnabled={process.env.QUICK_LOGIN_ENABLED === "1"}\r\n' +
+    '      inactivoInicial={sp.inactivo === "1"}\r\n' +
+    '      sinPerfilInicial={sp.sinperfil === "1"}\r\n' +
+    '      claveActualizadaInicial={sp.clave === "1"}\r\n' +
+    '    />\r\n' +
+    '  );\r\n' +
+    '}\r\n'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/loginWiring.test.ts:47:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at node:internal/test_runner/test:1903:71
+      at node:internal/per_context/primordials:504:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:478:3)
+      at node:internal/per_context/primordials:504:9
+      at Array.map (<anonymous>) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'import { LoginClient } from "./LoginClient";\r\n\r\n// Server Component: decide en el servidor qué controles existen antes de\r\n// mandar nada al cliente. `QUICK_LOGIN_ENABLED` es la única fuente de verdad\r\n// de si el "Acceso de pruebas" debe siquiera poder aparecer — antes esto se\r\n// dibujaba siempre en un componente cliente y solo el ENVÍO fallaba si el\r\n// servidor lo tenía apagado, dejando visible un control que nunca iba a\r\n// funcionar. `loginConCodigo` (./actions.ts) sigue siendo la única autoridad\r\n// real (revalida `QUICK_LOGIN_ENABLED` otra vez del lado del servidor antes\r\n// de aceptar un código) — esta bandera es solo para decidir si el formulario\r\n// aparece, nunca reemplaza esa validación.\r\nexport default async function LoginPage({\r\n  searchParams,\r\n}: {\r\n  searchParams: Promise<{ inactivo?: string; sinperfil?: string; clave?: string }>;\r\n}) {\r\n  const sp = await searchParams;\r\n  return (\r\n    <LoginClient\r\n      quickLoginEnabled={process.env.QUICK_LOGIN_ENABLED === "1"}\r\n      inactivoInicial={sp.inactivo === "1"}\r\n      sinPerfilInicial={sp.sinperfil === "1"}\r\n      claveActualizadaInicial={sp.clave === "1"}\r\n    />\r\n  );\r\n}\r\n',
+    expected: /searchParams:\s*Promise<\{\s*inactivo\?:\s*string\s*\}>/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at pruebas\reciclajeContrato.test.ts:79:3
+✖ el código de la migración 289 solo emite motivos que la interfaz conoce (7.0528ms)
+  AssertionError [ERR_ASSERTION]: PLAN_COMISION_MATERIALIZADO
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/reciclajeContrato.test.ts:83:38)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Motivo de bloqueo: PLAN_COMISION_MATERIALIZADO.',
+    expected: /^Motivo de bloqueo/,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

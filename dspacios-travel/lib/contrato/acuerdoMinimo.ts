@@ -12,12 +12,14 @@ export async function cargarAcuerdoMinimo(numero: string): Promise<LecturaAcuerd
   try {
     const r = await createAdminClient()
       .from("contrato_minimo_acuerdo" as never)
-      .select("tipo, porcentaje, importe, moneda")
+      .select("id, tipo, porcentaje, importe, moneda")
       .eq("numero_contrato", numero)
       .order("id", { ascending: false })
       .limit(1)
       .maybeSingle();
-    return interpretarLecturaAcuerdo({ data: r.data, error: r.error });
+    const lectura = interpretarLecturaAcuerdo({ data: r.data, error: r.error });
+    const id = Number((r.data as { id?: unknown } | null)?.id);
+    return lectura.estado === "acuerdo" ? { ...lectura, id: Number.isFinite(id) ? id : null } : lectura;
   } catch (e) {
     return { estado: "error", motivo: e instanceof Error ? e.message : "excepción de lectura" };
   }

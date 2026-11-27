@@ -1,0 +1,35 @@
+== PREFLIGHT 333
+ orden |                                                                         control                                                                         | observado | esperado | estado 
+-------+---------------------------------------------------------------------------------------------------------------------------------------------------------+-----------+----------+--------
+     1 | Existen la conversión pública y sus funciones de apoyo (la 288)                                                                                         | true      | true     | OK
+     2 | La conversión pública tiene la forma de la 288 (base + trasladar CxP + normalizar abonos) y aún NO tiene el paso de la 333                              | true      | true     | OK
+     3 | Existen contrato_items, cotizacion_neto y cotizaciones                                                                                                  | 3         | 3        | OK
+     4 | La función auxiliar aún NO existe (la crea la 333)                                                                                                      | false     | false    | OK
+     5 | Contratos de cotización dinámica cuyas líneas por persona NO suman su precio hoy (anotar; la 333 NO los reescribe: solo cuadra las conversiones nuevas) | 0         | anotar   | INFO
+     6 | Contratos de cotización dinámica convertidos hasta hoy (anotar)                                                                                         | 0         | anotar   | INFO
+(6 rows)
+
+== APLICAR 333
+== POSTCHECK 333
+ orden |                                                            control                                                            | observado |         esperado          | estado 
+-------+-------------------------------------------------------------------------------------------------------------------------------+-----------+---------------------------+--------
+     1 | La función auxiliar existe, es SECURITY DEFINER con search_path fijo                                                          | true      | true                      | OK
+     2 | Solo service_role la ejecuta (ni anon ni authenticated)                                                                       | true      | true                      | OK
+     3 | La conversión pública llama a la auxiliar y conserva base + trasladar CxP + normalizar abonos; sigue SECURITY INVOKER         | true      | true                      | OK
+     4 | La conversión pública conserva sus permisos (la 164): solo service_role la ejecuta; ni anon ni authenticated                  | true      | true                      | OK
+     5 | Contratos dinámicos con líneas que no suman su precio (debe ser IGUAL que en el preflight: la 333 no reescribe lo existente)  | 0         | igual que en el preflight | INFO
+     6 | Líneas «Ajuste de redondeo del reparto del hotel» en contratos dinámicos (0 si aún no se convirtió ninguno después de la 333) | 0         | anotar                    | INFO
+(6 rows)
+
+== ROLLBACK 333
+== PREFLIGHT tras rollback (debe volver a OK)
+ orden |                                                                         control                                                                         | observado | esperado | estado 
+-------+---------------------------------------------------------------------------------------------------------------------------------------------------------+-----------+----------+--------
+     1 | Existen la conversión pública y sus funciones de apoyo (la 288)                                                                                         | true      | true     | OK
+     2 | La conversión pública tiene la forma de la 288 (base + trasladar CxP + normalizar abonos) y aún NO tiene el paso de la 333                              | true      | true     | OK
+     3 | Existen contrato_items, cotizacion_neto y cotizaciones                                                                                                  | 3         | 3        | OK
+     4 | La función auxiliar aún NO existe (la crea la 333)                                                                                                      | false     | false    | OK
+     5 | Contratos de cotización dinámica cuyas líneas por persona NO suman su precio hoy (anotar; la 333 NO los reescribe: solo cuadra las conversiones nuevas) | 0         | anotar   | INFO
+     6 | Contratos de cotización dinámica convertidos hasta hoy (anotar)                                                                                         | 0         | anotar   | INFO
+(6 rows)
+

@@ -727,8 +727,14 @@ describe("Costo de las consultas (ronda de agregación en base) — ninguna tarj
   });
 
   test("cantidad de consultas FIJA: exactamente 14 llamadas a Supabase en dashboard/page.tsx (1 perfil + 13 en el Promise.all), sin importar el número de tarjetas ni el volumen de datos", () => {
-    const llamadas = (home.match(/supabase\.(from|rpc)\(/g) ?? []).length;
-    assert.equal(llamadas, 14, `se esperaban 14 llamadas a supabase.from/rpc, se encontraron ${llamadas}`);
+    // #11 (bloque 3) / B3-01: la presencia suma UNA consulta más, SOLO para superadmin: un AGREGADO (fn_actividad_resumen; el detalle por persona se pide al abrir el modal, no en la carga del tablero). Para todos los demás roles el total sigue siendo 14.
+    // B3-02: las alertas de compra se leen con `cargarAlertasCompra` (helper de servidor sobre una RPC acotada), que no es una llamada `supabase.from/rpc` de esta página.
+    const todas = home.match(/supabase\.(from|rpc)\(/g) ?? [];
+    const actividad = (home.match(/supabase\.rpc\("fn_actividad_resumen"/g) ?? []).length;
+    assert.equal(actividad, 1, "el resumen de presencia es UNA sola llamada");
+    assert.match(home, /perfil\?\.rol === "superadmin"\s*\?\s*supabase\.rpc\("fn_actividad_resumen"/, "y solo se pide cuando el usuario es superadmin");
+    assert.doesNotMatch(home, /fn_actividad_reciente|fn_actividad_pagina/, "ni la lista de 100 filas ni la página por persona se piden en la carga del tablero");
+    assert.equal(todas.length - actividad, 14, `se esperaban 14 llamadas a supabase.from/rpc para cualquier rol, se encontraron ${todas.length - actividad}`);
   });
 
   test("meta_ventas_mensual sigue siendo pequeño por diseño (unicidad tenant+periodo+moneda) — ahora trae todas las monedas del periodo, no solo COP, para comparar cada una contra su propia meta", () => {

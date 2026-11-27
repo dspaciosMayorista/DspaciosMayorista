@@ -1,0 +1,314 @@
+PostgREST en http://127.0.0.1:53494 contra tpg_f012cf59845a
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\soportes-cupo-extra\dspacios-travel\package.json.
+▶ 339 · contrato SIN pagos registrados: cabe exactamente 1 soporte
+  ✖ el primer soporte entra; el segundo se rechaza ANTES de subir nada (precomprobación del servidor) (330.1ms)
+  ✖ si la precomprobación falla, la BASE rechaza igual (autoridad) y el objeto nuevo se limpia (386.5255ms)
+✖ 339 · contrato SIN pagos registrados: cabe exactamente 1 soporte (718.4402ms)
+▶ 339 · contrato con pagos: un soporte por pago + 1 adicional
+  ✖ 1 pago: caben 2; el tercero se rechaza (469.0401ms)
+  ✖ 2 pagos: caben 3; el cuarto se rechaza (también si el servidor deja pasar la precomprobación) (775.9772ms)
+  ✖ el INSERT directo (superusuario, sin pasar por la aplicación) también topa con el límite nuevo: la autoridad es la base (173.2265ms)
+  ✖ duplicado: el mismo archivo no ocupa dos cupos (la deduplicación por contenido sigue vigente) (846.2088ms)
+✖ 339 · contrato con pagos: un soporte por pago + 1 adicional (2265.0865ms)
+▶ 339 · reemplazar y retirar con el cupo adicional ocupado
+  ✖ a tope (2 de 2 con 1 pago) reemplazar no cambia el conteo; retirar libera el cupo y el siguiente soporte entra (645.0264ms)
+✖ 339 · reemplazar y retirar con el cupo adicional ocupado (645.5344ms)
+▶ 339 · competencia por el ÚLTIMO cupo (concurrencia real)
+  ✖ contrato con 1 pago y 1 soporte (queda 1 cupo): de 3 subidas simultáneas gana exactamente 1 (930.5022ms)
+  ✖ contrato SIN pagos (1 cupo): de 3 subidas simultáneas gana exactamente 1 (644.8943ms)
+✖ 339 · competencia por el ÚLTIMO cupo (concurrencia real) (1575.7961ms)
+▶ 339 · registrar un pago abre el siguiente cupo (acción real registrarAbono)
+  ✖ 1 pago + 2 soportes = lleno; se registra un pago real y entra un soporte más; vuelve a llenarse (473.4591ms)
+✖ 339 · registrar un pago abre el siguiente cupo (acción real registrarAbono) (474.0647ms)
+▶ 339 · subir evidencia NO toca nada financiero
+  ✖ subir, subir rechazado, reemplazar y retirar dejan idéntico venta, abonos, CxP, previstas, comisiones, asientos, saldo y estado (2299.888ms)
+✖ 339 · subir evidencia NO toca nada financiero (2300.2358ms)
+▶ 339 · avisos internos (sin cambios)
+  ✖ el soporte del cupo adicional avisa igual al personal correcto; los rechazos no avisan; el aviso se reclama y lleva al contrato (420.0116ms)
+✖ 339 · avisos internos (sin cambios) (420.3776ms)
+▶ 339 · acceso no autorizado sigue denegado (el cupo adicional no abre puertas)
+  ✖ sin sesión, otro aliado, quien solo participa por comisión, cuenta inactiva, aliado de otra agencia y personal interno NO suben (0 pagos = cupo libre, pero ajeno) (1796.224ms)
+  ✔ con el JWT de un aliado (rol authenticated) NO se puede llamar a soporte_registrar ni insertar en la tabla por la API: la autoridad sigue siendo solo del servidor (351.8309ms)
+✖ 339 · acceso no autorizado sigue denegado (el cupo adicional no abre puertas) (2148.45ms)
+ℹ tests 14
+ℹ suites 8
+ℹ pass 1
+ℹ fail 13
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12115.471
+
+✖ failing tests:
+
+test at pruebas\soportesCupoAdicional339.pg.ts:220:3
+✖ el primer soporte entra; el segundo se rechaza ANTES de subir nada (precomprobación del servidor) (330.1ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:222:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:231:3
+✖ si la precomprobación falla, la BASE rechaza igual (autoridad) y el objeto nuevo se limpia (386.5255ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:237:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:243:3
+✖ 1 pago: caben 2; el tercero se rechaza (469.0401ms)
+  AssertionError [ERR_ASSERTION]: 2.º (cupo adicional)
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:245:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:251:3
+✖ 2 pagos: caben 3; el cuarto se rechaza (también si el servidor deja pasar la precomprobación) (775.9772ms)
+  AssertionError [ERR_ASSERTION]: soporte 3
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:252:40)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:260:3
+✖ el INSERT directo (superusuario, sin pasar por la aplicación) también topa con el límite nuevo: la autoridad es la base (173.2265ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /SOPORTE_LIMITE.*máximo es abonos \+ 1 = 3/. Input:
+  
+  'ERROR:  SOPORTE_LIMITE: el contrato DTM-8203 tiene 2 abono(s) y 2 soporte(s) vigente(s); no caben más. Reemplaza o retira uno.\n' +
+    'CONTEXT:  PL/pgSQL function public.f281_soportes_insert() line 23 at RAISE\n'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:270:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'ERROR:  SOPORTE_LIMITE: el contrato DTM-8203 tiene 2 abono(s) y 2 soporte(s) vigente(s); no caben más. Reemplaza o retira uno.\nCONTEXT:  PL/pgSQL function public.f281_soportes_insert() line 23 at RAISE\n',
+    expected: /SOPORTE_LIMITE.*máximo es abonos \+ 1 = 3/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:273:3
+✖ duplicado: el mismo archivo no ocupa dos cupos (la deduplicación por contenido sigue vigente) (846.2088ms)
+  AssertionError [ERR_ASSERTION]: otro archivo: cupo adicional
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:278:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:283:3
+✖ a tope (2 de 2 con 1 pago) reemplazar no cambia el conteo; retirar libera el cupo y el siguiente soporte entra (645.0264ms)
+  AssertionError [ERR_ASSERTION]: reemplazar no sube el conteo
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:287:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:305:3
+✖ contrato con 1 pago y 1 soporte (queda 1 cupo): de 3 subidas simultáneas gana exactamente 1 (930.5022ms)
+  AssertionError [ERR_ASSERTION]: ronda 0: exactamente un ganador (Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro. | Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro. | Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.)
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:315:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:321:3
+✖ contrato SIN pagos (1 cupo): de 3 subidas simultáneas gana exactamente 1 (644.8943ms)
+  AssertionError [ERR_ASSERTION]: ronda 0: exactamente un ganador
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:327:14)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:334:3
+✖ 1 pago + 2 soportes = lleno; se registra un pago real y entra un soporte más; vuelve a llenarse (473.4591ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:336:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:353:3
+✖ subir, subir rechazado, reemplazar y retirar dejan idéntico venta, abonos, CxP, previstas, comisiones, asientos, saldo y estado (2299.888ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:359:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:373:3
+✖ el soporte del cupo adicional avisa igual al personal correcto; los rechazos no avisan; el aviso se reclama y lleva al contrato (420.0116ms)
+  AssertionError [ERR_ASSERTION]: 0 pagos: el soporte adicional
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:378:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at pruebas\soportesCupoAdicional339.pg.ts:405:3
+✖ sin sesión, otro aliado, quien solo participa por comisión, cuenta inactiva, aliado de otra agencia y personal interno NO suben (0 pagos = cupo libre, pero ajeno) (1796.224ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.'
+  - 'ok'
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/soportes-cupo-extra/dspacios-travel/pruebas/soportesCupoAdicional339.pg.ts:416:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1905:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.',
+    expected: 'ok',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

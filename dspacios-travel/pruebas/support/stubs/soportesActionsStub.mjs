@@ -6,3 +6,6 @@ export const reemplazarSoporte = nada;
 export const retirarSoporte = nada;
 export const urlSoporteAliado = nada;
 export const urlSoporteInterno = nada;
+export const corregirSoporte = nada;
+export const rechazarSoporte = nada;
+export const reintentarAvisoRechazo = nada;

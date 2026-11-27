@@ -1,0 +1,60 @@
+=== PREFLIGHT 334/335 (before)
+Required objects exist (armado_paquete_destinos_aereos, ventas_vuelo_sistema, fn_fusionar_destino)|3|3|OK
+Migration 275 applied (fn_fusionar_destino re-points paquete_din.destinos_extra)|true|true|OK
+334 not yet applied (no delete guard on destinos, no alternatives block in the merge)|0|0|OK
+335 not yet applied (view without the air-evidence predicate)|false|false|OK
+335 precondition: the dynamic predicate appears exactly once in the live view definition|1|1|OK
+Alternative air destinations pointing at a destination that no longer exists (orphans, NOT cleaned by 334; decide by hand)|0|0|OK
+Alternatives equal to the package commercial destination (invalid since 220; 334 drops such rows only when it merges)|0|0|OK
+Dynamic contracts without any air evidence that LEAVE the packaged-flights list with 335 (data untouched; first 15 listed in the next control)|0|owner expects these to be land-only|OK
+Sample of those contract numbers (REVIEW: confirm they are land-only; an air operation with no leg, airline, air cost or air payable would also leave)|none|n/a|OK
+ventas.cotizacion_id unique key exists (one contract per quotation; guards double conversion)|1|1|OK
+=== PREFLIGHT 336/337 (before)
+Required objects exist (cotizaciones, vouchers, ventas.financiero_estado, ventas_cotizacion_id_key)|4|4|OK
+336 not yet applied (no cotizacion_conversion_reclamo table)|false|false|OK
+337 not yet applied (no vouchers_vuelo_uno_por_contrato index)|false|false|OK
+337 precondition: contracts with MORE THAN ONE air voucher (the unique index cannot be created; resolve by hand, nothing is deleted automatically)|0|0|OK
+Existing air vouchers (informational; 337 keeps them, regeneration updates them in place and keeps their public links)|0|any|OK
+Conversions in flight or stuck: headers stamped with cotizacion_id still financiero_estado = pendiente (apply 336 when none is running; the reconciler reverts stuck ones)|none|none|OK
+=== APPLY 334_destinos_aereos_alternativos_integridad
+/usr/bin/bash: line 1: supabase/migrations/202606010003334_destinos_aereos_alternativos_integridad.sql: No such file or directory
+=== APPLY 335_vuelos_sistema_exige_componente_aereo
+/usr/bin/bash: line 1: supabase/migrations/202606010003335_vuelos_sistema_exige_componente_aereo.sql: No such file or directory
+=== APPLY 336_conversion_cotizacion_reclamo
+/usr/bin/bash: line 1: supabase/migrations/202606010003336_conversion_cotizacion_reclamo.sql: No such file or directory
+=== APPLY 337_voucher_vuelo_atomico
+/usr/bin/bash: line 1: supabase/migrations/202606010003337_voucher_vuelo_atomico.sql: No such file or directory
+=== POSTCHECK 334/335 (after)
+ERROR:  function "public.tg_destino_alternativa_aerea_guard()" does not exist
+=== POSTCHECK 336/337 (after)
+ERROR:  relation "public.cotizacion_conversion_reclamo" does not exist
+LINE 23:          (select count(*)::text from public.cotizacion_conve...
+                                              ^
+=== TEST 334/335
+NOTICE:  FALLO D1 borrado directo de una alternativa se rechaza -- 
+NOTICE:  FALLO D3 fusión ok -- 
+NOTICE:  FALLO D3b origen eliminado -- 
+NOTICE:  FALLO D3c P1: (P1,origen) pasó a (P1,llegada) -- 
+NOTICE:  FALLO D3e P2: sin duplicados, solo (P2,llegada) -- 
+NOTICE:  FALLO D3f P3: el comercial ya es la llegada, la alternativa redundante se elimina -- 
+NOTICE:  FALLO D4 reintento de la fusión es un no-op -- 
+NOTICE:  FALLO D5 P4 fusión ok -- 
+NOTICE:  FALLO D5b P4: el comercial pasa a la llegada -- 
+NOTICE:  FALLO D5c P4: la alternativa igual al comercial se elimina -- 
+NOTICE:  FALLO L2 solo tierra excluido para administración -- 
+NOTICE:  FALLO L7 aerolínea en blanco no cuenta como evidencia -- 
+NOTICE:  FALLO: D1 borrado directo de una alternativa se rechaza -- <NULL>
+NOTICE:  FALLO: D3 fusión ok -- <NULL>
+NOTICE:  FALLO: D3b origen eliminado -- <NULL>
+NOTICE:  FALLO: D3c P1: (P1,origen) pasó a (P1,llegada) -- <NULL>
+NOTICE:  FALLO: D3e P2: sin duplicados, solo (P2,llegada) -- <NULL>
+NOTICE:  FALLO: D3f P3: el comercial ya es la llegada, la alternativa redundante se elimina -- <NULL>
+NOTICE:  FALLO: D4 reintento de la fusión es un no-op -- <NULL>
+NOTICE:  FALLO: D5 P4 fusión ok -- <NULL>
+NOTICE:  FALLO: D5b P4: el comercial pasa a la llegada -- <NULL>
+NOTICE:  FALLO: D5c P4: la alternativa igual al comercial se elimina -- <NULL>
+NOTICE:  FALLO: L2 solo tierra excluido para administración -- <NULL>
+NOTICE:  FALLO: L7 aerolínea en blanco no cuenta como evidencia -- <NULL>
+ERROR:  TEST 334/335 SQL: 12 fallo(s)
+=== TEST 336/337
+ERROR:  function public.reclamar_conversion_cotizacion(integer) does not exist

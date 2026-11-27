@@ -58,6 +58,7 @@ import { tipoDocCheckout } from "@/lib/personas/cotizacion";
 import { errorDocumentoTitular } from "@/lib/personas/tiposDocumento";
 import { altaPersonasCotizacion, logPersonasCotizacion } from "@/lib/personas/consulta";
 import { altaPersonasDeCotizacionGuardada } from "@/lib/personas/altaGuardada";
+import { avisarYRegistrar } from "@/lib/avisos/cotizacionPublica";
 import { codigoErrorContacto, datosContactoTarifario, logContactoTarifario, origenContactoTarifario } from "@/lib/crm/contactoTarifario";
 import { leerEntradaModalidad } from "@/lib/cotizacion/netoHija";
 import {
@@ -586,6 +587,8 @@ export type ItemExcluido = { etiqueta: string; motivo: "moneda" | "no_disponible
 // cuando hay recobro SIN plan B2B (cotización interna a cliente final: 100 % empresa).
 type OpcionesCarrito = {
   capturar?: (fila: Record<string, unknown>) => void;
+  /** REV2 B95-16: la opción de una comparativa también congela el resumen de precios por pasajero (#94), como la cotización normal; una cobertura de servicio sin repartir no rechaza la opción, queda pendiente. */
+  conResumen?: boolean;
   b2b?: ContextoAsistenciaB2B | null;
   origenB2B?: OrigenPlanB2B;
   recobro?: RecobroDecidido | null;
@@ -625,6 +628,8 @@ async function cotizacionDeClaveEnvio(clave: string, actor: string, huella: stri
   // Aquí `actor` ya es el autor verificado de la clave (actor_envio), así que también recupera el sello faltante (la base exige además su correo y < 15 min).
   const reparada = await altaPersonasDeCotizacionGuardada(admin, data.id, actor === "anon" ? null : actor, actor !== "anon");
   if (!reparada.ok) console.error(logPersonasCotizacion("checkout_reintento", data.id, reparada));
+  // #78: la misma intención repetida de un VISITANTE repara también su aviso interno si la primera vez falló (idempotente: un aviso por destinatario y cotización).
+  if (actor === "anon") await avisarYRegistrar(admin, data.id);
   return { ok: false, tipo: "envio_duplicado", error: `Esta solicitud ya se generó: la cotización ${data.codigo} ya existe. No se creó otra.`, cotizacion: { codigo: data.codigo, url: await urlCotizacionPorToken(data.share_token ?? null) } };
 }
 
@@ -1353,7 +1358,7 @@ async function crearCotizacionCarrito(input: {
   let resumenPrecios: ResumenPrecios | null = null;
   let resumenPendiente: string | null = null;
   const esNetoResumen = planB2B?.modo_compra === "neta";
-  if (!opts?.capturar && !itemsBernaloOk.length && unidadesBase.length && (esNetoResumen || toursOk.length || manualesOk.length || unidadesBase.length === 1 || Object.keys(recobroPorUnidad).length > 0)) {
+  if ((!opts?.capturar || opts.conResumen) && !itemsBernaloOk.length && unidadesBase.length && (esNetoResumen || toursOk.length || manualesOk.length || unidadesBase.length === 1 || Object.keys(recobroPorUnidad).length > 0)) {
     // Asignación EXPLÍCITA del carrito a un hotel; nunca se deduce de que haya un solo hotel.
     const hotelDeclarado = (c: { hotel: number | null } | null) => (c?.hotel != null ? refItemCotizacion(c.hotel) : null);
     const nombres = new Map<number, string>();
@@ -1383,7 +1388,7 @@ async function crearCotizacionCarrito(input: {
     // Cobertura parcial mal declarada en la cotización normal soportada (un solo hotel por persona): se RECHAZA la emisión; aún no se escribió nada.
     // Solo la cotización NORMAL (sin plan B2B) rechaza una cobertura parcial sin pasajeros elegidos: ahí el checkout SÍ ofrece elegirlos (`activoCob`). En la venta B2B (asistida, aliado directo, PVP o NETO)
     // el checkout no manda cobertura; rechazar dejaría sin salida a un carrito válido, así que no se genera el resumen por pasajero y el documento conserva el total exigible (queda en `resumenPendiente`).
-    else if (r.rechazar && unidadesBase.length === 1 && !planB2B) return { ok: false, error: r.motivo };
+    else if (r.rechazar && unidadesBase.length === 1 && !planB2B && !opts?.conResumen) return { ok: false, error: r.motivo };
     else resumenPendiente = r.motivo;
   }
 
@@ -1481,6 +1486,8 @@ async function crearCotizacionCarrito(input: {
     sellar: true,
   });
   if (!alta.ok) console.error(logPersonasCotizacion("checkout", row.id, alta));
+  // #78: el visitante SIN sesión avisa al equipo dentro de la plataforma (campana). Con sesión (aliado B2B o personal) no: la base además lo re-verifica y responde no_aplica.
+  if (!user) await avisarYRegistrar(admin, row.id);
 
   // Composición del precio (privada, mejor esfuerzo): el precio ya quedó guardado y no depende de esto.
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) await guardarComposicion(admin, {
@@ -1944,7 +1951,7 @@ async function armarOpcionCarrito(
   // Vuelos del GRUPO: cada opción (un solo hotel, posición 0) lleva solo los de su grupo (destino IATA + fechas), validados contra SU hotel y sumados una sola vez a SU total.
   const r = await crearCotizacionCarrito(
     { items: [item], tours, hotelDeTour: tours.map(() => 0), cliente, manuales, hotelDeManual: manuales.map(() => 0), comparativa },
-    { capturar: (f) => { fila = f as FilaCapturada; }, ...(b2b ? { b2b } : {}) }
+    { capturar: (f) => { fila = f as FilaCapturada; }, conResumen: true, ...(b2b ? { b2b } : {}) }
   );
   if (!r.ok) return { ok: false, error: "error" in r ? r.error : "El precio cambió; vuelve a intentarlo." };
   if (r.excluidos.length) return { ok: false, error: `No se pudo cotizar el conjunto completo de ${item.hotelNombre}: ${r.excluidos.map((e) => e.etiqueta).join(", ")}.` };

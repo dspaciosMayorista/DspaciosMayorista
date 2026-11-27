@@ -4,6 +4,7 @@ import type { LogoAliadoDoc } from "@/lib/aliados/logo";
 import { EmisorLinea, LogoAliado } from "@/components/cotizacion/MarcaAliado";
 import { ETIQUETA_AJUSTE_CLIENTE, esLineaAjusteRedondeo } from "@/lib/reservar/solicitudHotel";
 import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
+import { absorberAjusteRedondeo } from "@/lib/contrato/absorberAjusteRedondeo";
 import { ETIQUETA_NINO_GRATIS_CLIENTE, descripcionClienteNinoGratis, esExplicacionNinoGratis, plegarNinoGratisItems } from "@/lib/contrato/plegarNinoGratis";
 import { pagadoEnMonedaOferta, type CobroContrato } from "@/lib/finanzas/cobro";
 import { textoMinimoEnMonedaOferta } from "@/lib/contrato/reglaConfirmacion";
@@ -18,7 +19,7 @@ import {
   COPYRIGHT_PREFIJO,
   POWERED_BY,
 } from "@/lib/contrato/plantilla";
-import { formatMoneda, formatFechaLarga, formatHora24, calcularEdad } from "@/lib/utils";
+import { formatMoneda as formatMonedaBase, formatFechaLarga, formatHora24, calcularEdad } from "@/lib/utils";
 import { AvisoItinerariosVuelos } from "@/components/cotizacion/AvisoItinerariosVuelos";
 import { etiquetaIata, parseRuta } from "@/lib/iata";
 import { esLineaGrupoIncluido, NOMBRE_GRUPO_INCLUIDO, repartirProporcional, tarifaPaquete, vincularAdicionales, type SnapshotPaquete } from "@/lib/cotizacion/tarifaPaquete";
@@ -163,6 +164,8 @@ function Pill({ label, value }: { label: string; value: string }) {
   );
 }
 
+// R3-1 (USD): un importe en USD con centavos (USD $1,582.55) NO se redondea al dólar en el documento: el total, lo pagado, el saldo y las tarifas se imprimen con sus centavos cuando los tienen (sin centavos queda igual: USD $1,331). COP no cambia.
+const formatMoneda = (valor: number, moneda?: string | null): string => ((moneda ?? "COP").toUpperCase() === "USD" ? formatoExacto(valor, moneda) : formatMonedaBase(valor, moneda));
 // Importe NETO con sus centavos (dos cifras cuando los hay): el total exigible puede tenerlos.
 const formatoNetoDocumento = (valor: number, moneda: string): string => formatoExacto(valor, moneda);
 
@@ -218,7 +221,9 @@ export function ContratoDocumento({
   resumenPrecios = null,
 }: Props) {
   // #125 (corrección del dueño): el beneficio del niño gratis se pliega en la tarifa del niño al que pertenece; solo presentación, el contrato guardado y su total no cambian.
-  const { items, plegado: ninoGratisPlegado } = plegarNinoGratisItems(itemsEntrada);
+  const { items: itemsPlegados, plegado: ninoGratisPlegado } = plegarNinoGratisItems(itemsEntrada);
+  // B95-19 (owner 2026-11-26): el cliente no ve la fila «Ajuste por redondeo»; su residuo se pliega en la tarifa de los adultos (solo presentación; el total sale de las líneas guardadas, abajo).
+  const { items, sinReparto: ajusteSinReparto } = absorberAjusteRedondeo(itemsPlegados, esLineaVueloManual);
   const lineasIncluye = lineasTextoDoc(incluye);
   const lineasNoIncluye = lineasTextoDoc(noIncluye);
   const moneda = (venta as { moneda?: string | null }).moneda ?? "COP";
@@ -232,10 +237,10 @@ export function ContratoDocumento({
   // #30: en NETO el total y el saldo son los del total exigible, no la suma
   // de ítems a PVP (ver lib/contrato/presentacionValores.ts).
   const { total, saldo, mostrarValoresItems, sinDetalleItems } = presentacionValoresContrato({
-    totalItems: totalVisibleContratoItems(items),
+    totalItems: totalVisibleContratoItems(itemsPlegados),
     totalPagado,
     netoTotalExigible,
-    cantidadItems: items.length,
+    cantidadItems: itemsPlegados.length,
     precioRegistrado: Number((venta as { precio_venta?: number | string | null }).precio_venta) || null,
   });
   const esNeto = !mostrarValoresItems;
@@ -243,9 +248,6 @@ export function ContratoDocumento({
   const lineasVuelo = items.filter((it) => esLineaVueloManual(it.descripcion));
   const ocultosVuelo = new Set(lineasVuelo.map((it) => it.id));
   const idsPaquete = new Set(items.filter((it) => !it.descripcion?.startsWith("Servicio · ") && !esLineaVueloManual(it.descripcion)).map((it) => it.id));
-  // Sin fila visible que lo absorba, valoresDoc es null: en NETO no se pinta NINGÚN importe por fila (serían PVP), solo el total exigible agregado.
-  const valoresDoc = !esNeto && ocultosVuelo.size === 0 ? null : ocultosVuelo.size > 0 ? valoresNetosDocumento(items, total, ocultosVuelo, idsPaquete) : valoresNetosDocumento(items, total);
-  const mostrarDesglose = mostrarValoresItems || valoresDoc !== null;
   const paxVuelos = lineasVuelo.map((it) => { const m = /· ([0-9]+) pax/.exec(it.descripcion ?? ""); return m ? Number(m[1]) : null; });
   // 235: con conversión de cobro, lo pagado y el saldo van en la moneda de cobro contra el total convertido (nunca se resta una moneda de la otra).
   const cobroConvertido = cobro?.convertido ? cobro : null;
@@ -266,7 +268,8 @@ export function ContratoDocumento({
   const alojItemsTotal = alojItems.filter((it) => it.modo_precio === "total");
   const alojItemsPorPersona = alojItems.filter((it) => it.modo_precio !== "total");
   // #125: la línea firmada del niño gratis no es un adulto ni una tarifa: no entra al conteo de personas ni a «tarifa individual»; su importe (negativo) reduce la base de los niños.
-  const alojPersonasSinNG = alojItemsPorPersona.filter((it) => !esLineaNinoGratis(it.descripcion));
+  // La línea de ajuste de redondeo (importe, no personas) tampoco cuenta como adulto.
+  const alojPersonasSinNG = alojItemsPorPersona.filter((it) => !esLineaNinoGratis(it.descripcion) && !esLineaAjusteRedondeo(it.descripcion));
   const ninoGratisCentavos = alojItemsPorPersona.filter((it) => esLineaNinoGratis(it.descripcion)).reduce((x, it) => x + Math.round(Number(it.adultos) * Number(it.tarifa_adulto) * 100), 0);
   const tarifaIndividual = tarifaIndividualSegura(alojPersonasSinNG, paxVuelos);
   // Cotización con servicio manual: adultos y niños se presentan en UN solo ítem «Paquete Turístico …»; los servicios adicionales siguen en su sección.
@@ -314,6 +317,19 @@ export function ContratoDocumento({
     const tarifa = tarifaPaquete({ adultos, ninos, baseAdultoCentavos, baseNinoCentavos, adicionales: netos, neto: true });
     return { adultos, ninos, adicionales, tarifa: tarifa.totalCentavos === Math.round(total * 100) ? tarifa : soloTotal("el reparto NETO no cuadra con el total exigible") };
   })() : null;
+  // B95-02 (owner 2026-11-26): un servicio adicional NUNCA muestra su propio precio al cliente, sea del tipo que sea. Cuando ni el resumen por pasajero ni la fila única del paquete lo reparten,
+  // las líneas «Servicio · …» se ocultan y su importe se absorbe en las filas del paquete (el mismo mecanismo del vuelo manual, que reparte en centavos y suma EXACTO el total). Si el total no se puede
+  // conciliar con las líneas (dato inválido) NO se inventa un reparto: se conserva el formato anterior.
+  // Sin fila visible que lo absorba, valoresDoc es null: en NETO no se pinta NINGÚN importe por fila (serían PVP), solo el total exigible agregado.
+  const valoresSinServicios = !resumen && !filaPaquete && servicioItems.length > 0
+    ? valoresNetosDocumento(items, total, new Set([...ocultosVuelo, ...servicioItems.map((it) => it.id)]), idsPaquete, new Set(servicioItems.map((it) => it.id)))
+    : null;
+  // Incondicional: un servicio adicional JAMÁS lleva precio propio ni existe la fila «Ajuste por redondeo» para el cliente. Si el importe no se puede absorber de forma exacta (sin fila de adultos que lo reciba,
+  // datos inválidos, centavos fraccionarios) NO se inventa un reparto ni se pierde el importe: se omiten TODOS los importes por fila y queda el total guardado, exacto.
+  const serviciosSinPrecio = servicioItems.length > 0;
+  const sinDesglose = ajusteSinReparto || (servicioItems.length > 0 && !resumen && !filaPaquete && valoresSinServicios === null);
+  const valoresDoc = sinDesglose ? null : valoresSinServicios ?? (!esNeto && ocultosVuelo.size === 0 ? null : ocultosVuelo.size > 0 ? valoresNetosDocumento(items, total, ocultosVuelo, idsPaquete) : valoresNetosDocumento(items, total));
+  const mostrarDesglose = !sinDesglose && (mostrarValoresItems || valoresDoc !== null);
   const anio = new Date().getFullYear();
 
   const tenant = ((venta as { tenant?: string | null }).tenant ?? "mayorista") === "minorista" ? "minorista" : "mayorista";
@@ -484,6 +500,8 @@ export function ContratoDocumento({
                 // Compat: contratos creados antes de que cada fila fuera UN tramo
                 // guardaban ida+regreso mezclados en la misma fila.
                 const esLegacyDoble = !v.numero_vuelo && !v.hora_salida && !!(v.vuelo_ida || v.vuelo_regreso || v.hora_salida_ida || v.hora_salida_reg);
+                // RC-2: tras editar solo la ida en el editor operativo, el regreso heredado sigue guardado en sus columnas y debe seguir saliendo.
+                const regresoHeredadoSolo = !esLegacyDoble && !!(v.fecha_regreso || v.vuelo_regreso || v.hora_salida_reg);
                 return (
                 <div
                   key={v.id}
@@ -525,13 +543,22 @@ export function ContratoDocumento({
                       )}
                     </>
                   ) : (
-                    <div className="mt-1 text-xs text-gray-500">
-                      {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
-                      {mostrarHorario && v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
-                      {mostrarHorario && formatHora24(v.hora_salida)
-                        ? (manual ? ` · salida ${formatHora24(v.hora_salida)} (hora local)` : ` · ${formatHora24(v.hora_salida)}${formatHora24(v.hora_llegada) ? `–${formatHora24(v.hora_llegada)}` : ""}`)
-                        : ""}
-                    </div>
+                    <>
+                      <div className="mt-1 text-xs text-gray-500">
+                        {direccionLabel ? `${direccionLabel}: ` : ""}{formatFechaLarga(v.fecha_salida)}
+                        {mostrarHorario && v.numero_vuelo ? ` · vuelo ${v.numero_vuelo}` : ""}
+                        {mostrarHorario && formatHora24(v.hora_salida)
+                          ? (manual ? ` · salida ${formatHora24(v.hora_salida)} (hora local)` : ` · ${formatHora24(v.hora_salida)}${formatHora24(v.hora_llegada) ? `–${formatHora24(v.hora_llegada)}` : ""}`)
+                          : ""}
+                      </div>
+                      {regresoHeredadoSolo && (
+                        <div className="text-xs text-gray-500">
+                          Regreso: {formatFechaLarga(v.fecha_regreso)}
+                          {mostrarHorario && v.vuelo_regreso ? ` · vuelo ${v.vuelo_regreso}` : ""}
+                          {mostrarHorario && formatHora24(v.hora_salida_reg) ? ` · ${formatHora24(v.hora_salida_reg)}${formatHora24(v.hora_llegada_reg) ? `–${formatHora24(v.hora_llegada_reg)}` : ""}` : ""}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
                 );
@@ -755,7 +782,7 @@ export function ContratoDocumento({
             </div>
           )}
 
-          {mostrarValoresItems && composicionBernalo.length > 0 && (
+          {mostrarValoresItems && !sinDesglose && composicionBernalo.length > 0 && (
             <div className="mb-3 overflow-x-auto">
               <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Composición tarifa Bernalo</p>
               <table className="w-full min-w-[560px] border-collapse text-xs">
@@ -873,7 +900,10 @@ export function ContratoDocumento({
                         <td className="border border-gray-200 px-2 py-1">
                           {esLineaAjusteRedondeo(it.descripcion) || esLineaNinoGratis(it.descripcion) || !tarifaIndividual ? "—" : valoresDoc
                             ? <TarifaNetaCelda total={valoresDoc.get(it.id)?.adultoTotal ?? 0} cantidad={Number(it.adultos)} moneda={moneda} />
-                            : formatMoneda(it.tarifa_adulto, moneda)}
+                            : it.ajusteAbsorbido
+                              // Tarifa con su precisión de cálculo (el residuo ya está dentro; mismo criterio de #94/#52): nunca un reparto «1 × … + 2 × …» ni una fila de ajuste; el total de la fila es el exacto.
+                              ? formatoNetoDocumento(Number(it.tarifa_adulto), moneda)
+                              : formatMoneda(it.tarifa_adulto, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1">
                           {esLineaAjusteRedondeo(it.descripcion) || esLineaNinoGratis(it.descripcion) || !tarifaIndividual ? "—" : it.tarifaNinoNoAtribuible ? "—" : (it.descripcion.startsWith(ETIQUETA_NINO_GRATIS_CLIENTE) || it.ninoGratisFusionado) && Number(it.ninos) > 0 && (valoresDoc ? (valoresDoc.get(it.id)?.ninoTotal ?? 0) : Number(it.tarifa_nino)) === 0 ? ETIQUETA_NINO_GRATIS_CLIENTE : valoresDoc
@@ -881,7 +911,7 @@ export function ContratoDocumento({
                             : formatMoneda(it.tarifa_nino, moneda)}
                         </td>
                         <td className="border border-gray-200 px-2 py-1 font-medium">
-                          {importeDocumento(valorItemDocumento(it))}
+                          {it.ajusteAbsorbido || valoresDoc ? formatoNetoDocumento(valorItemDocumento(it), moneda) : importeDocumento(valorItemDocumento(it))}
                         </td>
                       </>
                     )}
@@ -927,10 +957,10 @@ export function ContratoDocumento({
           )}
 
           {/* Con el importe ya repartido en las tarifas por pasajero (resumen o fila de paquete) los servicios se explican SIN precio: qué incluyen, cuándo y a quién cubren. */}
-          {servicioItems.length > 0 && (resumen || filaPaquete) && (
+          {servicioItems.length > 0 && (resumen || filaPaquete || serviciosSinPrecio) && (
             <ServiciosIncluidos servicios={serviciosDeDocumento(servicioItems, resumen, (venta as { pax?: number | null }).pax ?? null, (l) => vinculoPorId.get(l.id)?.pax ?? null)} color={TITULO} />
           )}
-          {servicioItems.length > 0 && !resumen && !filaPaquete && (
+          {servicioItems.length > 0 && !resumen && !filaPaquete && !serviciosSinPrecio && (
             <div className="mt-3 overflow-x-auto">
               <p className="mb-1 break-after-avoid text-xs font-semibold text-gray-500">Servicios adicionales</p>
               <table className="w-full min-w-[300px] border-collapse text-xs">

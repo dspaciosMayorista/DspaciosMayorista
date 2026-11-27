@@ -3,8 +3,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { miRol, puedeEscribir } from "@/lib/roles";
+// El módulo de servidor de referidos (`server-only`) se carga SOLO cuando llega una decisión de referido: aprobar sin referido no lo necesita (y las pruebas que cargan esta acción sin Next no lo resuelven).
+import type { ActorReferidos } from "@/lib/referidos/servidor";
+import { decisionValida } from "@/lib/referidos/reglas";
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result = { ok: true; aviso?: string } | { ok: false; error: string };
 
 // Candado de interfaz (mensaje temprano). El candado REAL está dentro de las
 // funciones `aprobar_solicitud_b2b` / `rechazar_solicitud_b2b` (migración 193),
@@ -43,7 +46,8 @@ function mensajeRpc(error: { code?: string; message?: string } | null): string {
 //   · aliadoId: undefined → usa la sugerencia del registro, si la hay
 export async function aprobarSolicitudB2B(
   id: number,
-  aliadoId?: number | "nueva" | null
+  aliadoId?: number | "nueva" | null,
+  referido?: unknown
 ): Promise<Result> {
   if (!(await puedeAprobar())) return { ok: false, error: "No tienes permiso para aprobar registros B2B." };
 
@@ -56,6 +60,20 @@ export async function aprobarSolicitudB2B(
     return { ok: false, error: "La ficha de aliado elegida no es válida." };
   }
 
+  // #76 — decisión sobre el código de referido que escribió el aliado al registrarse (CANDIDATO). SOLO superadmin/gerencia pueden asignar o cambiar referidor y porcentaje, también desde aquí:
+  // si otro rol manda una decisión, se rechaza ANTES de aprobar (administración aprueba el registro y ve el código, pero no confirma). El navegador solo dice qué VIO (referidor y %): la base compara con
+  // la regla guardada y rechaza si cambió; nunca toma esos valores como fuente.
+  let decision: ReturnType<typeof decisionValida> = null;
+  let actor: ActorReferidos | null = null;
+  let referidos: typeof import("@/lib/referidos/servidor") | null = null;
+  if (referido !== undefined && referido !== null) {
+    decision = decisionValida(referido);
+    if (!decision) return { ok: false, error: "Elige qué hacer con el código de referido." };
+    referidos = await import("@/lib/referidos/servidor");
+    actor = await referidos.actorReferidos();
+    if (!actor?.acceso.gestiona) return { ok: false, error: "Solo superadmin o gerencia pueden confirmar el referido. Aprueba el registro sin decidir el referido: quedará por confirmar en CRM → Referidos." };
+  }
+
   const sb = await createClient();
   const { error } = await sb.rpc("aprobar_solicitud_b2b", {
     p_id: id,
@@ -64,7 +82,13 @@ export async function aprobarSolicitudB2B(
   });
   if (error) return { ok: false, error: mensajeRpc(error) };
   revalidatePath("/dashboard/usuarios/b2b");
-  return { ok: true };
+
+  // La aprobación YA quedó hecha: la decisión del referido es secundaria y su fallo nunca la deshace (el candidato sigue por confirmar y se puede decidir después en CRM → Referidos).
+  if (!decision || !actor || !referidos) return { ok: true };
+  const r = await referidos.decidirCandidatoReferido(actor, id, decision);
+  if (!r.ok) return { ok: true, aviso: `Registro aprobado. ${r.error} El código queda por confirmar en CRM → Referidos.` };
+  if (decision.decision === "descartar") return { ok: true, aviso: "Registro aprobado. El código de referido se descartó: no se asignó ningún referidor." };
+  return { ok: true, aviso: r.estado === "sin_cambio" ? "Registro aprobado. El aliado ya tenía ese referidor con ese porcentaje." : r.estado === "cambiada" ? "Registro aprobado y referido CAMBIADO para las compras futuras del aliado." : "Registro aprobado y referido asignado para las compras futuras del aliado." };
 }
 
 export async function rechazarSolicitudB2B(id: number): Promise<Result> {

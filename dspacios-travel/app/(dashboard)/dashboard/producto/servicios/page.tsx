@@ -25,7 +25,10 @@ const COLS_SERVICIOS = [
   { key: "precio_infante", label: "Precio de infante 0-1,99 años (neto; vacío = paga como adulto, 0 = gratis)", ejemplo: "" },
 ];
 
-export default async function ServiciosPage() {
+export default async function ServiciosPage({ searchParams }: { searchParams: Promise<{ servicio?: string | string[]; vigencia?: string | string[] }> }) {
+  // B3-03: una alerta de fin de compra llega con `?servicio=<id>&vigencia=<id>`: abre ese servicio en edición y resalta esa vigencia.
+  const q = await searchParams;
+  const entero = (v: string | string[] | undefined) => { const n = Number(Array.isArray(v) ? v[0] : v); return Number.isInteger(n) && n > 0 ? n : undefined; };
   const sb = await createClient();
   const [{ data: serviciosRaw }, { data: proveedores }, { data: destinos }, { data: rangos }, { data: temporadasRaw }] = await Promise.all([
     sb.from("servicios_adicionales").select("id, nombre, temporada, precio_persona, proveedor_id, destino_id, alcance, moneda, rangos_edad, categoria, liquidacion, descripcion, recargo_individual, precio_infante, foto_url, proveedores(nombre), destinos(nombre), servicio_tarifa_pax(pax_desde, pax_hasta, precio, temporada)").order("nombre"),
@@ -105,7 +108,7 @@ export default async function ServiciosPage() {
         />
       </div>
       <Alcance262Provider value={datos262}>
-        <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} temporadas={temporadasPorServicio} />
+        <ServiciosClient servicios={servicios} proveedores={proveedores ?? []} destinos={destinos ?? []} rangos={rangos ?? []} temporadas={temporadasPorServicio} servicioInicial={entero(q.servicio)} vigenciaDestacada={entero(q.vigencia)} />
       </Alcance262Provider>
     </div>
   );

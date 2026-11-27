@@ -1,0 +1,44 @@
+(node:28956) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.15/F.31
+  ✖ el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja (1.7159ms)
+✖ lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.15/F.31 (2.8574ms)
+(node:28956) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/tmp/base_block1_cd9bb1946/dspacios-travel/pruebas/convertirCotizacionCarritoBernaloWiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\tmp\base_block1_cd9bb1946\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ℹ tests 1
+ℹ suites 1
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 338.0331
+
+✖ failing tests:
+
+test at pruebas\convertirCotizacionCarritoBernaloWiring.test.ts:332:3
+✖ el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja (1.7159ms)
+  AssertionError [ERR_ASSERTION]: las 3 superficies (línea total agregada + tabla alojamiento + tabla servicios) deben usar el helper por línea
+  
+  0 !== 3
+  
+      at TestContext.<anonymous> (file:///C:/tmp/base_block1_cd9bb1946/dspacios-travel/pruebas/convertirCotizacionCarritoBernaloWiring.test.ts:338:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at node:internal/test_runner/test:1903:71
+      at node:internal/per_context/primordials:504:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:478:3)
+      at node:internal/per_context/primordials:504:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

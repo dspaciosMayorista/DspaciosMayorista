@@ -1,0 +1,26 @@
+[
+  {
+    "pdf": "cotizacion_imparA.pdf",
+    "paginas": 5
+  },
+  {
+    "pdf": "cotizacion_usdB.pdf",
+    "paginas": 5
+  },
+  {
+    "pdf": "contrato_imparA.pdf",
+    "paginas": 4
+  },
+  {
+    "pdf": "contrato_usdB.pdf",
+    "paginas": 4
+  },
+  {
+    "pdf": "contrato_imparB.pdf",
+    "paginas": 4
+  },
+  {
+    "pdf": "contrato_parA.pdf",
+    "paginas": 4
+  }
+]

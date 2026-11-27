@@ -196,7 +196,9 @@ describe("cableado: ninguna lectura de abonos o saldo usa la moneda de la oferta
 describe("plan de cobro: las cuotas suman el total de COBRO", () => {
   test("generarPlanCobro parte de cobroDeVenta(venta).total y no de precio_venta suelto", () => {
     const src = leer("app/(dashboard)/dashboard/contratos/[numero]/cobros-actions.ts");
-    assert.match(src, /precio: cobroDeVenta\(venta\)\.total/);
+    // #42: el total del plan sigue saliendo de cobroDeVenta(venta); ahora se guarda en `cobro` porque también alimenta `pagado` y la moneda del plan.
+    assert.match(src, /const cobro = cobroDeVenta\(venta\)/);
+    assert.match(src, /precio: cobro\.total/);
     assert.match(src, /moneda_cobro, trm_cobro, total_cobro/);
     assert.doesNotMatch(src, /precio: venta\.precio_venta/);
   });

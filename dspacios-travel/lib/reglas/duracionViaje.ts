@@ -11,6 +11,10 @@ export const MAX_NOCHES_VIAJE = 30;
 export const mensajeNochesViaje = (noches: number) =>
   `La estadía máxima es de ${MAX_NOCHES_VIAJE} noches; elegiste ${noches}. Ajusta las fechas.`;
 
+/** B95-14: el regreso no puede ser anterior a la salida (el mismo día = 0 noches NO se rechaza aquí: servicios sin hotel). */
+export const MENSAJE_REGRESO_ANTERIOR = "La fecha de regreso no puede ser anterior a la fecha de salida.";
+const MENSAJE_NOCHES_NEGATIVAS = "La cantidad de noches no puede ser negativa.";
+
 /** Noches entre dos fechas ISO (AAAA-MM-DD); null si alguna no es una fecha real. */
 export function nochesEntre(ida: string, regreso: string): number | null {
   const a = Date.parse(`${ida}T00:00:00Z`), b = Date.parse(`${regreso}T00:00:00Z`);
@@ -20,6 +24,7 @@ export function nochesEntre(ida: string, regreso: string): number | null {
 
 /** ¿Respeta la estadía máxima? (las noches deben venir ya validadas como entero ≥ 1 por quien llama). */
 export function validarNochesViaje(noches: number): { ok: true } | { ok: false; error: string } {
+  if (noches < 0) return { ok: false, error: MENSAJE_NOCHES_NEGATIVAS }; // B95-14: nunca una duración negativa
   return noches > MAX_NOCHES_VIAJE ? { ok: false, error: mensajeNochesViaje(noches) } : { ok: true };
 }
 
@@ -27,8 +32,16 @@ export function validarNochesViaje(noches: number): { ok: true } | { ok: false; 
 export function validarFechasViaje(ida: string | null | undefined, regreso: string | null | undefined): { ok: true } | { ok: false; error: string } {
   if (!ida || !regreso) return { ok: true };
   const n = nochesEntre(ida.slice(0, 10), regreso.slice(0, 10));
+  if (n != null && n < 0) return { ok: false, error: MENSAJE_REGRESO_ANTERIOR };
   return n == null ? { ok: true } : validarNochesViaje(n);
 }
+
+/** Mensaje inline para el formulario (o null): ambas fechas reales y regreso anterior a la salida. Misma regla que el servidor. */
+export const errorOrdenFechas = (ida: string | null | undefined, regreso: string | null | undefined): string | null => {
+  if (!ida || !regreso) return null;
+  const n = nochesEntre(ida.slice(0, 10), regreso.slice(0, 10));
+  return n != null && n < 0 ? MENSAJE_REGRESO_ANTERIOR : null;
+};
 
 /**
  * Al EDITAR un producto que ya existía: si su duración no cambia, se conserva tal cual (un producto antiguo de más de 30 noches lo
@@ -44,5 +57,6 @@ export function validarNochesAlEditar(nuevas: number | null | undefined, anterio
 export function validarFechasAlEditar(ida: string | null | undefined, regreso: string | null | undefined, idaPrev: string | null | undefined, regresoPrev: string | null | undefined): { ok: true } | { ok: false; error: string } {
   const n = ida && regreso ? nochesEntre(ida.slice(0, 10), regreso.slice(0, 10)) : null;
   const p = idaPrev && regresoPrev ? nochesEntre(idaPrev.slice(0, 10), regresoPrev.slice(0, 10)) : null;
+  if (n != null && n < 0 && n !== p) return { ok: false, error: MENSAJE_REGRESO_ANTERIOR }; // un producto antiguo ya invertido se conserva solo si NO cambia
   return validarNochesAlEditar(n, p);
 }

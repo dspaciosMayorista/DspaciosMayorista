@@ -1,0 +1,21 @@
+  ✔ C1 · 12 llamadas SIMULTÁNEAS (12 sesiones HTTP reales) → UN plan de 4 filas, orden 0..3, suma 1.000.000 (477.9137ms)
+  ℹ respuestas ok=12/12 errores=[]
+  ℹ plan final: 45:0:abono:300000,46:1:cuota:233333,47:2:cuota:233333,48:3:cuota:233334
+  ✔ C2 · 16 llamadas MEZCLADAS (8 de 4 filas, 8 de 2 filas) → exactamente UN plan completo (363.4618ms)
+  ℹ plan final: 95:0:abono:300000,96:1:cuota:700000 (2|1000000|2|0-1)
+  ✔ C3 · 6 regeneraciones simultáneas con la ACCIÓN real → un plan; repetir no acumula (1123.701ms)
+  ℹ acciones: ["ok","ok","ok","ok","ok","ok"]
+  ✔ F1 · fallo inyectado en el INSERT → error y el plan anterior queda IDÉNTICO (mismos ids) (736.3782ms)
+  ℹ RPC → FALLA_INYECTADA_INSERT
+  ℹ acción → {"ok":false,"error":"No se pudo guardar el plan de cobro: se conservó el anterior. Inténtalo de nuevo."}
+  ✔ F2 · fallo inyectado en el DELETE → error y el plan anterior queda idéntico (739.03ms)
+  ℹ RPC → FALLA_INYECTADA_DELETE
+  ✔ F3 · tras quitar las fallas, el siguiente reemplazo vuelve a funcionar (sin estado colgado ni candados) (144.363ms)
+  ✔ roles: administración puede; `venta` del contrato propio puede (RLS de cuotas) y el de otro asesor NO (rechazo sin cambios) (502.6575ms)
+  ℹ venta propio → ok
+  ℹ venta ajeno → new row violates row-level security policy for table "cuotas"
+  ✔ consumo local (solicitudes HTTP a PostgREST; el costo alojado NO se mide aquí) (166.494ms)
+  ℹ una regeneración con la acción real = 6 solicitudes locales a PostgREST (lectura de contrato, condiciones, config, abonos, acuerdo + 1 rpc de reemplazo)
+ℹ tests 8
+ℹ pass 8
+ℹ fail 0

@@ -4,6 +4,7 @@ import type { ComponentProps } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArmadoClient } from "./ArmadoClient";
+import { DuplicarPaqueteBtn } from "../DuplicarPaqueteBtn";
 import { resolverDestinosAereosPaquete } from "@/lib/paquetes/destinosAereos67";
 import type { PublicacionMontaje } from "@/lib/paquetes/unidadesMontaje";
 import { cargarFuentesMoneda90 } from "@/lib/reservar/fuentesMoneda90";
@@ -19,13 +20,18 @@ export default async function PaqueteDetallePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ tab?: string | string[] }>;
+  searchParams?: Promise<{ tab?: string | string[]; duplicado?: string | string[]; omitidas?: string | string[] }>;
 }) {
   const { id } = await params;
   // #101 — pestaña activa (`?tab=`): sobrevive a un F5 y a un enlace compartido. ArmadoClient valida el valor contra
   // las pestañas que el tipo de paquete realmente muestra.
   const tabParam = (await searchParams)?.tab;
   const pestanaInicial = Array.isArray(tabParam) ? tabParam[0] : tabParam;
+  // #61: tras duplicar se muestra qué es la copia (borrador inactivo y sin publicar) y qué falta revisar.
+  const sp = await searchParams;
+  const recienDuplicado = (Array.isArray(sp?.duplicado) ? sp?.duplicado[0] : sp?.duplicado) === "1";
+  const omitidasRaw = Array.isArray(sp?.omitidas) ? sp?.omitidas[0] : sp?.omitidas;
+  const salidasOmitidas = omitidasRaw && /^\d{1,4}$/.test(omitidasRaw) ? Number(omitidasRaw) : 0;
   const paqueteId = Number(id);
   const sb = await createClient();
   // Publicación por lotes a medias (apagada por defecto): se ofrece «Continuar publicación»; lo publicado antes sigue visible.
@@ -209,7 +215,15 @@ export default async function PaqueteDetallePage({
             {pq.activo ? "Activo" : "Inactivo"}
           </p>
         </div>
+        <DuplicarPaqueteBtn id={paqueteId} nombre={pq.nombre} />
       </div>
+      {recienDuplicado && (
+        <div className="mb-4 rounded-lg border border-[var(--brand-accent)] bg-[rgba(38,187,217,0.06)] px-4 py-3 text-sm text-gray-700" data-testid="aviso-duplicado">
+          Este paquete es una <b>copia en borrador</b>: está <b>inactivo y sin publicar</b>. Se copió la configuración, los vuelos, los hoteles, los servicios y las salidas; el original no cambió y no se copió ninguna venta, silla ni publicación.
+          Revisa las fechas, la TRM y los precios, activa el paquete y genera el tarifario cuando estés listo.
+          {salidasOmitidas > 0 && <span className="mt-1 block font-medium text-amber-700" role="alert">{salidasOmitidas} salida(s) vinculada(s) a un vuelo de Empaquetados no se copiaron porque ese vuelo ya no está disponible para vincular.</span>}
+        </div>
+      )}
 
       <ArmadoClient
         paqueteId={paqueteId}

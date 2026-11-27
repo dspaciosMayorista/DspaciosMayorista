@@ -105,7 +105,7 @@ describe("cableado: solo interfaz", () => {
     assert.deepEqual(nombres.sort(), ["continuarPublicacionTarifario", "estadoPublicacionTarifario", "generarTarifario", "getTarifasHotel", "setHotel", "setHotelFiltros", "setHotelPrioridad", "setServicio", "setServicios", "setTodosHoteles", "setTodosVuelos", "setVuelo"].sort());
   });
   test("page.tsx entrega la pestaña (?tab=) y el estado del tarifario leído de armado_paquetes", () => {
-    assert.match(pagina, /searchParams\?: Promise<\{ tab\?: string \| string\[\] \}>/);
+    assert.match(pagina, /searchParams\?: Promise<\{ tab\?: string \| string\[\](; [a-z]+\?: string \| string\[\])* \}>/); // #61 agrega duplicado/omitidas al mismo tipo
     assert.match(pagina, /pestanaInicial=\{pestanaInicial \?\? null\}/);
     assert.match(pagina, /tarifario_estado/);
     assert.match(pagina, /tarifario_error/);

@@ -1,0 +1,184 @@
+{
+  "contexto": {
+    "escenario": "cop_par",
+    "opcion": "B",
+    "moneda": "COP",
+    "ajusteEsperado": 0,
+    "fase": "completo",
+    "madreId": 10,
+    "hijaId": 11,
+    "numero": "DTM-0007",
+    "pago": {
+      "exigidoMoneda": 800000,
+      "pagado": 800000
+    },
+    "total": 1580000,
+    "nino": 150000
+  },
+  "venta": {
+    "numero_contrato": "DTM-0007",
+    "cliente": "Titular Sintético",
+    "cliente_documento": "900123456",
+    "estado": "confirmado",
+    "moneda": "COP",
+    "precio_venta": 1580000,
+    "pax": 2,
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "asesor": "Asesor 95",
+    "tipo_asesor": null,
+    "tenant": "mayorista",
+    "destino": "Cartagena",
+    "plan_nombre": "Hotel B · Estándar · PC · Doble",
+    "hotel": "Hotel B",
+    "tours_traslados": null,
+    "asistencia_medica": false
+  },
+  "items": [
+    {
+      "id": 10,
+      "numero_contrato": "DTM-0007",
+      "descripcion": "PAQUETE TURÍSTICO A CARTAGENA DEL 01/03/2030 AL 04/03/2030",
+      "adultos": 2,
+      "ninos": 1,
+      "tarifa_adulto": 715000,
+      "tarifa_nino": 150000,
+      "orden": 0,
+      "modo_precio": "por_persona",
+      "valor_total": null
+    }
+  ],
+  "pasajeros": [
+    {
+      "id": 10,
+      "numero_contrato": "DTM-0007",
+      "nombre": "Titular Sintético",
+      "tipo_id": "CC",
+      "identificacion": "900123456",
+      "fecha_nacimiento": "1985-05-20",
+      "es_infante": false,
+      "orden": 0,
+      "nacionalidad": null,
+      "responsable_id": null,
+      "nombres": null,
+      "apellidos": null
+    }
+  ],
+  "hoteles": [],
+  "pagado": 1580000,
+  "cotizacion_hija": {
+    "id": 11,
+    "codigo": "C-0011",
+    "modo": "simple",
+    "tipo": "manual",
+    "estado": "convertida",
+    "moneda": "COP",
+    "precio_venta": 1580000,
+    "pax": 2,
+    "cliente": "Titular Sintético",
+    "destino": "Cartagena",
+    "fecha_salida": "2030-03-01",
+    "fecha_regreso": "2030-03-04",
+    "vigencia_hasta": "2026-11-26",
+    "detalle": {
+      "items": [
+        {
+          "orden": 0,
+          "valor": 1430000,
+          "cantidad": 2,
+          "descripcion": "PAQUETE TURÍSTICO A CARTAGENA DEL 01/03/2030 AL 04/03/2030",
+          "tarifa_unit": 715000
+        },
+        {
+          "orden": 1,
+          "valor": 150000,
+          "cantidad": 1,
+          "descripcion": "Tarifa por niño",
+          "tarifa_unit": 150000
+        }
+      ],
+      "venta": {
+        "pax": 2,
+        "canal": "B2C",
+        "hotel": "Hotel B",
+        "ninos": 1,
+        "asesor": "Asesor 95",
+        "estado": "cotizacion",
+        "moneda": "COP",
+        "cliente": "Titular Sintético",
+        "destino": "Cartagena",
+        "aerolinea": "Avianca",
+        "fecha_salida": "2030-03-01",
+        "precio_venta": 1580000,
+        "tipo_cliente": "interno",
+        "fecha_regreso": "2030-03-04",
+        "observaciones": null,
+        "numero_contrato": "DTM-0007"
+      },
+      "vuelos": [],
+      "hoteles": [],
+      "incluye": "Tiquetes aéreos (Avianca)\nAlojamiento en Hotel B",
+      "recobro": {
+        "total": 0,
+        "aliado": 0,
+        "empresa": 0
+      },
+      "noIncluye": "",
+      "pasajeros": []
+    },
+    "payload": {
+      "pax": 2,
+      "ninos": 1,
+      "plazo": "",
+      "moneda": "COP",
+      "cliente": {
+        "email": "titular.sintetico@example.com",
+        "nombres": "Titular",
+        "tipoDoc": "CC",
+        "telefono": "3001112233",
+        "apellidos": "Sintético",
+        "numeroDoc": "900123456",
+        "nacimiento": "1985-05-20"
+      },
+      "destino": "Cartagena",
+      "incluye": "",
+      "recobro": 0,
+      "fechaIda": "2030-03-01",
+      "noIncluye": "",
+      "servicios": [
+        {
+          "ta": 30000,
+          "modo": "ta",
+          "tipo": "aereo",
+          "nombre": "Avianca",
+          "costoNeto": 500000,
+          "pctMarkup": 0,
+          "proveedor": "",
+          "plataforma": ""
+        },
+        {
+          "ta": 0,
+          "modo": "ta",
+          "tipo": "hotel",
+          "nombre": "Hotel B",
+          "regimen": "PC",
+          "categoria": "Estándar",
+          "costoNeto": 900000,
+          "pctMarkup": 0,
+          "proveedor": "",
+          "plataforma": "",
+          "acomodacion": "Doble"
+        }
+      ],
+      "tarifaNino": 150000,
+      "tipoAsesor": "interno",
+      "fechaRegreso": "2030-03-04",
+      "agenciaNombre": "",
+      "asesorInterno": "Asesor 95",
+      "observaciones": "",
+      "recobroAliado": 0,
+      "vigenciaHasta": "",
+      "freelanceNombre": ""
+    }
+  }
+}

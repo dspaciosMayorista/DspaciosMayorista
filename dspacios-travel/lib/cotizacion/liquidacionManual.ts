@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { marcar } from "@/lib/calc/paquetes";
 import { sugerirIncluye } from "@/lib/cotizacion/incluye";
+import { alojamientosDeServicios } from "@/lib/cotizacion/alojamientosDocumento";
 
 export type ServicioManual = {
   tipo: string;          // aereo / hotel / traslado / asistencia / otro
@@ -22,6 +23,19 @@ export type ServicioManual = {
   modo: "mk" | "ta";     // mk = markup (margen) · ta = valor fijo (solo aéreo)
   pctMarkup: number;     // markup en % (25 = 25%); margen: costo/(1-mk)
   ta: number;            // valor fijo a sumar (TA) cuando modo='ta'
+  // #95 (B95-3): copia EDITABLE de la operación (se guarda en el payload de la cotización; editarla no toca el catálogo). Nunca precios ni vigencias.
+  /** Hotel (o servicio) del catálogo ELEGIDO por id; null/ausente = texto libre. Sirve para comprobar las restricciones establecidas del hotel en el servidor. */
+  catalogoId?: number | null;
+  categoria?: string;
+  regimen?: string;
+  /** Texto de la acomodación. En un hotel NUEVO lo deriva el servidor de `habitaciones` (B95-20): ya no se escribe a mano. */
+  acomodacion?: string;
+  /** B95-15: cómo se compró el hotel. «plataforma» → la plataforma es el proveedor a pagar; «directa» → el proveedor del hotel. El servidor resuelve `proveedor` desde aquí. */
+  compra?: "directa" | "plataforma";
+  /** B95-20: cantidad de habitaciones por tipo (Sencilla/Doble/Triple/Múltiple); se valida contra adultos, niños, infantes y las reglas del hotel. */
+  habitaciones?: Partial<Record<"sencilla" | "doble" | "triple" | "multiple", number>>;
+  /** B95-20: nota LIBRE y opcional sobre la acomodación (no decide nada; la estructura es `habitaciones`). */
+  detalleAcomodacion?: string;
 };
 
 export type TipoAsesor = "interno" | "agencia" | "freelance";
@@ -33,6 +47,10 @@ export type CotizacionManualInput = {
   fechaRegreso: string;
   pax: number;           // adultos
   ninos?: number;        // cantidad de niños
+  /** B95-15: infantes (no ocupan silla ni plaza de adulto; sin tarifa propia aquí). Solo dato de la cotización. */
+  infantes?: number;
+  /** B95-13: destino elegido del catálogo (id). El servidor lo verifica y su nombre canónico pisa `destino`. */
+  destinoId?: number | null;
   tarifaNino?: number;   // valor por niño (suma al total)
   recobro?: number;      // mayor valor cobrado, oculto al cliente
   recobroAliado?: number;// parte del recobro para el aliado (B2B)
@@ -244,6 +262,7 @@ export function construirCotizacionManual(
       fecha_regreso: input.fechaRegreso || null,
       pax: t.adultos,
       ninos: rec.nNinos,
+      ...(Number(input.infantes) > 0 ? { infantes: Math.trunc(Number(input.infantes)) } : {}),
       precio_venta: t.precioVenta,
       moneda,
       asesor: asesor || null,
@@ -255,7 +274,8 @@ export function construirCotizacionManual(
       estado: "cotizacion",
     },
     pasajeros: [],
-    hoteles: [],
+    // B95-15/18: el alojamiento elegido (hotel, categoría, plan de alimentación, acomodación) que el documento del cliente muestra; solo campos descriptivos, nunca proveedor ni costo.
+    hoteles: alojamientosDeServicios(input.servicios, { destino: input.destino, fechaIda: input.fechaIda, fechaRegreso: input.fechaRegreso }),
     vuelos: [],
     // Qué incluye / no incluye (texto libre editable). Si el asesor no escribió
     // el "incluye", se sugiere a partir de los servicios elegidos.

@@ -41,13 +41,17 @@ export type ResultadoSubida =
   | { ok: false; error: string; huerfano?: string; /** objeto conservado, vínculo no determinado: requiere conciliación */ conciliar?: string };
 
 const MENSAJES: Record<string, string> = {
-  SOPORTE_LIMITE: "Ya tienes un soporte vigente por cada abono registrado de este contrato. Reemplaza o retira uno para subir otro.",
+  SOPORTE_LIMITE: "Este contrato ya tiene el máximo de soportes vigentes: uno por cada pago registrado y uno adicional. Reemplaza o retira uno, o espera a que el equipo registre un pago, para subir otro.",
   SOPORTE_NO_VIGENTE: "Ese soporte ya cambió (otro reemplazo o retiro se adelantó). Actualiza la página e inténtalo de nuevo.",
   SOPORTE_CONTRATO_INEXISTENTE: "El contrato ya no existe.",
   SOPORTE_ACTOR: "Tu usuario no está activo.",
   SOPORTE_INEXISTENTE: "El soporte no existe.",
   SOPORTE_ARCHIVADO: "No tienes acceso a ese soporte.",
   SOPORTE_IDENTIDAD: MENSAJE_IDENTIDAD,
+  // S339-02 (345): corrección de un soporte rechazado.
+  SOPORTE_CORRECCION: "Ese soporte ya no está rechazado. Actualiza la página.",
+  SOPORTE_YA_CORREGIDO: "Ese rechazo ya tiene su corrección. Actualiza la página.",
+  SOPORTE_MISMO_ARCHIVO: "Es el mismo archivo que se rechazó. Sube el archivo corregido.",
   // O-3: evidencia previa del aliado sobre su COTIZACIÓN (migración 325).
   SOPORTE_COT_LIMITE: "Ya tienes 5 comprobantes vigentes en esta cotización. Retira uno para adjuntar otro.",
   SOPORTE_COT_REPETIDA: "Ya adjuntaste ese archivo a esta cotización.",

@@ -12,6 +12,7 @@ import {
 import { separarFilasConGrupos, separarFilasVencidas } from "@/lib/calc/promoCalculadora";
 import { contextoGeneracion } from "@/lib/hoteles/contextoGeneracionTarifas";
 import { regenerarTarifariosDeHotel } from "../../paquetes/actions";
+import { despuesDeResponder, type ModoDespues } from "@/lib/tarifario/despuesDeResponder";
 import type { Json } from "@/types/database";
 import { puedeEscribir } from "@/lib/roles";
 import { normalizarProveedorHotelId } from "@/lib/hoteles/proveedor";
@@ -25,7 +26,10 @@ import { validarNinoGratis } from "@/lib/hoteles/ninoGratis";
 
 // `cambioPendiente` (entrega 5, P3): el cambio de una promoción que se vende crea una coincidencia con EBB / Long Stay sin
 // configurar; quedó GUARDADO como pendiente (la versión autorizada sigue vendiéndose) y la UI ofrece configurarla y activarlo.
-type Result = { ok: true; id?: number; aviso?: string; cambioPendiente?: { promocionId: number; familias: ("ebb" | "long_stay")[] } } | { ok: false; error: string };
+type Result = { ok: true; id?: number; aviso?: string; regeneracion?: ModoDespues; cambioPendiente?: { promocionId: number; familias: ("ebb" | "long_stay")[] } } | { ok: false; error: string };
+// Guardar/borrar una vigencia ya no espera la regeneración de TODOS los paquetes del hotel (decenas de consultas por paquete): la fila queda guardada y la regeneración corre DESPUÉS de responder.
+// La venta valida en vivo contra las vigencias reales, así que un tarifario aún sin regenerar nunca vende fuera de ellas. `regenerarTarifariosDeHotel` registra y marca sus propios fallos.
+const regenerarHotelDespues = (hotelId: number, inicioMs: number) => despuesDeResponder("hoteles/temporadas", () => regenerarTarifariosDeHotel(hotelId, inicioMs));
 const oNull = (s: string) => (s && s.trim() !== "" ? s.trim() : null);
 // #43/#60 (299): un empate de prioridad lo rechaza la base al confirmar; su mensaje ya es claro, sin el prefijo técnico.
 const sinPrefijoEmpate = (m: string) => m.replace(/^EMPATE_PRIORIDAD:\s*/, "");
@@ -462,6 +466,7 @@ function validarTemporada(input: TemporadaInput, previas?: FechasVigencia | null
 }
 
 export async function crearTemporada(input: TemporadaInput): Promise<Result> {
+  const inicioMs = Date.now();
   const v = validarTemporada(input);
   if (!v.ok) return v;
   const p = validarCamposPromo({ ...input, tipo: input.tipo ?? "tarifa" }, null);
@@ -473,10 +478,10 @@ export async function crearTemporada(input: TemporadaInput): Promise<Result> {
   }).select("id").maybeSingle();
   if (error) return { ok: false, error: mensajePromo300(error.message) ?? sinPrefijoEmpate(error.message) };
   revalidatePath(`/dashboard/producto/hoteles/${input.hotelId}`);
-  await regenerarTarifariosDeHotel(input.hotelId);
+  const regeneracion = await regenerarHotelDespues(input.hotelId, inicioMs);
   // Una promoción nueva que coincide con EBB / Long Stay nace pendiente (la 301): se avisa. Una tarifa no se consulta.
   const aviso = creada?.id != null && (input.tipo ?? "tarifa") !== "tarifa" ? await avisoPendiente(sb, creada.id) : undefined;
-  return { ok: true, ...(creada?.id != null ? { id: creada.id } : {}), ...(aviso ? { aviso } : {}) };
+  return { ok: true, regeneracion, ...(creada?.id != null ? { id: creada.id } : {}), ...(aviso ? { aviso } : {}) };
 }
 
 // `_hotelIdSolicitado` (segundo parámetro histórico, la UI sigue mandándolo
@@ -489,6 +494,7 @@ export async function crearTemporada(input: TemporadaInput): Promise<Result> {
 // explícito: nunca se regenera un hotel inventado.
 export async function eliminarTemporada(id: number, _hotelIdSolicitado: number): Promise<Result> {
   void _hotelIdSolicitado; // deliberadamente sin usar — ver la nota arriba
+  const inicioMs = Date.now();
   const sb = await createClient();
   const { data: borrada, error } = await sb
     .from("hotel_temporadas")
@@ -501,8 +507,7 @@ export async function eliminarTemporada(id: number, _hotelIdSolicitado: number):
   if (!borrada) return { ok: false, error: "No se encontró la temporada a eliminar (0 filas afectadas)." };
   const hotelId = borrada.hotel_id;
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
-  await regenerarTarifariosDeHotel(hotelId);
-  return { ok: true };
+  return { ok: true, regeneracion: await regenerarHotelDespues(hotelId, inicioMs) };
 }
 
 // Copia TODAS las temporadas/vigencias de otro hotel al hotel actual (como copias
@@ -628,6 +633,7 @@ async function renombrarTemporadaEnDatos(
  * `promocion_guardar_combinacion`). Sin ella, el update de siempre.
  */
 export async function actualizarTemporada(id: number, input: TemporadaInput, combinacion?: CombinacionEntrada): Promise<Result> {
+  const inicioMs = Date.now();
   const sb = await createClient();
   // La misma lectura de siempre (una sola), ampliada con las fechas guardadas: la validación de fechas necesita saber cuáles NO
   // cambian para dejar editar una vigencia histórica sin tocar sus fechas antiguas (#43). Sin lecturas ni escrituras adicionales.
@@ -702,9 +708,9 @@ export async function actualizarTemporada(id: number, input: TemporadaInput, com
   }
 
   revalidatePath(`/dashboard/producto/hoteles/${hotelId}`);
-  await regenerarTarifariosDeHotel(hotelId);
+  const regeneracion = await regenerarHotelDespues(hotelId, inicioMs);
   const pend = (input.tipo ?? "tarifa") !== "tarifa" ? await avisoPendiente(sb, id) : undefined;
-  return { ok: true, aviso: [aviso, pend].filter(Boolean).join(" ") || undefined };
+  return { ok: true, regeneracion, aviso: [aviso, pend].filter(Boolean).join(" ") || undefined };
 }
 
 async function sinPermisoProducto(sb: Awaited<ReturnType<typeof createClient>>): Promise<string | null> {

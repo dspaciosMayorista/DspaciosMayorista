@@ -1,0 +1,115 @@
+(node:19184) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./")); register("./pruebas/support/aliasLoader.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+▶ convertirCotizacionCarrito — regla A.7: el bloqueo genérico de 3F-4A se retiró
+  ✔ ya no existe el mensaje "integración contractual pendiente" en todo el archivo (0.5169ms)
+  ✔ Reservar interno permanece bloqueado — computo.ts no se toca ni se importa la guardia con otro criterio (13.3487ms)
+✔ convertirCotizacionCarrito — regla A.7: el bloqueo genérico de 3F-4A se retiró (14.5344ms)
+▶ validarBernaloParaConversion — regla A: reliquidación autoritativa, nunca ReservaInput persona-shaped
+  ✔ llama computarReservaBernalo UNA sola vez — nunca ReservaInput/computarReserva para un ítem Bernalo (0.2297ms)
+  ✔ reconstruye SOLO las decisiones persistidas (paqueteId/hotelId/categoria/alimentacion/salida/habitaciones) — nunca precio/costo/snapshot como entrada (0.1646ms)
+  ✔ regla A.4: si el servicio interno rechaza (tarifa/salida/moneda/configuración inválida), bloquea con el mensaje real ANTES de cualquier otra validación (0.1223ms)
+  ✔ regla A.5: PVP recalculado ≠ PVP de la cotización → bloquea con mensaje de recotizar, NUNCA actualiza/convierte en silencio (0.2254ms)
+  ✔ regla B.9.1: proveedor del HOTEL ausente bloquea — la vista previa tolera proveedorHotel:null, el contrato no (0.1182ms)
+  ✔ regla B.9.2/B.11: cada servicio incluido con costoNeto>0 exige proveedor real — nunca "Sin especificar" (0.6218ms)
+  ✔ resuelve proveedores de servicios SERVER-SIDE (consulta servicios_adicionales/proveedores) — nunca del navegador/cotización (0.1072ms)
+✔ validarBernaloParaConversion — regla A: reliquidación autoritativa, nunca ReservaInput persona-shaped (1.9119ms)
+▶ convertirCotizacionCarrito — Paso 1: despacha por modeloTarifario, arreglos separados persona/Bernalo
+  ✔ rama Bernalo ("unidad") se resuelve con validarBernaloParaConversion y hace `continue` — nunca cae al ReservaInput de persona (0.1982ms)
+  ✔ reservasSillasDeGrupo SOLO recibe validadosPersona — Bernalo nunca participa en la reserva de sillas/inventario (regla A.8) (0.1776ms)
+  ✔ persona (validadosPersona) conserva la construcción de ReservaInput EXACTA de siempre — regla A.16 (0.0819ms)
+  ✔ hallazgo confirmado (P2-1): compara comp.data.monedaReserva contra cot.moneda para ítems PERSONA — bloquea ANTES de acumular en validadosPersona si difieren (0.1081ms)
+  ✔ hallazgo confirmado (P2-1): el mensaje de recotización de persona es equivalente al de Bernalo (mismo patrón "antes X, ahora Y") (0.156ms)
+✔ convertirCotizacionCarrito — Paso 1: despacha por modeloTarifario, arreglos separados persona/Bernalo (0.8542ms)
+▶ convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo
+  ✔ regla C.12: ventas.precio_venta se arma sumando validadosPersona + validadosBernalo + tours (precioTotal) (0.1906ms)
+  ✔ regla D.17/19: inserta contrato_alojamiento_bernalo (UNA fila por habitación) usando `admin` (service-role) — nunca `sb` (0.0479ms)
+  ✔ regla D.18: el snapshot insertado sale de resultado.habitaciones[].snapshot (servidor) — nunca de it/payload de cotización (0.0415ms)
+  ✔ regla D.21: fallarYRevertirGrupo se invoca si falla el insert de contrato_alojamiento_bernalo/contrato_items/contrato_hoteles/contrato_vuelos de Bernalo (0.0846ms)
+  ✔ regla C.13/14: UNA línea contrato_items con modo_precio:'total' y valor_total:resultado.precioVenta — adultos/ninos/tarifas en 0 (0.0569ms)
+  ✔ regla C.13: la descripción es UNA línea agregada — no genera una fila por habitación en contrato_items (0.0611ms)
+  ✔ regla E.22: costo_hotel se acumula desde resultado.costoHotelTotal (única fuente, sin reimplementar la suma) (0.0482ms)
+  ✔ regla E.23: CxP hotelera es UNA sola fila (una llamada a pushCxP("hotel"...)) por costoHotelTotal completo — nunca por habitación (0.0545ms)
+  ✔ hallazgo confirmado (a): si datosVueloBloqueo/datosVueloEmpaquetado devuelve ok:false, FALLA y revierte el contrato — nunca best-effort/omite en silencio (0.0534ms)
+  ✔ hallazgo confirmado: CxP aérea/costo_aereo = dv.costo_neto × paxConSilla + dv.fee_infante × infantes — nunca resultado.costoVueloTotal (1.6364ms)
+  ✔ regla F/D: "sin_vuelo" nunca entra al bloque de vuelo (solo tipo bloqueo/empaquetado) (0.0852ms)
+  ✔ hallazgo confirmado: validarBernaloParaConversion bloquea CUALQUIER salida distinta de sin_vuelo (sin integración de sillas todavía) — nunca sobreventa silenciosa (0.117ms)
+  ✔ regla E.25: cada servicio incluido con costoNeto>0 genera su PROPIA CxP con servicio_id — nunca se absorbe en el hotel (0.0521ms)
+  ✔ regla E.28: CxP hotel/vuelo/servicios de Bernalo SIEMPRE pasan resultado.moneda explícito a pushCxP — nunca dependen del default (0.1812ms)
+  ✔ regla D.20: incluidosGrupo sale SOLO de los ítems persona validados — nunca de Bernalo (sus incluidos se re-liquidan aparte, no se cuentan dos veces) (0.2221ms)
+✔ convertirCotizacionCarrito — Paso 2: creación de contrato Bernalo (3.2718ms)
+▶ lib/reservar/financieroContrato.ts — CxPFinanciera.moneda (regla E.28)
+  ✔ el tipo declara moneda?: string, opcional (persona sigue sin mandarla — regla A.16) (0.0707ms)
+✔ lib/reservar/financieroContrato.ts — CxPFinanciera.moneda (regla E.28) (0.1339ms)
+▶ lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.15/F.31
+  ✖ el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja (0.6912ms)
+  ✔ regla F.5 (cierre 3F-4B): las líneas modo_precio='total' se separan (alojItemsTotal) de las per-cápita (alojItemsPorPersona) — nunca en la misma tabla con Adultos 0/Niños 0/Tarifa $0 (0.1043ms)
+  ✔ regla F.32/33/34: sección de habitacionesBernalo existe, muestra hotel/categoría/alimentación/adultos y menores como cantidad + edades — nunca un campo financiero/snapshot (0.1501ms)
+  ✔ cotizaciones Bernalo muestran composición de tarifa separada — sin mezclarla con la tabla adulto/niño de alojamientos persona (0.1771ms)
+✖ lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.15/F.31 (1.2548ms)
+▶ lib/reservar/alojamientoBernaloDocumento.ts — regla D.19/20: frontera service-role, SELECT sanitizado
+  ✔ usa createAdminClient (service-role) — la tabla no tiene ninguna policy (0.1004ms)
+  ✔ el SELECT nunca pide snapshot ni hotel_id — regla F.34, nunca expone datos privados (0.0706ms)
+✔ lib/reservar/alojamientoBernaloDocumento.ts — regla D.19/20: frontera service-role, SELECT sanitizado (0.2271ms)
+▶ app/contrato/[numero]/page.tsx y app/c/[token]/page.tsx — cablean habitacionesBernaloDeContrato DESPUÉS de autorizar (regla D.19)
+  ✔ app/contrato/[numero]/page.tsx: importa y pasa habitacionesBernalo a ContratoDocumento (0.8203ms)
+  ✔ app/c/[token]/page.tsx: importa y pasa habitacionesBernalo a ContratoDocumento (0.6109ms)
+✔ app/contrato/[numero]/page.tsx y app/c/[token]/page.tsx — cablean habitacionesBernaloDeContrato DESPUÉS de autorizar (regla D.19) (1.5426ms)
+▶ validarBernaloParaConversion — hallazgo confirmado: compara también la moneda declarada de la cotización, nunca solo el precio numérico
+  ✔ recibe monedaCotizacion como segundo parámetro y compara resultado.moneda contra ella (0.25ms)
+  ✔ el bloqueo de moneda ocurre DESPUÉS del de precio y ANTES de los de proveedor — mismo patrón fail-closed (0.0628ms)
+  ✔ convertirCotizacionCarrito consulta cotizaciones.moneda y la pasa al validar cada ítem Bernalo (0.0721ms)
+✔ validarBernaloParaConversion — hallazgo confirmado: compara también la moneda declarada de la cotización, nunca solo el precio numérico (1.148ms)
+▶ convertirCotizacionCarrito — hallazgo confirmado (e): idempotencia — ni la cotización completa ni un grupo individual se duplican en un reintento
+  ✔ guarda temprano: si cot.estado === "convertida", devuelve los números YA generados (detalle.contratos o numero_contrato) — nunca vuelve a crear nada (0.1279ms)
+  ✔ ronda 2 — regla (2): un grupo ya presente en contratosPorGrupo se SALTA de gruposPendientes ANTES de Paso 1 (reliquidar/validar) — nunca solo antes de escribir (0.0839ms)
+  ✔ ronda 2: numeros[] se siembra con los contratos ya existentes ANTES de Paso 1 — un grupo completo nunca bloquea el retry por precio/moneda/proveedor cambiados después (11.5154ms)
+  ✔ la clave de grupo es grupo.destino (estable entre reintentos porque el payload no cambia) — nunca el índice de iteración (0.1144ms)
+  ✔ el progreso se persiste EN CADA grupo completado (no solo al final) — contratosPorGrupo[claveGrupo] se escribe justo después de numeros.push(numero) y ANTES del siguiente número de contrato (0.1434ms)
+  ✔ ronda 2 — regla (1): el update por-grupo revisa error y CORTA (ok:false) si falla — nunca sigue como si el progreso fuera durable (0.0841ms)
+  ✔ ronda 2 — regla (1): el update FINAL (cierre de la cotización) también revisa error y corta — nunca reporta éxito si no se pudo cerrar el estado (0.1269ms)
+  ✔ nunca duplica sillas/CxP para un grupo ya completo: la exclusión ocurre en Paso 1 (gruposPendientes), ANTES de crear_pasajeros_contrato_multi/registrarFinancieroContrato (0.1786ms)
+✔ convertirCotizacionCarrito — hallazgo confirmado (e): idempotencia — ni la cotización completa ni un grupo individual se duplican en un reintento (12.767ms)
+▶ convertirCotizacionCarrito — hallazgo confirmado: reintentar con un modo de agrupación distinto se rechaza (nunca reconcilia las dos agrupaciones)
+  ✔ detalleExistente declara agrupar?: string y el guard compara contra opts.agrupar ANTES de construir los grupos (0.1696ms)
+  ✔ el guard solo bloquea si YA hay progreso real (contratosPorGrupo no vacío) — una cotización sin ningún grupo convertido puede elegir cualquier modo libremente (0.0834ms)
+  ✔ el modo usado se persiste (agrupar: opts.agrupar) en CADA escritura de detalle — por grupo y al cierre (0.1897ms)
+✔ convertirCotizacionCarrito — hallazgo confirmado: reintentar con un modo de agrupación distinto se rechaza (nunca reconcilia las dos agrupaciones) (0.5518ms)
+(node:19184) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/convertirCotizacionCarritoBernaloWiring.test.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to \\?\C:\Users\Usuario\Documents\DspaciosMayorista\dspacios-travel\.worktrees\block1-vuelos\dspacios-travel\package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+ℹ tests 52
+ℹ suites 11
+ℹ pass 51
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 241.8817
+
+✖ failing tests:
+
+test at pruebas\convertirCotizacionCarritoBernaloWiring.test.ts:332:3
+✖ el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja (0.6912ms)
+  AssertionError [ERR_ASSERTION]: las 3 superficies (línea total agregada + tabla alojamiento + tabla servicios) deben usar el helper por línea
+  
+  0 !== 3
+  
+      at TestContext.<anonymous> (file:///C:/Users/Usuario/Documents/DspaciosMayorista/dspacios-travel/.worktrees/block1-vuelos/dspacios-travel/pruebas/convertirCotizacionCarritoBernaloWiring.test.ts:338:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at node:internal/test_runner/test:1903:71
+      at node:internal/per_context/primordials:504:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:478:3)
+      at node:internal/per_context/primordials:504:9
+      at Array.map (<anonymous>) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

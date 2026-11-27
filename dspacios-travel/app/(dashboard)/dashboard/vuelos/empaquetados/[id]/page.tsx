@@ -31,6 +31,7 @@ export default async function EmpaquetadoDetallePage({ params }: { params: Promi
         <h1 className="font-mono text-2xl font-semibold text-gray-900">{e.record ?? "Sin record"}</h1>
         <span className="rounded bg-gray-100 px-2 py-0.5 text-sm text-gray-600">{e.aerolinea ?? "—"}</span>
         <EstadoBadge estado="Sistema" tono="info" />
+        <Link href={`/dashboard/vuelos/empaquetados/nuevo?copiarDe=${e.id}`} className="ml-auto rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50" data-testid="duplicar-empaquetado">Duplicar con nuevas fechas</Link>
       </div>
       <p className="mt-1 text-sm text-gray-500">{e.ruta ?? "—"}</p>
       <p className="text-xs text-gray-400">

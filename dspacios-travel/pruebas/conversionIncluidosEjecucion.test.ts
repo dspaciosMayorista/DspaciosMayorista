@@ -575,7 +575,7 @@ describe("conversión: los vuelos del bloqueo del contrato", () => {
   async function cotizarBloqueo() {
     HOTELES = { 1: ozCon([]) };
     db.cupos_por_bloqueo = [{ id: 5, cupos_disponibles: 10 }];
-    db.bloqueos_vuelo = [{ id: 5, aerolinea: "Avianca", moneda: "COP", record: "ABC123", ruta: "BOG - CTG - BOG", tarifa_para_empaquetar: 500_000, fee_infante: 0, fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04", vuelo_ida: "AV100", vuelo_regreso: "AV101", hora_salida_ida: "06:00", hora_llegada_ida: "07:30", hora_salida_reg: "18:00", hora_llegada_reg: "19:30" }];
+    db.bloqueos_vuelo = [{ id: 5, aerolinea: "Avianca", moneda: "COP", record: "ABC123", ruta: "BOG - CTG - BOG", tarifa_neta: 500_000, tarifa_para_empaquetar: 580_000, fee_infante: 0, fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04", vuelo_ida: "AV100", vuelo_regreso: "AV101", hora_salida_ida: "06:00", hora_llegada_ida: "07:30", hora_salida_reg: "18:00", hora_llegada_reg: "19:30" }];
     usuario = null;
     const r = await crearSolicitudReserva({ items: [{ ...item(1, 34), modulo: "bloqueo", bloqueoId: 5 }], tours: [], cliente: clienteCot });
     assert.equal(r.ok, true, (r as { error?: string }).error);

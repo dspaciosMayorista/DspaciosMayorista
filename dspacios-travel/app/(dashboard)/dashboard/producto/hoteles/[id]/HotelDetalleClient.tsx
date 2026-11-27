@@ -3,6 +3,8 @@
 import { DateInput } from "@/components/ui/DateInput";
 import { useRef, useState, useTransition, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { CalendarioExclusionesModal } from "./CalendarioExclusionesModal";
+import type { ConjuntoFechas } from "@/lib/hoteles/conjuntosFechas";
 import { CalendarDays, CalendarRange, Pencil, Settings, Table2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,9 +117,13 @@ const ICONO_PESTANA = { configuracion: Settings, temporadas: CalendarRange, tari
 
 export function HotelDetalleClient({
   hotelId, categorias, regimenes, temporadas, tarifas, otrosHoteles, adultsOnly = false, mostrarTarifaPersona = true,
-  moneda = "COP", pestanaInicial, configuracion, calculadora, tarifasExtra, promosDinamicas = [],
+  moneda = "COP", pestanaInicial, vigenciaDestacada, configuracion, calculadora, tarifasExtra, promosDinamicas = [], conjuntos = [], conjuntosDisponibles = false, codigosPromocion = null,
 }: {
+  // Conjuntos de fechas con nombre y año (migración 327). `conjuntosDisponibles` = false cuando la tabla aún no existe (no se pueden guardar ni aplicar).
+  conjuntos?: ConjuntoFechas[]; conjuntosDisponibles?: boolean; codigosPromocion?: ReactNode;
   hotelId: number; categorias: string[]; regimenes: string[]; temporadas: Temporada[]; tarifas: Tarifa[];
+  // B3-03: vigencia a resaltar al llegar desde una alerta de fin de compra (`?vigencia=<id>`); la fila tiene `id="vigencia-<id>"`.
+  vigenciaDestacada?: number;
   // Promociones dinámicas por grupo explicadas (solo lectura; null = el rol no ve netos).
   promosDinamicas?: PromoDinamica[] | null;
   otrosHoteles: { id: number; nombre: string }[]; adultsOnly?: boolean;
@@ -194,10 +200,11 @@ export function HotelDetalleClient({
         {configuracion}
       </div>
       <div role="tabpanel" id="panel-hotel-temporadas" aria-labelledby="tab-hotel-temporadas" hidden={activa !== "temporadas"} className="mx-auto max-w-5xl space-y-8">
-        <TemporadasBox hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} permiteGrupos={mostrarTarifaPersona} tarifas={tarifas} />
+        <TemporadasBox vigenciaDestacada={vigenciaDestacada} hotelId={hotelId} temporadas={temporadas} otrosHoteles={otrosHoteles} hoy={hoy} regimenes={regimenes} moneda={moneda} permiteGrupos={mostrarTarifaPersona} tarifas={tarifas} conjuntos={conjuntos} conjuntosDisponibles={conjuntosDisponibles} />
         {/* Cada bloque del servidor va como ÚNICO hijo de su contenedor: junto a otros hijos dentro de un arreglo estático,
            React 19 (dev) avisa "Each child in a list should have a unique key" por los elementos que llegan del servidor. */}
         <div>{calculadora}</div>
+        {codigosPromocion ? <div>{codigosPromocion}</div> : null}
       </div>
       <div role="tabpanel" id="panel-hotel-tarifas" aria-labelledby="tab-hotel-tarifas" hidden={activa !== "tarifas"} className="space-y-8">
         {mostrarTarifaPersona && (
@@ -210,7 +217,7 @@ export function HotelDetalleClient({
   );
 }
 
-function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda, permiteGrupos = false, tarifas = [] }: { hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string; permiteGrupos?: boolean; tarifas?: Tarifa[] }) {
+function TemporadasBox({ vigenciaDestacada, hotelId, temporadas, otrosHoteles, hoy, regimenes, moneda, permiteGrupos = false, tarifas = [], conjuntos = [], conjuntosDisponibles = false }: { vigenciaDestacada?: number; conjuntos?: ConjuntoFechas[]; conjuntosDisponibles?: boolean; hotelId: number; temporadas: Temporada[]; otrosHoteles: { id: number; nombre: string }[]; hoy: string; regimenes: string[]; moneda: string; permiteGrupos?: boolean; tarifas?: Tarifa[] }) {
   // #43/#60: editor de grupos de días (preparación inactiva). Sin controles en hoteles por unidad.
   const [gruposAbierta, setGruposAbierta] = useState<Temporada | null>(null);
   const [gruposLocales, setGruposLocales] = useState<Record<number, GrupoCfg[]>>({});
@@ -344,7 +351,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
     const tp = t.tipo ?? "tarifa";
     const promo = tp !== "tarifa";
     return (
-      <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+      <li key={t.id} id={`vigencia-${t.id}`} ref={t.id === vigenciaDestacada ? (el) => el?.scrollIntoView({ block: "center" }) : undefined} data-destacada={t.id === vigenciaDestacada ? "true" : undefined} className={`flex flex-wrap items-center justify-between gap-2 py-2 text-sm${t.id === vigenciaDestacada ? " rounded-md bg-amber-50 px-2 ring-2 ring-amber-300" : ""}`}>
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <b>{t.nombre}</b>
           <span className={`rounded-full px-2 py-0.5 text-[10px] ${promo ? "bg-[var(--brand-highlight)]/25 text-gray-700" : "bg-gray-100 text-gray-500"}`}>{TIPO_BADGE[tp] ?? tp}</span>
@@ -556,9 +563,16 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
           </p>
         )}
 
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="mt-3 space-y-4">
           <ListaRangos titulo="Rangos adicionales (misma vigencia)" items={rangosExtra} onChange={setRangosExtra} />
-          <ListaRangos titulo="Black-outs (fechas a excluir)" items={blackouts} onChange={setBlackouts} />
+          {/* H103-03: la lista compacta de rangos es la presentación de siempre; el calendario es una ayuda que se abre en una ventana y edita esta MISMA lista.
+              La vigencia completa = rango principal + adicionales; las exclusiones se eligen sobre ESA vigencia. */}
+          <ListaRangos titulo="Black-outs (fechas a excluir)" items={blackouts} onChange={setBlackouts}
+            nota="Solo afectan a esta vigencia: no cierran el hotel. Para cerrar la venta del hotel entero usa «Black out general»."
+            accion={<CalendarioExclusionesModal
+              vigencia={[{ fecha_inicio: ini, fecha_fin: fin }, ...rangosExtra]} value={blackouts} onChange={setBlackouts}
+              conjuntos={conjuntos} conjuntosDisponibles={conjuntosDisponibles} nombreVigencia={nombre}
+              onNuevaVigencia={editando ? undefined : (c) => { if (!nombre.trim()) setNombre(`${c.nombre} ${c.anio}`); setBlackouts(c.rangos); }} />} />
         </div>
 
         <div className="mt-3 flex items-center gap-3">
@@ -585,7 +599,7 @@ function TemporadasBox({ hotelId, temporadas, otrosHoteles, hoy, regimenes, mone
       </div>
 
       {vencidas.length > 0 && (
-        <details className="mt-3 rounded-xl border border-gray-200 bg-gray-50/60">
+        <details open={vencidas.some((t) => t.id === vigenciaDestacada) || undefined} className="mt-3 rounded-xl border border-gray-200 bg-gray-50/60">
           <summary className="cursor-pointer select-none px-4 py-2 text-sm font-medium text-gray-600">
             Histórico de vigencias vencidas <span className="text-gray-400">({vencidas.length})</span>
           </summary>
@@ -636,12 +650,13 @@ function CopiarDeHotel({ hotelId, otrosHoteles }: { hotelId: number; otrosHotele
 }
 
 // Editor de una lista de rangos de fechas (para rangos adicionales y black-outs).
-function ListaRangos({ titulo, items, onChange }: { titulo: string; items: RangoFechas[]; onChange: (v: RangoFechas[]) => void }) {
+function ListaRangos({ titulo, items, onChange, nota, accion }: { titulo: string; items: RangoFechas[]; onChange: (v: RangoFechas[]) => void; nota?: string; accion?: ReactNode }) {
   const set = (i: number, k: keyof RangoFechas, v: string) =>
     onChange(items.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
   return (
     <div className="rounded-lg border border-gray-100 p-3">
       <p className={lbl}>{titulo}</p>
+      {nota && <p className="mb-2 text-[11px] text-gray-500">{nota}</p>}
       <div className="space-y-2">
         {items.map((r, i) => (
           <div key={i} className="flex items-end gap-2">
@@ -652,7 +667,10 @@ function ListaRangos({ titulo, items, onChange }: { titulo: string; items: Rango
         ))}
         {!items.length && <p className="text-[11px] text-gray-400">Ninguno.</p>}
       </div>
-      <button type="button" onClick={() => onChange([...items, { fecha_inicio: "", fecha_fin: "" }])} className="mt-2 text-xs font-medium text-[var(--brand-accent)]">+ Agregar</button>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <button type="button" onClick={() => onChange([...items, { fecha_inicio: "", fecha_fin: "" }])} className="text-xs font-medium text-[var(--brand-accent)]">+ Agregar</button>
+        {accion}
+      </div>
     </div>
   );
 }

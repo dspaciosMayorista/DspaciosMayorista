@@ -569,7 +569,7 @@ describe("CxP del carrito: moneda real de cada costo, sin asignar USD en bloque"
   const itemBloqueo = () => ({ ...item(1, 34), modulo: "bloqueo", bloqueoId: 31 });
   const montarBloqueo = (monedaBloqueo: string | undefined) => {
     (db.bloqueos_vuelo ??= []).push({
-      id: 31, aerolinea: "Avianca", ...(monedaBloqueo === undefined ? {} : { moneda: monedaBloqueo }), record: "L93FYZ", ruta: "BOG - CTG - BOG", tarifa_para_empaquetar: 500_000, fee_infante: 0,
+      id: 31, aerolinea: "Avianca", ...(monedaBloqueo === undefined ? {} : { moneda: monedaBloqueo }), record: "L93FYZ", ruta: "BOG - CTG - BOG", tarifa_neta: 500_000, tarifa_para_empaquetar: 580_000, fee_infante: 0,
       fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04", vuelo_ida: "AV1", vuelo_regreso: "AV2", proveedores: { nombre: "Avianca SA", aplica_retencion: false, pct_retencion: 0 },
     });
     (db.cupos_por_bloqueo ??= []).push({ id: 31, cupos_disponibles: 10 });
@@ -636,7 +636,7 @@ describe("revisión previa de moneda: costo USD cero no bloquea, costo USD posit
   const itemBloqueo = () => ({ ...item(1, 34), modulo: "bloqueo", bloqueoId: 31 });
   const montarBloqueo = (moneda: string) => {
     (db.bloqueos_vuelo ??= []).push({
-      id: 31, aerolinea: "Avianca", moneda, record: "L93FYZ", ruta: "BOG - CTG - BOG", tarifa_para_empaquetar: 500_000, fee_infante: 0,
+      id: 31, aerolinea: "Avianca", moneda, record: "L93FYZ", ruta: "BOG - CTG - BOG", tarifa_neta: 500_000, tarifa_para_empaquetar: 580_000, fee_infante: 0,
       fecha_ida: "2030-03-01", fecha_regreso: "2030-03-04", vuelo_ida: "AV1", vuelo_regreso: "AV2", proveedores: { nombre: "Avianca SA", aplica_retencion: false, pct_retencion: 0 },
     });
     (db.cupos_por_bloqueo ??= []).push({ id: 31, cupos_disponibles: 10 });
@@ -702,14 +702,15 @@ describe("revisión previa de moneda: costo USD cero no bloquea, costo USD posit
     sinEscribir("hotel USD positivo sin TRM de costos");
   });
 
-  test("vuelo de un bloqueo en USD: tarifa y fee CERO → se convierte sin CxP aérea; tarifa POSITIVA → se detiene antes de numerar", async () => {
+  test("vuelo de un bloqueo en USD: sin tarifa neta (cero) → se rechaza, nunca se cae a la reventa ni a cero; neta POSITIVA en USD → se detiene antes de numerar", async () => {
     HOTELES = { 1: hotel("OZ HOTEL", "COP", 300_000) };
     await cotizacionDirectaConItems([itemBloqueo()]);
     montarBloqueo("USD");
-    Object.assign(db.bloqueos_vuelo[0], { tarifa_para_empaquetar: 0, fee_infante: 0 });
+    Object.assign(db.bloqueos_vuelo[0], { tarifa_neta: 0, fee_infante: 0 }); // la reventa (580.000) sigue cargada: no debe usarse
     const cero = await convertir(1, { monedaCobro: "COP" });
-    assert.equal(cero.ok, true, cero.error);
-    assert.deepEqual(financieros[0].cxp.map((c) => c.tipo_proveedor), ["hotel"], "el vuelo en cero no crea obligación");
+    assert.equal(cero.ok, false);
+    assert.match(cero.error ?? "", /OZ HOTEL: El bloqueo no tiene tarifa neta cargada/);
+    sinEscribir("vuelo sin tarifa neta");
 
     limpiarTodo();
     HOTELES = { 1: hotel("OZ HOTEL", "COP", 300_000) };
@@ -736,7 +737,7 @@ describe("la revisión previa y pushCxP deciden igual", () => {
     }
     // Las fórmulas en línea ya no existen: una sola fuente.
     assert.doesNotMatch(cuerpo, /netoPorAcom\["nino"\] \* numNinos/);
-    assert.doesNotMatch(cuerpo, /Number\(bq\.tarifa_para_empaquetar\) \|\| 0\) \* paxConSilla/);
+    assert.doesNotMatch(cuerpo, /Number\(bq\.tarifa_(?:para_empaquetar|neta)\) \|\| 0\) \* paxConSilla/);
     assert.doesNotMatch(cuerpo, /dv\.costo_neto \* resultado\.paxConSilla/);
     assert.doesNotMatch(cuerpo, /precioServicio\(modo, netoPersona/);
   });

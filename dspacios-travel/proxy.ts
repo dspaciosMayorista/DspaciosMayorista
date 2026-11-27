@@ -33,7 +33,12 @@ const RUTAS_CRON = new Set([
   "/api/cron/liberar-vencidas",
   "/api/cron/notificaciones",
   "/api/cron/reconciliar-financiero",
+  "/api/cron/respuestas-hostinger",
 ]);
+
+// #103: receptores de eventos de correo de proveedores. Los llama un servicio externo SIN sesión; el handler exige la firma HMAC (SOLICITUD_PROVEEDOR_WEBHOOK_SECRET) o el Bearer de Hostinger (SOLICITUD_PROVEEDOR_HOSTINGER_WEBHOOK_SECRET) y falla cerrado sin él.
+// Lista exacta, igual que las rutas de cron.
+const RUTAS_WEBHOOK = new Set(["/api/solicitud-proveedor/webhook", "/api/solicitud-proveedor/hostinger"]);
 
 // Roles externos (aliados B2B / cliente final): su lugar es el Portal B2B,
 // NO el dashboard interno. Única excepción: /dashboard/reservar, desde donde
@@ -43,7 +48,7 @@ const EXTERNOS = ["agencia", "freelance", "cliente_final"];
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  if (RUTAS_CRON.has(pathname)) {
+  if (RUTAS_CRON.has(pathname) || RUTAS_WEBHOOK.has(pathname)) {
     return NextResponse.next({ request });
   }
 

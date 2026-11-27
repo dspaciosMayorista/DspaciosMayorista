@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { formatCOP } from "@/lib/utils";
+import { formatMoneda } from "@/lib/utils";
 import { precioServicioEstimado, avisoSinRango } from "@/lib/calc/servicioTarifa";
 import type { IdentidadContrato } from "@/lib/contrato/identidad";
 import { actualizarServiciosContrato } from "../actions";
@@ -18,8 +18,10 @@ export type ServicioDispContrato = {
 };
 
 export function ServiciosContratoEditor({
-  numero, pax, serviciosDisp, seleccionInicial, identidad,
+  numero, pax, serviciosDisp, seleccionInicial, identidad, moneda = "COP",
 }: {
+  /** Moneda del contrato: los importes de los servicios se rotulan en ella (un contrato en USD no los muestra como pesos). */
+  moneda?: string | null;
   identidad: IdentidadContrato;
   numero: string;
   pax: number;
@@ -76,7 +78,7 @@ export function ServiciosContratoEditor({
             </label>
             {precioDe(s) === null
               ? <span role="alert" className="max-w-[16rem] text-right text-xs text-amber-700">{avisoSinRango(pax)}</span>
-              : <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(precioDe(s) as number)}</span>}
+              : <span className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMoneda(precioDe(s) as number, moneda)}</span>}
           </li>
         ))}
       </ul>
@@ -84,7 +86,7 @@ export function ServiciosContratoEditor({
         <Button onClick={guardar} disabled={pending || sinRango.length > 0} style={{ backgroundColor: "var(--brand-primary)" }}>
           {pending ? "Guardando…" : "Guardar servicios"}
         </Button>
-        <span className="text-sm text-gray-500">Servicios: <b className="tabular-nums">{formatCOP(total)}</b></span>
+        <span className="text-sm text-gray-500">Servicios: <b className="tabular-nums">{formatMoneda(total, moneda)}</b></span>
         {sinRango.length > 0 && <span className="text-sm text-amber-700">Desmarca «{sinRango.map((s) => s.nombre).join("», «")}»: no tiene rango para {pax} pax.</span>}
         {msg && <span className="text-sm text-green-600">{msg}</span>}
       </div>

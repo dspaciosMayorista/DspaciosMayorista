@@ -22,7 +22,8 @@ import { EnlaceEditarContrato } from "@/components/vuelos/EnlaceEditarContrato";
 import { InfanteVueloForm } from "@/components/vuelos/InfanteVueloForm";
 import { esSillaLibre } from "@/lib/vuelos/sillaLibre";
 import { filtrarCompatibles, describirDestinos } from "@/lib/vuelos/compatibles";
-import { agruparHistorial, describirEntrada, esSillaActiva, type MovimientoFila } from "@/lib/vuelos/historial";
+import { HistorialMovimientos } from "./HistorialMovimientos";
+import { agruparHistorial, esSillaActiva, type MovimientoFila } from "@/lib/vuelos/historial";
 import { tenantContext } from "@/lib/tenant.server";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import { esRetencionVencida } from "@/lib/vuelos/retencion";
@@ -253,6 +254,7 @@ export default async function BloqueoDetallePage({
       <div className="mt-2 flex flex-wrap items-baseline gap-3">
         <h1 className="font-mono text-2xl font-semibold text-gray-900">{b.record}</h1>
         <span className="rounded bg-gray-100 px-2 py-0.5 text-sm text-gray-600">{b.aerolinea ?? "—"}</span>
+        <Link href={`/dashboard/vuelos/nuevo?copiarDe=${b.id}`} className="ml-auto rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50" data-testid="duplicar-bloqueo">Duplicar con nuevas fechas</Link>
       </div>
       <div className="mt-2">
         <ControlBadges modalidad={b.modalidad_emision} estadoEmision={b.estado_emision} estadoPago={b.estado_pago} />
@@ -504,31 +506,7 @@ export default async function BloqueoDetallePage({
             <section className="rounded-xl border border-gray-200 bg-white p-4">
               <p className="mb-1 text-sm font-semibold text-gray-700">Movimientos históricos</p>
               <p className="mb-2 text-xs text-gray-400">Trazabilidad de traslados, pasajeros movidos y cupos retirados. No son cupos ni se venden.</p>
-              {historial.length === 0 ? (
-                <p className="text-xs text-gray-400">Sin movimientos de sillas registrados.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {historial.map((e) => {
-                    const entra = e.destinoId === bloqueoId;
-                    const cupos = entra ? e.cuposDestino : e.cuposOrigen;
-                    const nums = entra ? e.numerosDestino : e.numerosOrigen;
-                    return (
-                      <li key={e.clave} className="border-l-2 pl-3 text-xs" style={{ borderColor: entra ? ESTADO_COLOR.cambio_entrante : ESTADO_COLOR.cambio }}>
-                        <div className="text-gray-400">{formatFechaLarga(e.fecha)}{e.registradoPor ? ` · ${e.registradoPor}` : ""}</div>
-                        <div className="text-gray-700">{describirEntrada(e, bloqueoId, (rid) => (rid == null ? "—" : recordPorId.get(rid) ?? `#${rid}`))}</div>
-                        {(nums.length > 0 || cupos) && (
-                          <div className="text-gray-400">
-                            {nums.length > 0 ? `Silla(s) ${nums.map((n) => `#${n}`).join(", ")}` : ""}
-                            {nums.length > 0 && cupos ? " · " : ""}
-                            {cupos ? `cupos ${cupos[0]} → ${cupos[1]}` : ""}
-                          </div>
-                        )}
-                        {e.motivo && <div className="italic text-gray-500">“{e.motivo}”</div>}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+              <HistorialMovimientos historial={historial} bloqueoId={bloqueoId} recordPorId={Object.fromEntries(recordPorId)} />
             </section>
 
             {/* Historial de cambios operacionales + eliminación de cupos */}

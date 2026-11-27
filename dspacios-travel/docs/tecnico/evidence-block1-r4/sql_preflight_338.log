@@ -1,0 +1,7 @@
+338 needs 337: the one-per-contract air voucher index exists|1|1|OK
+338 needs 309: acknowledgment table and the three Gestión functions exist|4|4|OK
+338 not applied yet: vouchers has none of servicio_clave / revision / actualizado_en|0|0|OK
+air vouchers today (each will get its key = lowest saved leg id of its contract; none is deleted)|0|any|OK
+air vouchers whose contract has NO saved leg left (they get the key «sin-tramos»; regenerate or delete them by hand)|0|0|OK
+contracts with more than one air voucher today (impossible after 337)|0|0|OK
+voucher acknowledgments already registered (they keep working: no rev = 0; nothing is flagged until a voucher really changes)|0|any|OK

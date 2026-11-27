@@ -95,13 +95,15 @@ describe("hija NETO con hotel de precio total (Bernalo) y vuelo manual: nunca im
   const hotelTotal = { id: 1, numero_contrato: "", descripcion: "Hotel Bernalo · 1 hab", adultos: 0, ninos: 0, tarifa_adulto: 0, tarifa_nino: 0, orden: 1, modo_precio: "total", valor_total: 1_000_000 };
   const svc = { id: 2, numero_contrato: "", descripcion: "Servicio · City tour", adultos: 2, ninos: 0, tarifa_adulto: 100_000, tarifa_nino: 0, orden: 2, modo_precio: null, valor_total: null };
   const centavos = (x: string) => Math.round(Number(x.replace(/\./g, "").replace(",", ".")) * 100);
-  test("NETO: el vuelo se absorbe en la fila total; fila + servicio = total exigible al centavo; sin importes PVP", () => {
+  // Codex 2026-11-26 (B95-02 incondicional): el servicio adicional JAMÁS lleva precio propio. Una fila de hotel de precio TOTAL (Bernalo) no tiene tarifa de adulto que lo absorba y no se inventa un reparto:
+  // el documento omite los importes por fila y deja solo el total exigible exacto. (Antes: «fila + servicio = total», con el servicio con precio — contradice la regla del dueño.)
+  test("NETO: servicio sin precio propio y sin importes por fila (no hay adulto que absorba); el total exigible exacto se conserva; sin importes PVP", () => {
     const t = doc({ items: [hotelTotal, svc, linea], vuelos, netoTotalExigible: 1_400_000.35 });
     assert.match(t, /Total del contrato \$ 1\.400\.000,35/);
-    assert.doesNotMatch(t, /1\.000\.000|500\.000|1\.700\.000/, "ningún importe PVP");
-    const fila = centavos(/Hotel Bernalo · 1 hab \$ ([\d.,]+)/.exec(t)![1]);
-    const serv = centavos(/City tour \S+ \$ ([\d.,]+)/.exec(t)![1]);
-    assert.equal(fila + serv, 140_000_035);
+    assert.doesNotMatch(t, /1\.000\.000|500\.000|1\.700\.000|200\.000/, "ningún importe PVP ni el del servicio");
+    assert.doesNotMatch(t, /City tour \S+ \$/);
+    assert.doesNotMatch(t, /Hotel Bernalo · 1 hab \$/, "sin importe por fila");
+    assert.ok(t.includes("City tour"), "el servicio sigue descrito");
   });
   test("NETO sin fila que absorba el vuelo: solo el total agregado, ningún importe por fila", () => {
     const t = doc({ items: [svc, linea], vuelos, netoTotalExigible: 250_000.35 });
@@ -109,10 +111,12 @@ describe("hija NETO con hotel de precio total (Bernalo) y vuelo manual: nunca im
     assert.doesNotMatch(t, /200\.000|700\.000|500\.000/, "ningún importe PVP");
     assert.doesNotMatch(t, /City tour \S+ \$/);
   });
-  test("PVP: sin cambios, filas = total PVP", () => {
+  test("PVP: total sin cambios; el servicio sin precio propio y sin importes por fila (misma regla incondicional)", () => {
     const t = doc({ items: [hotelTotal, svc, linea], vuelos, netoTotalExigible: null });
     assert.match(t, /Total del contrato \$ 1\.700\.000/);
-    assert.match(t, /Hotel Bernalo · 1 hab \$ 1\.500\.000/);
+    assert.doesNotMatch(t, /City tour \S+ \$/);
+    assert.doesNotMatch(t, /Hotel Bernalo · 1 hab \$/);
+    assert.ok(t.includes("City tour"));
   });
 });
 

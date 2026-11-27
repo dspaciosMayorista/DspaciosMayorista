@@ -6,7 +6,8 @@ import { Fragment, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCOP, formatMoneda } from "@/lib/utils";
+import { formatCOP, formatMoneda, formatMonedaDocumento } from "@/lib/utils";
+import { formatoTrm, textoEquivalente, totalesPorMoneda } from "@/lib/finanzas/costoProvisional";
 import { fechaNegocio } from "@/lib/fechaNegocio";
 import {
   FISCAL_DEFAULT,
@@ -39,6 +40,10 @@ type CxP = {
   id: number; proveedor: string | null; servicio: string | null; valor_total: number;
   base_gravable: number | null; iva_proveedor: number | null; fecha_vencimiento: string | null;
   aplica_retencion: boolean; pct_retencion: number; moneda?: string | null;
+  /** 236: equivalente en COP congelado a la TRM de costos (solo obligaciones en USD del carrito). */
+  valor_cop_costo?: number | null; trm_costo?: number | null;
+  /** #63: equivalente por oferta aceptada (otra familia, excluyente con la de costos). */
+  valor_cop_63?: number | null; trm_63?: number | null;
   pagos: PagoCxP[];
   retenido: number;
 };
@@ -78,6 +83,8 @@ export type GestionProps = {
   facturas: Factura[];
   formasPago: string[];
   moneda?: string;       // moneda del contrato (USD muestra el estado de cuenta en dólares)
+  /** NETA-06: TRM de costos del contrato (provisional mientras esté pendiente; congelada al confirmar). null = ninguna obligación en USD con TRM. */
+  trmCostos?: { trm: number; fase: "provisional" | "congelada" } | null;
   /** 235 (#90 F): moneda y total de COBRO (abonos, saldo y plan de cobro). Sin ellos se cobra en `moneda` por `precioVenta`. */
   monedaCobro?: string;
   totalCobro?: number;
@@ -169,7 +176,7 @@ export function GestionTabs(p: GestionProps) {
           // fallaban en silencio.
           <CarteraTab identidad={p.identidad} numero={p.numero} abonos={p.abonos} totalPagado={p.totalPagado} total={p.totalCobro ?? p.precioVenta} formasPago={p.formasPago} cuotas={p.cuotas} moneda={p.monedaCobro ?? p.moneda ?? "COP"} nota={p.notaCobro ?? null} puedeEditar={p.verFinanzas} puedeEditarPlan={p.puedeEditar !== false} />
         )}
-        {p.verFinanzas && tab === "costos" && <CostosTab identidad={p.identidad} numero={p.numero} costos={p.costos} />}
+        {p.verFinanzas && tab === "costos" && <CostosTab identidad={p.identidad} numero={p.numero} costos={p.costos} moneda={p.moneda ?? "COP"} trmCostos={p.trmCostos ?? null} />}
         {p.verFinanzas && tab === "proveedores" && <ProveedoresTab identidad={p.identidad} numero={p.numero} filas={p.cuentasPorPagar} catalogo={p.proveedoresCatalogo ?? []} />}
         {p.permisosComision?.ver && tab === "comisiones" && (
           <ComisionesTab identidad={p.identidad} numero={p.numero} filas={p.comisionesB2B} comB2BTotal={comB2BTotal} aliadosCatalogo={p.aliadosCatalogo ?? []}
@@ -189,12 +196,13 @@ export function GestionTabs(p: GestionProps) {
 }
 
 // ── COSTOS ─────────────────────────────────────────────────────────────
-function CostosTab({ identidad, numero, costos }: { identidad: IdentidadContrato; numero: string; costos: GestionProps["costos"] }) {
+function CostosTab({ identidad, numero, costos, moneda = "COP", trmCostos = null }: { identidad: IdentidadContrato; numero: string; costos: GestionProps["costos"]; moneda?: string; trmCostos?: GestionProps["trmCostos"] }) {
   const [v, setV] = useState(costos);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState("");
   const total = v.costo_hotel + v.costo_aereo + v.costo_receptivo + v.costo_asistencia + v.otros_costos;
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement>) => setV({ ...v, [k]: Number(e.target.value) || 0 });
+  const usd = moneda.toUpperCase() === "USD";
 
   function guardar() {
     setMsg("");
@@ -213,17 +221,25 @@ function CostosTab({ identidad, numero, costos }: { identidad: IdentidadContrato
   return (
     <div className={card}>
       <p className="mb-4 text-sm text-gray-500">Costos netos por proveedor. Alimentan la rentabilidad.</p>
+      {usd && (
+        <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900" data-testid="costos-en-usd">
+          Los costos de este contrato están en <b>USD</b> (la moneda de la oferta), no en pesos.{" "}
+          {trmCostos
+            ? <>El equivalente en pesos de cada obligación usa la <b>TRM de costos {formatoTrm(trmCostos.trm)}</b> ({trmCostos.fase}){trmCostos.fase === "provisional" ? ": se corrige en «Obligaciones previstas» (arriba) mientras el contrato esté pendiente y se congela al confirmar." : ": quedó congelada al confirmar el contrato (está en la pestaña «Proveedores»)."} Es distinta de la TRM del pago real al proveedor.</>
+            : <>Este contrato no tiene obligaciones en USD con TRM de costos registrada: <b>TRM de costos pendiente</b> (no se infiere).</>}
+        </p>
+      )}
       <div className="max-w-xl space-y-3">
         {campos.map(([k, label]) => (
           <div key={k} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
             <label className="w-40 shrink-0 text-sm font-medium text-gray-600">{label}</label>
             <Input type="number" min={0} value={v[k] || ""} onChange={set(k)} placeholder="0" className="sm:flex-1" />
-            <span className="w-32 shrink-0 text-right text-sm tabular-nums text-gray-500">{formatCOP(v[k] || 0)}</span>
+            <span className="w-32 shrink-0 text-right text-sm tabular-nums text-gray-500">{formatMonedaDocumento(v[k] || 0, moneda)}</span>
           </div>
         ))}
         <div className="flex items-center justify-between border-t border-gray-100 pt-3">
           <span className="w-40 shrink-0 text-sm font-semibold text-gray-700">Costo directo total</span>
-          <b className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatCOP(total)}</b>
+          <b className="text-sm tabular-nums" style={{ color: "var(--brand-primary)" }}>{formatMonedaDocumento(total, moneda)}</b>
         </div>
       </div>
       <div className="mt-4 flex items-center gap-3">
@@ -250,7 +266,7 @@ function CarteraTab({ identidad, numero, abonos, totalPagado, total, formasPago,
         <Mini label="Saldo" value={fmt(saldo)} />
       </div>
       {esUSD && <ResumenCopUsd total={total} abonos={abonos} />}
-      <PlanCobroPanel identidad={identidad} numero={numero} cuotas={cuotas} pagado={totalPagado} puedeEditar={puedeEditarPlan} />
+      <PlanCobroPanel identidad={identidad} numero={numero} cuotas={cuotas} pagado={totalPagado} moneda={moneda} puedeEditar={puedeEditarPlan} />
       {puedeEditar && (
         <div className={card}>
           <p className={lbl}>Registrar abono</p>
@@ -400,8 +416,10 @@ function ProveedoresTab({ identidad, numero, filas, catalogo }: { identidad: Ide
   const [err, setErr] = useState("");
   const [completando, startCompletar] = useTransition();
   const [msgCompletar, setMsgCompletar] = useState("");
-  const totalCxP = filas.reduce((s, f) => s + f.valor_total, 0);
+  // NETA-06: monedas distintas NUNCA se suman como una sola cifra: totales por moneda (USD con su equivalente congelado si todas lo tienen).
+  const totalesCxP = totalesPorMoneda(filas.map((f) => ({ moneda: f.moneda, valor: f.valor_total, trm: f.trm_costo, valorCop: f.valor_cop_costo })));
   const totalIva = filas.reduce((s, f) => s + (f.iva_proveedor ?? 0), 0);
+  const mixtas = totalesCxP.length > 1;
 
   function completar() {
     setMsgCompletar("");
@@ -511,8 +529,8 @@ function ProveedoresTab({ identidad, numero, filas, catalogo }: { identidad: Ide
             {/* Nota: la fila editable reutiliza el mismo datalist "proveedores-{numero}" declarado arriba. */}
             <tfoot><tr className="border-t border-gray-200 font-medium">
               <td className="px-2 py-2 sm:px-4" colSpan={3}>Total por pagar</td>
-              <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4" data-label="IVA desc.">{totalIva > 0 ? formatCOP(totalIva) : "—"}</td>
-              <td className="px-2 py-2 text-right tabular-nums sm:px-4" data-label="Valor">{formatCOP(totalCxP)}</td><td colSpan={3} data-label="" /></tr></tfoot>
+              <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4" data-label="IVA desc.">{totalIva > 0 && !mixtas ? formatMonedaDocumento(totalIva, filas[0]?.moneda) : "—"}</td>
+              <td className="px-2 py-2 text-right tabular-nums sm:px-4" data-label="Valor" data-testid="total-por-pagar">{totalesCxP.map((t) => (<span key={t.moneda} className="block">{mixtas ? t.moneda + ": " : ""}{formatMonedaDocumento(t.total, t.moneda)}{t.moneda === "USD" && t.equivalenteCop != null && <span className="block text-[10px] font-normal text-gray-500">≈ {formatCOP(t.equivalenteCop)} (TRM de costos)</span>}</span>))}</td><td colSpan={3} data-label="" /></tr></tfoot>
           </table>
         </ResponsiveTableShell>
       )}
@@ -530,6 +548,11 @@ function FilaCxP({ identidad, f, numero }: { identidad: IdentidadContrato; f: Cx
   const pagado = f.pagos.reduce((s, p) => s + (p.valor ?? 0), 0);
   const saldo = Math.max(0, f.valor_total - pagado - (f.retenido ?? 0));
   const estaPagada = saldo <= 0 && f.valor_total > 0;
+  // NETA-06: una obligación en USD dice su equivalente congelado (la TRM de costos queda fija al confirmar) o que no tiene TRM de costos; en COP no se muestra nada.
+  const esUsdF = (f.moneda ?? "COP").toUpperCase() === "USD";
+  const equivalenteFila = f.trm_costo != null
+    ? textoEquivalente({ moneda: f.moneda, valor: f.valor_total, trm: f.trm_costo, valorCop: f.valor_cop_costo }, "congelada")
+    : esUsdF ? (f.valor_cop_63 != null && f.trm_63 != null ? `≈ ${formatCOP(Number(f.valor_cop_63))} a la TRM de la oferta aceptada ${formatoTrm(Number(f.trm_63))}` : "Obligación en USD sin equivalente en pesos registrado (no hay TRM de costos)") : null;
 
   const [proveedor, setProveedor] = useState(f.proveedor ?? "");
   const [servicio, setServicio] = useState(f.servicio ?? "");
@@ -561,7 +584,7 @@ function FilaCxP({ identidad, f, numero }: { identidad: IdentidadContrato; f: Cx
             <div><label className="block text-[11px] text-gray-500">Valor total</label><Input type="number" value={valor} onChange={(e) => setValor(e.target.value)} className="w-32" /></div>
             <div><label className="block text-[11px] text-gray-500">IVA descontable</label><Input type="number" value={iva} onChange={(e) => setIva(e.target.value)} className="w-32" placeholder="0" /></div>
             <div><label className="block text-[11px] text-gray-500">Vence</label><DateInput aria-label="Vence" type="date" value={venc} onValueChange={(dateValue) => setVenc(dateValue)} className="w-40" /></div>
-            <span className="pb-2 text-xs text-gray-500">Costo: <b className="text-gray-700">{formatCOP(costoEd)}</b></span>
+            <span className="pb-2 text-xs text-gray-500">Costo: <b className="text-gray-700">{formatMonedaDocumento(costoEd, f.moneda)}</b></span>
             <Button onClick={guardar} disabled={pending} className="h-9" style={{ backgroundColor: "var(--brand-primary)" }}>{pending ? "…" : "Guardar"}</Button>
             <button type="button" onClick={() => setEditar(false)} className="pb-2 text-xs text-gray-400 hover:text-gray-700">Cancelar</button>
             {err && <span className="pb-2 text-xs text-red-600">{err}</span>}
@@ -576,9 +599,9 @@ function FilaCxP({ identidad, f, numero }: { identidad: IdentidadContrato; f: Cx
       <tr className="border-t border-gray-50">
         <td className="break-words px-2 py-2 text-gray-700 sm:px-4" data-label="Proveedor">{f.proveedor ?? "—"}</td>
         <td className="break-words px-2 py-2 text-gray-500 sm:px-4" data-label="Servicio">{f.servicio ?? "—"}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-gray-600 sm:px-4" data-label="Costo">{formatCOP(costoF)}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4" data-label="IVA desc.">{ivaF > 0 ? formatCOP(ivaF) : "—"}</td>
-        <td className="px-2 py-2 text-right tabular-nums sm:px-4" data-label="Valor">{formatCOP(f.valor_total)}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-gray-600 sm:px-4" data-label="Costo">{formatMonedaDocumento(costoF, f.moneda)}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-gray-500 sm:px-4" data-label="IVA desc.">{ivaF > 0 ? formatMonedaDocumento(ivaF, f.moneda) : "—"}</td>
+        <td className="px-2 py-2 text-right tabular-nums sm:px-4" data-label="Valor"><span data-testid="valor-cxp">{formatMonedaDocumento(f.valor_total, f.moneda)}</span>{equivalenteFila && <span className={`block text-[10px] ${f.trm_costo ? "text-gray-500" : "text-amber-700"}`} data-testid="equivalente-cxp">{equivalenteFila}</span>}</td>
         <td className="px-2 py-2 text-gray-500 sm:px-4" data-label="Vence">{f.fecha_vencimiento ?? "—"}</td>
         <td className="px-2 py-2 sm:px-4" data-label="Estado">
           <button

@@ -109,6 +109,12 @@ export function filasDeUnidad(unidad: UnidadResumen): FilaResumen[] {
     }
     for (const r of [...adultos, ...menores].sort((x, y) => x.primero - y.primero)) filas.push(r.tipo === "adulto" ? fila([r], []) : fila([], [r]));
   });
-  if (u.ajusteCentavos > 0) filas.push({ clave: `${u.ref}-ajuste`, ajuste: true, adultos: 0, ninos: 0, tarifaAdulto: 0, tarifaNino: 0, total: u.ajusteCentavos });
+  // Regla incondicional del dueño: la fila «Ajuste por redondeo» NUNCA llega al cliente. Si el residuo heredado no se pudo absorber (ver `unidadSinReparto`), no se inventa un reparto ni se pierde el importe: el documento
+  // omite los importes por fila (`ResumenPreciosCliente`) y el total del contrato sale de las líneas guardadas.
   return filas;
+}
+
+/** true = el resumen guardado trae un residuo de redondeo que NO se puede repartir por pasajero: el documento no imprime importes por fila (ni fila de ajuste). */
+export function unidadSinReparto(unidad: UnidadResumen): boolean {
+  return absorberAjuste(unidad).ajusteRestante > 0;
 }

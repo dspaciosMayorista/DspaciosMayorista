@@ -17,6 +17,7 @@ import type { ResumenHotelUI } from "@/lib/cotizacion/comparativaAcciones";
 import type { LogoAliadoDoc } from "@/lib/aliados/logo";
 import { EmisorLinea, LogoAliado } from "@/components/cotizacion/MarcaAliado";
 import { ListasIncluye, MenoresOpcion, ServiciosAdicionalesOpcion, TarifaOpcion, TarifaPaqueteOpcion, VuelosOpcion } from "@/components/cotizacion/ListasIncluye";
+import { esLineaNinoGratis } from "@/lib/reservar/ninoGratisLinea";
 
 const PRIMARY = COLOR_DOCUMENTO;
 
@@ -54,7 +55,7 @@ export function ComparativaHoja({ madre, grupos, resumenes, vencida, identidad, 
 
   const tarjeta = (g: GrupoHotel) => {
     const r = detalle(g);
-    const items = (r.items ?? []).filter((it) => it.descripcion !== "Tarifa por niño");
+    const items = (r.items ?? []).filter((it) => it.descripcion !== "Tarifa por niño" && !esLineaNinoGratis(it.descripcion));
     const propios = comun ? [] : bloquesCondiciones(g, porAcomodacion);
     return (
       <article key={g.opcionRef} data-testid={`opcion-${g.opcionRef}`} className="overflow-hidden rounded-xl border border-gray-200">

@@ -30,6 +30,7 @@ export function ListadoTotales({ filas }: { filas: FilaTotal[] }) {
               <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${f.publicado ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"}`}>{f.publicado ? "Publicado" : "Sin publicar"}</span>
             </div>
             <div className="flex gap-2">
+              <Link href={`/dashboard/paquetes/total/nuevo?copiarDe=${f.id}`} className="inline-flex h-8 items-center rounded-lg border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50" data-testid="duplicar-paquete-din">Duplicar</Link>
               <Button size="sm" variant="outline" disabled={pending} onClick={() => run(() => publicarPaqueteTotal(f.id, !f.publicado))}>{f.publicado ? "Retirar" : "Publicar"}</Button>
               <Button size="sm" variant="outline" disabled={pending} onClick={() => { if (confirm(`¿Eliminar «${f.nombre}»?`)) run(() => eliminarPaqueteTotal(f.id)); }}>Eliminar</Button>
             </div>

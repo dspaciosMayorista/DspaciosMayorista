@@ -1,0 +1,269 @@
+{
+ "build": "wVj0gCNVGUu7TMSMiifjm",
+ "medidas": [
+  {
+   "nombre": "contrato-DTM-9701",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-DTM-9701-1280.png",
+   "alto": 1832,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-DTM-9701",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-DTM-9701-820.png",
+   "alto": 2319,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-DTM-9701",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-DTM-9701-390.png",
+   "alto": 2869,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "editor-vuelos-DTM-9701",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\editor-vuelos-DTM-9701-1280.png",
+   "alto": 1204,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "editor-vuelos-DTM-9701",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\editor-vuelos-DTM-9701-820.png",
+   "alto": 1236,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "editor-vuelos-DTM-9701",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\editor-vuelos-DTM-9701-390.png",
+   "alto": 1723,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-venta-DTM-9705",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-venta-DTM-9705-1280.png",
+   "alto": 1454,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-venta-DTM-9705",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-venta-DTM-9705-1280.png",
+   "alto": 1454,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9701",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9701-1280.png",
+   "alto": 924,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9701",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9701-820.png",
+   "alto": 924,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9701",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9701-390.png",
+   "alto": 1270,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9701.pdf",
+   "paginas": 1
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9702",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9702-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9702",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9702-820.png",
+   "alto": 900,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9702",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9702-390.png",
+   "alto": 1220,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9702.pdf",
+   "paginas": 1
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9703",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9703-1280.png",
+   "alto": 2534,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9703",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9703-820.png",
+   "alto": 2534,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9703",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\voucher-vuelo-DTM-9703-390.png",
+   "alto": 3784,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "voucher-vuelo-DTM-9703.pdf",
+   "paginas": 3
+  },
+  {
+   "nombre": "contrato-documento-DTM-9701",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-documento-DTM-9701-1280.png",
+   "alto": 3578,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-documento-DTM-9701",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\contrato-documento-DTM-9701-1280.png",
+   "alto": 3578,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "contrato-documento-DTM-9701.pdf",
+   "paginas": 4
+  },
+  {
+   "nombre": "cotizacion-documento",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\cotizacion-documento-1280.png",
+   "alto": 3529,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "cotizacion-documento",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\cotizacion-documento-820.png",
+   "alto": 3529,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "cotizacion-documento",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\cotizacion-documento-390.png",
+   "alto": 5557,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "cotizacion-documento.pdf",
+   "paginas": 4
+  },
+  {
+   "nombre": "modal-eliminar-destino-alternativo",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\modal-eliminar-destino-alternativo-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "modal-eliminar-destino-alternativo",
+   "ancho": 820,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\modal-eliminar-destino-alternativo-820.png",
+   "alto": 970,
+   "scrollWidth": 820,
+   "innerWidth": 820,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "modal-eliminar-destino-alternativo",
+   "ancho": 390,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\modal-eliminar-destino-alternativo-390.png",
+   "alto": 1286,
+   "scrollWidth": 390,
+   "innerWidth": 390,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "modal-eliminar-destino-sin-uso",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\modal-eliminar-destino-sin-uso-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  },
+  {
+   "nombre": "modal-eliminar-destino-sin-uso",
+   "ancho": 1280,
+   "archivo": "docs\\tecnico\\evidence-block1-r2\\visual\\modal-eliminar-destino-sin-uso-1280.png",
+   "alto": 900,
+   "scrollWidth": 1280,
+   "innerWidth": 1280,
+   "desbordaHorizontal": false
+  }
+ ],
+ "erroresPagina": []
+}

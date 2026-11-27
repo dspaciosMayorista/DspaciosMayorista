@@ -331,7 +331,8 @@ describe("lib/contrato/valorContratoItem.ts / ContratoDocumento.tsx — regla C.
 
   test("el total y las tablas de línea usan valorVisibleContratoItem/totalVisibleContratoItems — ya no queda la fórmula inline vieja", () => {
     assert.doesNotMatch(codigoDoc, /it\.adultos \* it\.tarifa_adulto \+ it\.ninos \* it\.tarifa_nino/);
-    assert.match(codigoDoc, /totalVisibleContratoItems\(items\)/);
+    // B95-19: el total sale de las líneas GUARDADAS (`itemsPlegados`, antes de plegar el residuo de redondeo en la tarifa del adulto), con el mismo helper.
+    assert.match(codigoDoc, /totalVisibleContratoItems\(itemsPlegados\)/);
     // Cierre 3F-4B: 3 usos — la fila agregada limpia de modo_precio="total"
     // (regla F.5), la tabla per-cápita de alojamiento y la de servicios.
     const usosPorLinea = [...codigoDoc.matchAll(/valorVisibleContratoItem\(it\)/g)];
