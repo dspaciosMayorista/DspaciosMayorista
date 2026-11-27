@@ -70,6 +70,7 @@ function pedido(over: Record<string, unknown> = {}) {
 
 type Escenario = {
   bloqueo?: boolean;
+  bloqueoVuelo?: Fila;   // sobrescribe campos del bloqueo de vuelo L93FYZ (p. ej. quitar la neta)
   cupos?: number;
   paquete?: Fila;
   fuente?: Fila;
@@ -152,8 +153,10 @@ function montar(esc: Escenario = {}) {
     }],
     bloqueos_vuelo: bloqueo ? [{
       id: BLOQUEO_ID, destino_id: 1, record: "L93FYZ", ruta: "BOG - CTG - BOG", aerolinea: "Avianca", fecha_ida: IDA, fecha_regreso: REG,
-      tarifa_para_empaquetar: N, fee_infante: F, vuelo_ida: "AV123", vuelo_regreso: "AV124",
+      // Neta SINTÉTICA explícita (costo/CxP a la aerolínea = N × pax con silla + F × menor de 2 años); la tarifa para empaquetar (reventa) se conserva aparte.
+      tarifa_neta: N, tarifa_para_empaquetar: N, fee_infante: F, vuelo_ida: "AV123", vuelo_regreso: "AV124",
       hora_salida_ida: null, hora_llegada_ida: null, hora_salida_reg: null, hora_llegada_reg: null, proveedores: null,
+      ...(esc.bloqueoVuelo ?? {}),
     }] : [],
     cupos_por_bloqueo: bloqueo ? [{ id: BLOQUEO_ID, cupos_disponibles: esc.cupos ?? 0 }] : [],
   };
@@ -301,6 +304,15 @@ test("BLOQUEO: con cupos suficientes reserva (y consulta los cupos)", async () =
   assert.equal(bd.filas("ventas")[0]?.bloqueo_ref_id, BLOQUEO_ID);
   // Un paquete de siempre conserva su CxP sin moneda explícita ni equivalente COP (comportamiento de siempre).
   assert.ok(bd.filas("cuentas_por_pagar").every((c) => c.valor_cop_63 == null && c.trm_63 == null));
+});
+
+test("BLOQUEO: sin tarifa neta cargada se rechaza (no se cae a la reventa ni a 0) y no se crea contrato", async () => {
+  const { bd } = montar({ bloqueo: true, cupos: 5, bloqueoVuelo: { tarifa_neta: null } });
+  const cot = await crearCotizacion(pedido({ bloqueoId: BLOQUEO_ID, salidaId: null, modulo: "bloqueo" }) as never);
+  const r = cot.ok ? await convertirCotizacion(cot.id, PASAJEROS as never) : cot;
+  assert.equal(r.ok, false, JSON.stringify(r));
+  assert.match((r as { error: string }).error, /no tiene tarifa neta cargada/);
+  assert.equal(bd.filas("ventas").length, 0, "sin neta no nace contrato");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
